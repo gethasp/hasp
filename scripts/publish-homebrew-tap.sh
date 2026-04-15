@@ -38,6 +38,12 @@ fi
 
 (
   cd "$tap_repo"
+  if [[ -z "$(git config --get user.name || true)" ]]; then
+    git config user.name "HASP Bot"
+  fi
+  if [[ -z "$(git config --get user.email || true)" ]]; then
+    git config user.email "bot@gethasp.com"
+  fi
   git add Formula/hasp.rb
   if ! git diff --cached --quiet; then
     msg="Update HASP formula"
