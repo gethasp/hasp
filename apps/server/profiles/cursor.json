@@ -1,0 +1,12 @@
+{
+  "id": "cursor",
+  "name": "Cursor",
+  "transport": "mcp-stdio",
+  "command": ["hasp", "mcp"],
+  "project_binding_recipe": "Bind the repo in HASP, then expose only the aliases Cursor needs for its MCP session.",
+  "approval_path": "Let hasp mcp auto-open the daemon-backed session, then use project-scoped and time-boxed leases for long Cursor runs.",
+  "safe_inject_path": "Use hasp_run or hasp_inject via the stdio tool server.",
+  "write_env_path": "Use hasp write-env for workspace-visible env files when convenience beats the safer path.",
+  "regression_fixture": "apps/server/testdata/profiles/cursor.json",
+  "docs_path": "docs/agent-profiles/cursor.md"
+}

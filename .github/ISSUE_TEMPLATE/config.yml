@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support
+    url: https://github.com/gethasp/hasp/blob/main/SUPPORT.md
+    about: Read the support guide before you open a public issue.
+  - name: Security report
+    url: https://github.com/gethasp/hasp/security/policy
+    about: Do not file security bugs in public. Use the canonical source reporting path in SECURITY.md.
+  - name: Contributing guide
+    url: https://github.com/gethasp/hasp/blob/main/CONTRIBUTING.md
+    about: Read the contribution and validation rules before you open a pull request.

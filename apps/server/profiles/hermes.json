@@ -1,0 +1,12 @@
+{
+  "id": "hermes",
+  "name": "Hermes",
+  "transport": "mcp-stdio",
+  "command": ["hasp", "mcp"],
+  "project_binding_recipe": "Bind the Hermes project root and scope aliases before starting Hermes tooling.",
+  "approval_path": "Let hasp mcp auto-open the daemon-backed session, then use project leases plus secret grants matching the intended Hermes workflow length.",
+  "safe_inject_path": "Use hasp_run / hasp_inject through the generic stdio tool surface.",
+  "write_env_path": "Use hasp write-env only with explicit convenience grants and warning surfaces.",
+  "regression_fixture": "apps/server/testdata/profiles/hermes.json",
+  "docs_path": "docs/agent-profiles/hermes.md"
+}

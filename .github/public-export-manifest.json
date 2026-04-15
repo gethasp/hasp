@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "public_repository": {
+    "name": "gethasp/hasp",
+    "publication_mode": "release_tag_export",
+    "source_of_truth": "private_monorepo",
+    "artifact_base_url": "https://downloads.gethasp.com/hasp"
+  },
+  "exports": {
+    "public_source_roots": [
+      "apps/server/",
+      "apps/macos/"
+    ],
+    "root_files": [
+      "README.md",
+      "QUICKSTART.md",
+      "CONTRIBUTING.md",
+      "SECURITY.md",
+      "SUPPORT.md",
+      "RELEASING.md",
+      "CHANGELOG.md",
+      "CODE_OF_CONDUCT.md",
+      "MAINTAINERS.md",
+      "LICENSE",
+      "VERSION",
+      "Makefile"
+    ],
+    "doc_files": [
+      "docs/README.md",
+      "docs/install.md",
+      "docs/operator-guide.md",
+      "docs/release-distribution.md",
+      "docs/v1-production-guide.md",
+      "docs/agent-profiles/"
+    ]
+  },
+  "private_only": [
+    "apps/web/**",
+    "docs/archive/**",
+    "docs/competition/**",
+    "docs/research/**",
+    "RELEASING.md",
+    "RELEASING.md",
+    ".beads/**",
+    ".omx/**",
+    "output/**"
+  ],
+  "notes": {
+    "marketing_site": "gethasp.com stays in the canonical source repo.",
+    "cloud_control_plane": "app.gethasp.com is reserved for V3 and stays private.",
+    "public_docs_scope": "Only the operator, install, release, production, and profile docs required for the local product surface are exported here.",
+    "canonical_manifest": "The canonical source repo keeps the canonical export manifest under .github/public-export-manifest.json. This file is the public contract summary."
+  }
+}

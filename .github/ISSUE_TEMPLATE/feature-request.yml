@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a broker, operator, or release improvement.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep this focused. The best feature requests describe a real workflow that breaks down today.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: I can bootstrap one repo, but I cannot ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should HASP do?
+      placeholder: Add ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing today instead?
+      placeholder: Today I ...
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which area does this touch?
+      options:
+        - Broker or CLI
+        - MCP integration
+        - Docs
+        - Release or packaging
+        - macOS app
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Links, screenshots, prior art, or rough API ideas.

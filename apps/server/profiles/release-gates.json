@@ -1,0 +1,173 @@
+{
+  "required_doc_sections": [
+    "## Config Example",
+    "## Session Behavior",
+    "## Success Signal",
+    "## Failure Recovery",
+    "## Known Caveats"
+  ],
+  "profiles": {
+    "aider": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspRunTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    },
+    "claude-code": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspListTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    },
+    "codex-cli": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspRunTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    },
+    "cursor": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspListTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    },
+    "hermes": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspCheckTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    },
+    "openclaw": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspInjectTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
+    }
+  }
+}

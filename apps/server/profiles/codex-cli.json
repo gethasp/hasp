@@ -1,0 +1,12 @@
+{
+  "id": "codex-cli",
+  "name": "Codex CLI",
+  "transport": "mcp-stdio",
+  "command": ["hasp", "mcp"],
+  "project_binding_recipe": "Bind the repo and map neutral aliases before starting Codex CLI.",
+  "approval_path": "Let hasp mcp auto-open the daemon-backed session, then use project/session or window grants; avoid raw value retrieval.",
+  "safe_inject_path": "Use hasp_run / hasp_inject over stdio for command and file-based secret needs.",
+  "write_env_path": "Use hasp write-env for explicit convenience materialization only.",
+  "regression_fixture": "apps/server/testdata/profiles/codex-cli.json",
+  "docs_path": "docs/agent-profiles/codex-cli.md"
+}

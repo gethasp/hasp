@@ -1,0 +1,15 @@
+
+# Dolt database files (added by bd init)
+.dolt/
+
+# OS
+.DS_Store
+
+# Build artifacts
+*.db
+codedb.snapshot
+bin/
+dist/
+
+# IDE / tools
+.omx/

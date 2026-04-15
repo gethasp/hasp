@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  merge-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Verify public CI
+        run: make verify-ci
+      - name: Packaged release smoke
+        run: make release-smoke
+      - name: Coverage
+        run: make coverage

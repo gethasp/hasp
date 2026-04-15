@@ -1,0 +1,30 @@
+name: Docs problem
+description: Report stale, confusing, or broken documentation.
+title: "[docs] "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Which page is wrong?
+      placeholder: README.md or docs/install-and-release.md
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong?
+      placeholder: The guide says to run ... but the command no longer exists.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should the page say instead?
+      placeholder: It should point readers to ...
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Paste the broken link, command output, or screenshot if it helps.

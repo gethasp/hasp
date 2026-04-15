@@ -1,0 +1,12 @@
+{
+  "id": "openclaw",
+  "name": "OpenClaw",
+  "transport": "mcp-stdio",
+  "command": ["hasp", "mcp"],
+  "project_binding_recipe": "Bind the OpenClaw workspace and expose only the aliases required for the task.",
+  "approval_path": "Let hasp mcp auto-open the daemon-backed session, then use window grants for long OpenClaw execution loops.",
+  "safe_inject_path": "Use the stdio tool path for hasp_run and hasp_inject.",
+  "write_env_path": "Use hasp write-env with convenience approval when OpenClaw needs a project-visible env file.",
+  "regression_fixture": "apps/server/testdata/profiles/openclaw.json",
+  "docs_path": "docs/agent-profiles/openclaw.md"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "aider",
+  "name": "Aider",
+  "transport": "cli-or-mcp",
+  "command": ["hasp", "mcp"],
+  "project_binding_recipe": "Bind the working tree in HASP before starting the stdio tool path for aider tasks.",
+  "approval_path": "Let hasp mcp auto-open the daemon-backed session, then use project and secret windows for longer aider runs.",
+  "safe_inject_path": "Use hasp run for command execution or hasp_inject through the generic tool path.",
+  "write_env_path": "Use hasp write-env with explicit convenience grants for .env.local style files.",
+  "regression_fixture": "apps/server/testdata/profiles/aider.json",
+  "docs_path": "docs/agent-profiles/aider.md"
+}

@@ -1,0 +1,1 @@
+{"tool":"hasp_inject","project_root":".","session_token":"fixture-session","grant_project":"window","grant_secret":"session","files":{"CERT_PATH":"file_01"},"command":["sh","-c","cat \"$CERT_PATH\""]}
