@@ -58,7 +58,7 @@ jobs:
         run: |
           if [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
             eval "$(ssh-agent -s)"
-            printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" > tap_key
+            printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" | base64 --decode > tap_key
             chmod 600 tap_key
             ssh-add tap_key
             git clone git@github.com:gethasp/homebrew-tap.git tap-repo
