@@ -53,7 +53,10 @@ trap cleanup EXIT
 
 signing_key="${HASP_RELEASE_GPG_KEY_ID:-}"
 if [[ -z "$signing_key" ]]; then
-  signing_key="$(release_select_signing_key)"
+  signing_key_file="$(mktemp)"
+  release_select_signing_key >"$signing_key_file"
+  signing_key="$(<"$signing_key_file")"
+  /bin/rm -f "$signing_key_file"
 fi
 
 /bin/mkdir -p "$formula_dir"

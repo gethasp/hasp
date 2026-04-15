@@ -52,7 +52,10 @@ signing_key="${HASP_RELEASE_GPG_KEY_ID:-}"
 cleanup_home=""
 
 if [[ -z "$signing_key" ]]; then
-  signing_key="$(release_select_signing_key)"
+  signing_key_file="$(mktemp)"
+  release_select_signing_key >"$signing_key_file"
+  signing_key="$(<"$signing_key_file")"
+  /bin/rm -f "$signing_key_file"
 fi
 if [[ -n "${release_ephemeral_gnupghome:-}" ]]; then
   signing_home="$release_ephemeral_gnupghome"
