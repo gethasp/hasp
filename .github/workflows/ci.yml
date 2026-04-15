@@ -22,6 +22,10 @@ jobs:
       - name: Verify public CI
         run: make verify-ci
       - name: Packaged release smoke
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
         run: make release-smoke
       - name: Coverage
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
         run: make coverage
