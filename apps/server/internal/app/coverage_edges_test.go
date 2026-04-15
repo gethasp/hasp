@@ -74,6 +74,7 @@ func TestRunVersionMCPAndStarterConstructionSuccess(t *testing.T) {
 func TestNewRuntimeStarterFailsWithoutResolvableHome(t *testing.T) {
 	t.Setenv("HASP_HOME", "")
 	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "relative-config-home")
 	if _, err := newRuntimeStarter(); err == nil {
 		t.Fatal("expected runtime starter construction failure without home")
 	}

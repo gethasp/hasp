@@ -40,25 +40,32 @@ jobs:
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases
         run: bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
       - name: Upload release artifacts to Cloudflare R2
-        if: ${{ secrets.HASP_R2_ENDPOINT != '' && secrets.HASP_R2_BUCKET != '' && secrets.HASP_R2_ACCESS_KEY_ID != '' && secrets.HASP_R2_SECRET_ACCESS_KEY != '' }}
         env:
           HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
           HASP_R2_BUCKET: ${{ secrets.HASP_R2_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.HASP_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HASP_R2_SECRET_ACCESS_KEY }}
           HASP_R2_PUBLISH_LATEST: "1"
-        run: bash ./scripts/publish-release-to-r2.sh "dist/public-release/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
+        run: |
+          if [[ -n "$HASP_R2_ENDPOINT" && -n "$HASP_R2_BUCKET" && -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            bash ./scripts/publish-release-to-r2.sh "dist/public-release/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
+          else
+            echo "R2 secrets are not fully configured; skipping R2 publication"
+          fi
       - name: Publish Homebrew tap
-        if: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY != '' }}
         env:
           HASP_HOMEBREW_TAP_PUSH_KEY: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY }}
         run: |
-          eval "$(ssh-agent -s)"
-          printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" > tap_key
-          chmod 600 tap_key
-          ssh-add tap_key
-          git clone git@github.com:gethasp/homebrew-tap.git tap-repo
-          bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
+          if [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
+            eval "$(ssh-agent -s)"
+            printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" > tap_key
+            chmod 600 tap_key
+            ssh-add tap_key
+            git clone git@github.com:gethasp/homebrew-tap.git tap-repo
+            bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
+          else
+            echo "Homebrew tap key is not configured; skipping tap publication"
+          fi
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
