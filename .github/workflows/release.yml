@@ -54,9 +54,13 @@ jobs:
           fi
       - name: Publish Homebrew tap
         env:
+          HASP_HOMEBREW_TAP_TOKEN: ${{ secrets.HASP_HOMEBREW_TAP_TOKEN }}
           HASP_HOMEBREW_TAP_PUSH_KEY: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY }}
         run: |
-          if [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
+          if [[ -n "$HASP_HOMEBREW_TAP_TOKEN" ]]; then
+            git clone "https://x-access-token:${HASP_HOMEBREW_TAP_TOKEN}@github.com/gethasp/homebrew-tap.git" tap-repo
+            bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
+          elif [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
             eval "$(ssh-agent -s)"
             printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" | base64 --decode > tap_key
             chmod 600 tap_key
