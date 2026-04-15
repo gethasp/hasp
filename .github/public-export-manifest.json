@@ -27,6 +27,7 @@
     ],
     "doc_files": [
       "docs/README.md",
+      "docs/after-homebrew.md",
       "docs/install.md",
       "docs/operator-guide.md",
       "docs/release-distribution.md",

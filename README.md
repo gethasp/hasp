@@ -50,6 +50,9 @@ scripts/hasp-install-release.sh --verify dist/release/hasp_<version>_<os>_<arch>
 
 If you want the short path first, start with [QUICKSTART.md](QUICKSTART.md).
 
+If you already installed HASP with Homebrew and want the step-by-step setup,
+start with [docs/after-homebrew.md](docs/after-homebrew.md).
+
 ## Release model
 
 - tagged releases publish signed release artifacts

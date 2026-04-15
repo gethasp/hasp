@@ -2,6 +2,9 @@
 
 This file covers the shortest safe path to a working local HASP install.
 
+If you already installed HASP with Homebrew and want the full beginner flow,
+read [docs/after-homebrew.md](docs/after-homebrew.md).
+
 ## 1. Build or download a release
 
 From source:
