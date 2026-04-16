@@ -8,6 +8,14 @@ This guide is for the most common starting point:
 
 If that is you, follow these steps in order.
 
+If you want the simple path first, start with:
+
+```bash
+hasp setup
+```
+
+The rest of this page is the manual flow and the troubleshooting fallback.
+
 ## 1. Confirm the install
 
 Run:

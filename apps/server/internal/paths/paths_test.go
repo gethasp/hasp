@@ -8,6 +8,16 @@ import (
 )
 
 func TestResolveUsesExplicitEnvOverrides(t *testing.T) {
+	base := t.TempDir()
+	origUserConfigDir := userConfigDir
+	origRead := configReadFileFn
+	defer func() {
+		userConfigDir = origUserConfigDir
+		configReadFileFn = origRead
+	}()
+	userConfigDir = func() (string, error) { return base, nil }
+	configReadFileFn = os.ReadFile
+
 	home := t.TempDir()
 	socket := filepath.Join(t.TempDir(), "daemon.sock")
 	t.Setenv(EnvHome, home)
@@ -29,15 +39,21 @@ func TestResolveUsesExplicitEnvOverrides(t *testing.T) {
 }
 
 func TestResolveUsesUserConfigDirFallback(t *testing.T) {
+	base := t.TempDir()
+	origUserConfigDir := userConfigDir
+	origRead := configReadFileFn
+	defer func() {
+		userConfigDir = origUserConfigDir
+		configReadFileFn = origRead
+	}()
+	userConfigDir = func() (string, error) { return base, nil }
+	configReadFileFn = os.ReadFile
+
 	t.Setenv(EnvHome, "")
 	t.Setenv(EnvSocket, "")
 	resolved, err := Resolve()
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
-	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatalf("user config dir: %v", err)
 	}
 	expectedHome := filepath.Join(base, "hasp")
 	if resolved.HomeDir != expectedHome {
@@ -49,6 +65,16 @@ func TestResolveUsesUserConfigDirFallback(t *testing.T) {
 }
 
 func TestResolveUsesFallbackHomeWithExplicitSocketAndPropagatesConfigDirFailure(t *testing.T) {
+	base := t.TempDir()
+	origUserConfigDir := userConfigDir
+	origRead := configReadFileFn
+	defer func() {
+		userConfigDir = origUserConfigDir
+		configReadFileFn = origRead
+	}()
+	userConfigDir = func() (string, error) { return base, nil }
+	configReadFileFn = os.ReadFile
+
 	t.Setenv(EnvHome, "")
 	customSocket := filepath.Join(t.TempDir(), "daemon.sock")
 	t.Setenv(EnvSocket, customSocket)
@@ -60,11 +86,35 @@ func TestResolveUsesFallbackHomeWithExplicitSocketAndPropagatesConfigDirFailure(
 		t.Fatalf("socket path = %q, want %q", resolved.SocketPath, customSocket)
 	}
 
-	orig := userConfigDir
-	defer func() { userConfigDir = orig }()
-	userConfigDir = func() (string, error) { return "", fmt.Errorf("config fail") }
+	callCount := 0
+	userConfigDir = func() (string, error) {
+		callCount++
+		if callCount == 1 {
+			return base, nil
+		}
+		return "", fmt.Errorf("config fail")
+	}
+	configReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	t.Setenv(EnvSocket, "")
 	if _, err := Resolve(); err == nil {
 		t.Fatal("expected user config dir failure")
+	}
+}
+
+func TestResolvePropagatesConfigLoadFailure(t *testing.T) {
+	base := t.TempDir()
+	origUserConfigDir := userConfigDir
+	origRead := configReadFileFn
+	defer func() {
+		userConfigDir = origUserConfigDir
+		configReadFileFn = origRead
+	}()
+
+	userConfigDir = func() (string, error) { return base, nil }
+	configReadFileFn = func(string) ([]byte, error) { return nil, fmt.Errorf("read fail") }
+	t.Setenv(EnvHome, "")
+	t.Setenv(EnvSocket, "")
+	if _, err := Resolve(); err == nil {
+		t.Fatal("expected config load failure")
 	}
 }

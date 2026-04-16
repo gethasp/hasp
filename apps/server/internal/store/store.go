@@ -2,6 +2,9 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -9,10 +12,11 @@ import (
 )
 
 const (
-	formatVersion      = 1
-	passwordIterations = 600_000
-	keyLength          = 32
-	keyringService     = "com.gethasp.v1"
+	formatVersion                = 1
+	productionPasswordIterations = 600_000
+	testPasswordIterations       = 100_000
+	keyLength                    = 32
+	keyringService               = "com.gethasp.v1"
 )
 
 var (
@@ -21,6 +25,15 @@ var (
 	ErrInvalidPassword     = errors.New("invalid master password")
 	ErrItemNotFound        = errors.New("item not found")
 	ErrKeyringUnavailable  = errors.New("keyring convenience unlock unavailable")
+	// Tests create and open many ephemeral vaults across multiple packages.
+	// Using a lower derivation cost only inside `go test` keeps the default
+	// parallel suite stable without changing production envelopes.
+	passwordIterations = func() int {
+		if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
+			return testPasswordIterations
+		}
+		return productionPasswordIterations
+	}()
 )
 
 type ItemKind string

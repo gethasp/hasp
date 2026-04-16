@@ -79,6 +79,8 @@ func TestBootstrapOptionAndHelperCoverage(t *testing.T) {
 func TestBootstrapPreviewHelpers(t *testing.T) {
 	lockAppSeams(t)
 
+	t.Setenv("HASP_HOME", t.TempDir())
+	t.Setenv("HASP_MASTER_PASSWORD", "")
 	projectRoot := t.TempDir()
 	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)

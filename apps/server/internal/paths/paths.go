@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -24,6 +25,13 @@ type Paths struct {
 
 func Resolve() (Paths, error) {
 	home := os.Getenv(EnvHome)
+	if home == "" {
+		cfg, err := LoadConfig()
+		if err != nil {
+			return Paths{}, fmt.Errorf("load cli config: %w", err)
+		}
+		home = strings.TrimSpace(cfg.HomeDir)
+	}
 	if home == "" {
 		base, err := userConfigDir()
 		if err != nil {

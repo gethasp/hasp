@@ -11,7 +11,14 @@ import (
 
 func TestPackagedArtifactOperatorEval(t *testing.T) {
 	root := repoRoot(t)
-	tarball, _ := runCmd(t, root, nil, "bash", "./scripts/package-release.sh")
+	releaseEnv := os.Environ()
+	tarball, _ := runCmd(t, root, releaseEnv, "bash", "-lc", `
+export GNUPGHOME="$(mktemp -d)"
+trap 'rm -rf "$GNUPGHOME"' EXIT
+export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
+unset HASP_RELEASE_GPG_KEY_ID
+./scripts/package-release.sh
+`)
 	artifactDir := t.TempDir()
 	runCmd(t, artifactDir, nil, "tar", "-xzf", strings.TrimSpace(tarball))
 	entries, err := os.ReadDir(artifactDir)

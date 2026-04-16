@@ -56,6 +56,8 @@ func runWithStarter(ctx context.Context, args []string, stdin io.Reader, stdout 
 		return err
 	case "init":
 		return initCommand(ctx, stdout)
+	case "setup":
+		return setupCommand(ctx, args[1:], stdin, stdout, stderr)
 	case "bootstrap":
 		return bootstrapCommandWithInput(ctx, args[1:], stdin, stdout, bootstrapVerification)
 	case "import":
@@ -106,6 +108,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "hasp commands:")
 	fmt.Fprintln(w, "  version")
 	fmt.Fprintln(w, "  init")
+	fmt.Fprintln(w, "  setup [--non-interactive ...]")
 	fmt.Fprintln(w, "  bootstrap --profile <id> [--import <path|->] [--bind-imports] | bootstrap generic | bootstrap profiles | bootstrap doctor --profile <id>|generic")
 	fmt.Fprintln(w, "  import [--project-root <path>] [--bind] [--name <name>] [--preview] [--format auto|env|json] <path|->")
 	fmt.Fprintln(w, "  project bind|status|unbind")
@@ -115,5 +118,5 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  session open --host-label <label> --project-root <path>")
 	fmt.Fprintln(w, "  session resolve --token <token>")
 	fmt.Fprintln(w, "  session revoke --token <token>")
-	fmt.Fprintln(w, "  bootstrap | init | import | set | run | inject | write-env | audit | check-repo | export-backup | restore-backup | mcp | tui")
+	fmt.Fprintln(w, "  setup | bootstrap | init | import | set | run | inject | write-env | audit | check-repo | export-backup | restore-backup | mcp | tui")
 }
