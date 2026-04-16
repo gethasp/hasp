@@ -33,8 +33,13 @@ func TestSetupResolveHomeBranches(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 
 	origHome := setupUserHomeDirFn
-	defer func() { setupUserHomeDirFn = origHome }()
+	origTempDir := setupTempDirFn
+	defer func() {
+		setupUserHomeDirFn = origHome
+		setupTempDirFn = origTempDir
+	}()
 	setupUserHomeDirFn = func() (string, error) { return "", errors.New("no home") }
+	setupTempDirFn = func() string { return filepath.Join(t.TempDir(), "different-temp-root") }
 
 	resolved, _, err := setupResolveHome(setupOptions{HaspHome: "."}, newSetupPrompter(bytes.NewBuffer(nil), io.Discard))
 	if err != nil || !filepath.IsAbs(resolved) {

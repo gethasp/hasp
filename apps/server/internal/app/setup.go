@@ -148,6 +148,7 @@ var (
 	setupRenameFn      = os.Rename
 	setupCreateTempFn  = os.CreateTemp
 	setupAbsFn         = filepath.Abs
+	setupTempDirFn     = os.TempDir
 	setupTempWriteFn   = func(file *os.File, data []byte) (int, error) { return file.Write(data) }
 	setupTempChmodFn   = func(file *os.File, mode os.FileMode) error { return file.Chmod(mode) }
 	setupTempCloseFn   = func(file *os.File) error { return file.Close() }
@@ -456,7 +457,7 @@ func setupResolveHome(opts setupOptions, prompt *setupPrompter) (string, string,
 	}
 	defaultHome := strings.TrimSpace(cfg.HomeDir)
 	if defaultHome != "" {
-		if _, err := os.Stat(defaultHome); errors.Is(err, os.ErrNotExist) {
+		if !setupSavedHomeLooksUsable(defaultHome) {
 			defaultHome = ""
 		}
 	}
@@ -467,8 +468,8 @@ func setupResolveHome(opts setupOptions, prompt *setupPrompter) (string, string,
 		return defaultHome, configPath, nil
 	}
 	if err := setupWriteStage(prompt.out, "Machine setup",
-		"Choose where HASP keeps its local encrypted data on this machine.",
-		"This stores the encrypted vault, audit log, and runtime files outside your repo.",
+		"Stores the encrypted vault, audit log, and runtime files outside your repo.",
+		"Recommended default: ~/.hasp",
 	); err != nil {
 		return "", "", err
 	}
@@ -510,8 +511,7 @@ func setupResolveProjectRoot(ctx context.Context, opts setupOptions, prompt *set
 		return "", errors.New("non-interactive setup requires --repo")
 	}
 	if err := setupWriteStage(prompt.out, "Repo setup",
-		"Choose the repository HASP should protect.",
-		"HASP will bind aliases, broker secrets for commands in this repo, and optionally install repo guardrails.",
+		"HASP will protect this repo with brokered bindings and optional local guardrails.",
 	); err != nil {
 		return "", err
 	}
@@ -1138,11 +1138,11 @@ func setupWriteIntro(out io.Writer) error {
 }
 
 func setupWriteStage(out io.Writer, title string, lines ...string) error {
-	if _, err := fmt.Fprintf(out, "%s\n", title); err != nil {
+	if _, err := fmt.Fprintf(out, "== %s ==\n", title); err != nil {
 		return err
 	}
 	for _, line := range lines {
-		if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
+		if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
 			return err
 		}
 	}
@@ -1166,8 +1166,8 @@ func setupWriteSelectedAgents(out io.Writer, agents []setupAgentSpec) error {
 
 func setupWriteAgentMenu(out io.Writer, supported []setupAgentSpec, defaultIDs []string) error {
 	lines := []string{
-		"Choose which coding agents HASP should configure for MCP.",
-		"Enter one or more numbers separated by commas. Existing config files are backed up before mutation.",
+		"Pick which coding agents HASP should configure for MCP.",
+		"Enter numbers like 1 or 1,3. Existing config files are backed up before mutation.",
 	}
 	defaultSet := map[string]struct{}{}
 	for _, id := range defaultIDs {
@@ -1179,7 +1179,7 @@ func setupWriteAgentMenu(out io.Writer, supported []setupAgentSpec, defaultIDs [
 			suffix = " [default]"
 		}
 		lines = append(lines, fmt.Sprintf("%d. %s%s", idx+1, agent.Label, suffix))
-		lines = append(lines, fmt.Sprintf("   writes %s", setupDisplayPath(agent.ConfigPath(""))))
+		lines = append(lines, fmt.Sprintf("   config: %s", setupDisplayPath(agent.ConfigPath(""))))
 	}
 	return setupWriteStage(out, "Agent setup", lines...)
 }
@@ -1297,6 +1297,34 @@ func setupDisplayPath(path string) string {
 		return "~" + string(filepath.Separator) + strings.TrimPrefix(path, prefix)
 	}
 	return path
+}
+
+func setupSavedHomeLooksUsable(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return false
+	} else if err != nil {
+		return false
+	}
+	tempRoot := strings.TrimSpace(setupTempDirFn())
+	if tempRoot == "" {
+		return true
+	}
+	absPath, err := setupAbsFn(path)
+	if err != nil {
+		return false
+	}
+	absTemp, err := setupAbsFn(tempRoot)
+	if err != nil {
+		return false
+	}
+	if absPath == absTemp || strings.HasPrefix(absPath, absTemp+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 func defaultSetupConvenienceUnlock() bool {

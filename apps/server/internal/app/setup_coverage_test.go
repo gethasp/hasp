@@ -614,9 +614,13 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		lockAppSeams(t)
 		origHome := setupUserHomeDirFn
 		origGOOS := setupGOOS
+		origTempDir := setupTempDirFn
+		origAbs := setupAbsFn
 		defer func() {
 			setupUserHomeDirFn = origHome
 			setupGOOS = origGOOS
+			setupTempDirFn = origTempDir
+			setupAbsFn = origAbs
 		}()
 		setupUserHomeDirFn = func() (string, error) { return "/Users/tester", nil }
 		if got := setupDisplayPath("/Users/tester"); got != "~" {
@@ -640,6 +644,48 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		setupGOOS = "linux"
 		if defaultSetupConvenienceUnlock() {
 			t.Fatal("expected non-darwin default convenience unlock false")
+		}
+		tempSaved := t.TempDir()
+		setupTempDirFn = func() string { return filepath.Join(t.TempDir(), "elsewhere") }
+		if !setupSavedHomeLooksUsable(tempSaved) {
+			t.Fatal("expected non-temp-root saved path to be accepted")
+		}
+		setupTempDirFn = func() string { return filepath.Dir(tempSaved) }
+		if setupSavedHomeLooksUsable(tempSaved) {
+			t.Fatal("expected temp-root saved path to be rejected")
+		}
+		if setupSavedHomeLooksUsable(filepath.Join(t.TempDir(), "missing")) {
+			t.Fatal("expected missing saved path to be rejected")
+		}
+		if setupSavedHomeLooksUsable("   ") {
+			t.Fatal("expected blank saved path to be rejected")
+		}
+		parentFile := filepath.Join(t.TempDir(), "parent")
+		if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil {
+			t.Fatalf("write parent file: %v", err)
+		}
+		if setupSavedHomeLooksUsable(filepath.Join(parentFile, "child")) {
+			t.Fatal("expected stat error path to be rejected")
+		}
+		setupTempDirFn = func() string { return "" }
+		if !setupSavedHomeLooksUsable(tempSaved) {
+			t.Fatal("expected empty temp root to accept saved path")
+		}
+		setupTempDirFn = func() string { return filepath.Dir(tempSaved) }
+		setupAbsFn = func(string) (string, error) { return "", errors.New("abs fail") }
+		if setupSavedHomeLooksUsable(tempSaved) {
+			t.Fatal("expected abs failure to reject saved path")
+		}
+		callCount := 0
+		setupAbsFn = func(value string) (string, error) {
+			callCount++
+			if callCount == 1 {
+				return value, nil
+			}
+			return "", errors.New("abs temp fail")
+		}
+		if setupSavedHomeLooksUsable(tempSaved) {
+			t.Fatal("expected temp-root abs failure to reject saved path")
 		}
 	})
 

@@ -4,6 +4,12 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.4]
+
+- Ignore saved setup defaults that point into ephemeral temp directories, so stale test or temp paths no longer show up as the default local HASP data directory.
+- Tighten the `hasp setup` terminal layout with clearer visual stage separators and more compact guidance lines.
+- Keep the redesigned setup flow fully covered and the corrected repo coverage gate at `100.0%`.
+
 ## [v0.1.3]
 
 - Replace the freeform interactive agent prompt in `hasp setup` with a numbered agent selection menu.
