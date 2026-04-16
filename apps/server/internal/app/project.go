@@ -88,7 +88,7 @@ func projectStatusCommand(ctx context.Context, args []string, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
-	binding, visible, err := handle.ResolveBindingView(ctx, *projectRoot)
+	binding, visible, _, err := ensureProjectBinding(ctx, handle, *projectRoot)
 	if err != nil {
 		return err
 	}

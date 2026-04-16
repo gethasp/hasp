@@ -239,9 +239,7 @@ func TestSetupResolveBoolOptionsAndNonInteractiveCoverage(t *testing.T) {
 			opts setupOptions
 			want string
 		}{
-			{name: "install hooks", opts: setupOptions{NonInteractive: true}, want: "--install-hooks"},
-			{name: "convenience unlock", opts: setupOptions{NonInteractive: true, InstallHooks: setupOptionalBool{set: true, value: false}}, want: "--enable-convenience-unlock"},
-			{name: "overwrite existing config", opts: setupOptions{NonInteractive: true, InstallHooks: setupOptionalBool{set: true, value: false}, EnableConvenienceUnlock: setupOptionalBool{set: true, value: false}}, want: "--overwrite-existing-config"},
+			{name: "overwrite existing config", opts: setupOptions{NonInteractive: true}, want: "--overwrite-existing-config"},
 		}
 		for _, tc := range cases {
 			if err := setupResolveBoolOptions(&tc.opts, newSetupPrompter(bytes.NewBuffer(nil), io.Discard), agents); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -256,10 +254,12 @@ func TestSetupResolveBoolOptionsAndNonInteractiveCoverage(t *testing.T) {
 			opts   setupOptions
 			prompt *setupPrompter
 		}{
-			{name: "install hooks", opts: setupOptions{}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
-			{name: "convenience unlock", opts: setupOptions{InstallHooks: setupOptionalBool{set: true, value: false}}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
-			{name: "import path", opts: setupOptions{InstallHooks: setupOptionalBool{set: true, value: false}, EnableConvenienceUnlock: setupOptionalBool{set: true, value: false}}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
-			{name: "overwrite existing config", opts: setupOptions{InstallHooks: setupOptionalBool{set: true, value: false}, EnableConvenienceUnlock: setupOptionalBool{set: true, value: false}, ImportPath: "already-set"}, prompt: newSetupPrompter(bytes.NewBufferString(""), errWriter{err: errors.New("write fail")})},
+			{name: "auto protect", opts: setupOptions{}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
+			{name: "auto protect stage writer", opts: setupOptions{}, prompt: newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")})},
+			{name: "install hooks", opts: setupOptions{AutoProtectRepos: setupOptionalBool{set: true, value: false}}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
+			{name: "convenience unlock", opts: setupOptions{AutoProtectRepos: setupOptionalBool{set: true, value: true}, InstallHooks: setupOptionalBool{set: true, value: false}}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
+			{name: "import path", opts: setupOptions{AutoProtectRepos: setupOptionalBool{set: true, value: true}, InstallHooks: setupOptionalBool{set: true, value: false}, EnableConvenienceUnlock: setupOptionalBool{set: true, value: false}}, prompt: newSetupPrompter(setupErrReader{}, io.Discard)},
+			{name: "overwrite existing config", opts: setupOptions{AutoProtectRepos: setupOptionalBool{set: true, value: true}, InstallHooks: setupOptionalBool{set: true, value: false}, EnableConvenienceUnlock: setupOptionalBool{set: true, value: false}, ImportPath: "already-set"}, prompt: newSetupPrompter(bytes.NewBufferString(""), errWriter{err: errors.New("write fail")})},
 		}
 		for _, tc := range cases {
 			if err := setupResolveBoolOptions(&tc.opts, tc.prompt, agents); err == nil {
@@ -275,9 +275,8 @@ func TestSetupResolveBoolOptionsAndNonInteractiveCoverage(t *testing.T) {
 			want string
 		}{
 			{name: "missing home", opts: setupOptions{NonInteractive: true}, want: "--hasp-home"},
-			{name: "missing repo", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp"}, want: "--repo"},
-			{name: "missing agent", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp", Repo: "/tmp/repo"}, want: "--agent"},
-			{name: "missing password", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp", Repo: "/tmp/repo", Agents: setupAgentFlags{"codex-cli"}}, want: "--master-password-env"},
+			{name: "missing agent", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp"}, want: "--agent"},
+			{name: "missing password", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp", Agents: setupAgentFlags{"codex-cli"}}, want: "--master-password-env"},
 		}
 		for _, tc := range cases {
 			if err := validateSetupNonInteractive(tc.opts); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -613,6 +612,33 @@ func TestSetupResolveHomeAdditionalCoverage(t *testing.T) {
 			t.Fatal("expected explicit-home abs failure")
 		}
 	})
+
+	t.Run("runSetup explicit repo canonical failure", func(t *testing.T) {
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+		t.Setenv("SETUP_RESIDUAL_PW", "correct horse battery staple")
+		origHome := setupUserHomeDirFn
+		origCanon := setupCanonicalProjectRoot
+		defer func() {
+			setupUserHomeDirFn = origHome
+			setupCanonicalProjectRoot = origCanon
+		}()
+		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
+		setupCanonicalProjectRoot = func(context.Context, string) (string, error) { return "", errors.New("canon fail") }
+		if _, err := runSetup(context.Background(), setupOptions{
+			HaspHome:                filepath.Join(t.TempDir(), "hasp-home"),
+			Repo:                    t.TempDir(),
+			Agents:                  setupAgentFlags{"codex-cli"},
+			AutoProtectRepos:        setupOptionalBool{set: true, value: true},
+			InstallHooks:            setupOptionalBool{set: true, value: true},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
+			PasswordEnv:             "SETUP_RESIDUAL_PW",
+			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
+		}, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "canon fail") {
+			t.Fatalf("expected explicit repo canonical failure, got %v", err)
+		}
+	})
 }
 
 func TestSetupPresentationHelpers(t *testing.T) {
@@ -772,6 +798,28 @@ func TestSetupPresentationHelpers(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected render summary write failure at call %d", failAt)
 			}
+		}
+		writer := &setupNthWriteErrWriter{allow: 9, err: errors.New("next steps write fail")}
+		if err := renderSetupSummary(writer, setupSummary{
+			HaspHome:         "/tmp/.hasp",
+			ConfigPath:       "/tmp/hasp-cli.json",
+			InitState:        "created",
+			AutoProtectRepos: true,
+			AutoInstallHooks: true,
+			NextSteps:        []string{"one"},
+		}); err == nil {
+			t.Fatal("expected next-steps heading write failure")
+		}
+		writer = &setupNthWriteErrWriter{allow: 10, err: errors.New("next step line fail")}
+		if err := renderSetupSummary(writer, setupSummary{
+			HaspHome:         "/tmp/.hasp",
+			ConfigPath:       "/tmp/hasp-cli.json",
+			InitState:        "created",
+			AutoProtectRepos: true,
+			AutoInstallHooks: true,
+			NextSteps:        []string{"one"},
+		}); err == nil {
+			t.Fatal("expected next-step line write failure")
 		}
 		for failAt := 1; failAt <= 6; failAt++ {
 			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
@@ -1095,6 +1143,7 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 			t.Fatal("expected overwrite prompt failure")
 		}
 		opts = setupOptions{
+			AutoProtectRepos:        setupOptionalBool{set: true, value: true},
 			InstallHooks:            setupOptionalBool{set: true, value: false},
 			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
 		}
@@ -1102,11 +1151,22 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 			t.Fatal("expected optional import stage writer failure")
 		}
 		opts = setupOptions{
+			AutoProtectRepos:        setupOptionalBool{set: true, value: true},
 			InstallHooks:            setupOptionalBool{set: true, value: false},
 			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
 		}
 		if err := setupResolveBoolOptions(&opts, newSetupPrompter(io.MultiReader(strings.NewReader("y\n"), setupErrReader{}), io.Discard), nil); err == nil {
 			t.Fatal("expected import path prompt failure")
+		}
+		opts = setupOptions{
+			Repo:                    t.TempDir(),
+			AutoProtectRepos:        setupOptionalBool{set: true, value: true},
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
+			ImportPath:              "/tmp/.env",
+		}
+		if err := setupResolveBoolOptions(&opts, newSetupPrompter(setupErrReader{}, io.Discard), nil); err == nil {
+			t.Fatal("expected bind-import prompt failure")
 		}
 
 		parentFile := filepath.Join(t.TempDir(), "parent")

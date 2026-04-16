@@ -4,6 +4,13 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.6]
+
+- Shift `hasp setup` to a machine-wide onboarding model with defaults for automatic project adoption on first use.
+- Auto-create local project bindings from machine defaults when HASP is first used in a project, instead of requiring manual per-repo setup.
+- Keep repo-scoped enforcement under the hood while removing the repo-by-repo onboarding tax.
+- Maintain the corrected repo coverage gate at `100.0%`.
+
 ## [v0.1.5]
 
 - When interactive `hasp setup` master password confirmation does not match, setup now retries the password step in place instead of aborting the whole flow.

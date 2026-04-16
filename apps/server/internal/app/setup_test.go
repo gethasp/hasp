@@ -40,8 +40,14 @@ func (m *memorySetupKeyring) Delete(service string, account string) error {
 	return nil
 }
 
-func TestSetupCommandNonInteractiveFailsWithoutRepo(t *testing.T) {
+func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *testing.T) {
 	lockAppSeams(t)
+	userHome := t.TempDir()
+	origHome := setupUserHomeDirFn
+	defer func() { setupUserHomeDirFn = origHome }()
+	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
+	t.Setenv("HOME", userHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
 	t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
 
 	err := runWithStarter(
@@ -52,6 +58,7 @@ func TestSetupCommandNonInteractiveFailsWithoutRepo(t *testing.T) {
 			"--hasp-home", filepath.Join(t.TempDir(), "hasp-home"),
 			"--master-password-env", "SETUP_MASTER_PASSWORD",
 			"--agent", "claude-code",
+			"--bind-imports",
 			"--install-hooks=false",
 			"--enable-convenience-unlock=false",
 		},
@@ -60,8 +67,8 @@ func TestSetupCommandNonInteractiveFailsWithoutRepo(t *testing.T) {
 		io.Discard,
 		&fakeStarter{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "--repo") {
-		t.Fatalf("expected missing repo failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "project-scoped setup options require --repo") {
+		t.Fatalf("expected project-scoped setup options failure, got %v", err)
 	}
 }
 

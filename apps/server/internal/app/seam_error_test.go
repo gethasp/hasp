@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -29,6 +30,8 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 	origCanonical := appCanonicalProjectRootFn
 	origInstallHooks := installHooksFn
 	origResolveBindingExec := resolveBindingViewExecFn
+	origResolveBindingApp := resolveBindingViewAppFn
+	origLoadCLI := loadCLIConfigAppFn
 	origResolveReferenceExec := resolveReferenceExecFn
 	origGetItemExec := getItemExecFn
 	origResolveBindingSecrets := resolveBindingViewFn
@@ -50,6 +53,8 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 		appCanonicalProjectRootFn = origCanonical
 		installHooksFn = origInstallHooks
 		resolveBindingViewExecFn = origResolveBindingExec
+		resolveBindingViewAppFn = origResolveBindingApp
+		loadCLIConfigAppFn = origLoadCLI
 		resolveReferenceExecFn = origResolveReferenceExec
 		getItemExecFn = origGetItemExec
 		resolveBindingViewFn = origResolveBindingSecrets
@@ -162,17 +167,32 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--file", "KEY=secret_01", "--", "true"}, io.Discard, io.Discard, true, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "authorize ref fail") {
 		t.Fatalf("expected file authorize failure, got %v", err)
 	}
-	resolveBindingViewExecFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+	resolveBindingViewAppFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
 		return store.Binding{}, nil, errors.New("binding fail")
 	}
 	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--", "true"}, io.Discard, io.Discard, false, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "binding fail") {
 		t.Fatalf("expected execute binding failure, got %v", err)
 	}
-	resolveBindingViewExecFn = origResolveBindingExec
+	resolveBindingViewAppFn = origResolveBindingApp
 
 	authorizeReferenceAppFn = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
 		return store.Item{Name: "api_token", Value: []byte("abc123")}, nil
 	}
+	loadCLIConfigAppFn = func() (paths.CLIConfig, error) {
+		autoProtect := false
+		return paths.CLIConfig{AutoProtectRepos: &autoProtect}, nil
+	}
+	unmanagedProjectRoot := t.TempDir()
+	if err := executeCommand(context.Background(), []string{"--project-root", unmanagedProjectRoot, "--env", "KEY=secret_01", "--", "true"}, io.Discard, io.Discard, false, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "not managed yet") {
+		t.Fatalf("expected execute unmanaged-project failure, got %v", err)
+	}
+	if err := writeEnvCommand(context.Background(), []string{"--project-root", unmanagedProjectRoot, "--output", filepath.Join(t.TempDir(), ".env"), "--env", "KEY=secret_01"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "not managed yet") {
+		t.Fatalf("expected write-env unmanaged-project failure, got %v", err)
+	}
+	if err := captureCommand(context.Background(), []string{"--name", "captured", "--value", "v", "--project-root", unmanagedProjectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "not managed yet") {
+		t.Fatalf("expected capture unmanaged-project failure, got %v", err)
+	}
+	loadCLIConfigAppFn = origLoadCLI
 	runnerExecuteFn = func(context.Context, runner.Input) (runner.Result, error) {
 		return runner.Result{}, errors.New("runner fail")
 	}
@@ -202,13 +222,13 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 		t.Fatalf("expected write-env grant convenience failure, got %v", err)
 	}
 	grantConvenienceAppFn = origGrantConvenience
-	resolveBindingViewExecFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+	resolveBindingViewAppFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
 		return store.Binding{}, nil, errors.New("binding fail")
 	}
 	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", filepath.Join(t.TempDir(), ".env"), "--env", "KEY=secret_01"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "binding fail") {
 		t.Fatalf("expected write-env binding failure, got %v", err)
 	}
-	resolveBindingViewExecFn = origResolveBindingExec
+	resolveBindingViewAppFn = origResolveBindingApp
 	resolveReferenceExecFn = func(*store.Handle, context.Context, string, string) (store.ResolvedReference, error) {
 		return store.ResolvedReference{}, errors.New("resolve ref fail")
 	}
@@ -257,13 +277,13 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 	}
 	walkProjectDirFn = origWalkDir
 
-	resolveBindingViewFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+	resolveBindingViewAppFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
 		return store.Binding{}, nil, errors.New("binding fail")
 	}
 	if err := captureCommand(context.Background(), []string{"--name", "captured", "--value", "v", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "binding fail") {
 		t.Fatalf("expected capture binding failure, got %v", err)
 	}
-	resolveBindingViewFn = origResolveBindingSecrets
+	resolveBindingViewAppFn = origResolveBindingApp
 	getItemAppFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get item fail") }
 	if err := captureCommand(context.Background(), []string{"--name", "captured", "--value", "v", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "get item fail") {
 		t.Fatalf("expected capture get-item failure, got %v", err)

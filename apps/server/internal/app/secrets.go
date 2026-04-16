@@ -182,8 +182,11 @@ func captureCommand(ctx context.Context, args []string, stdout io.Writer, s star
 	if err != nil {
 		return err
 	}
-	binding, _, err := resolveBindingViewFn(handle, ctx, *projectRoot)
+	binding, _, _, err := ensureProjectBinding(ctx, handle, *projectRoot)
 	if err != nil {
+		return err
+	}
+	if err := requireProjectBinding(binding, *projectRoot); err != nil {
 		return err
 	}
 	_, existingErr := getItemAppFn(handle, *name)

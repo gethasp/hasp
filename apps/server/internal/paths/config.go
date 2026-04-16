@@ -9,7 +9,10 @@ import (
 )
 
 type CLIConfig struct {
-	HomeDir string `json:"home_dir,omitempty"`
+	HomeDir              string `json:"home_dir,omitempty"`
+	AutoProtectRepos     *bool  `json:"auto_protect_repos,omitempty"`
+	AutoInstallHooks     *bool  `json:"auto_install_hooks,omitempty"`
+	DefaultCapturePolicy string `json:"default_capture_policy,omitempty"`
 }
 
 var (
@@ -43,6 +46,7 @@ func LoadConfig() (CLIConfig, error) {
 		return CLIConfig{}, err
 	}
 	cfg.HomeDir = strings.TrimSpace(cfg.HomeDir)
+	cfg.DefaultCapturePolicy = strings.TrimSpace(cfg.DefaultCapturePolicy)
 	return cfg, nil
 }
 
@@ -55,6 +59,7 @@ func SaveConfig(cfg CLIConfig) error {
 		return err
 	}
 	cfg.HomeDir = strings.TrimSpace(cfg.HomeDir)
+	cfg.DefaultCapturePolicy = strings.TrimSpace(cfg.DefaultCapturePolicy)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	data = append(data, '\n')
 	return configWriteFileFn(path, data, 0o600)

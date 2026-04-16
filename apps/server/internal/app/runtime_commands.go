@@ -74,7 +74,7 @@ func tuiCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	binding, visible, err := handle.ResolveBindingView(ctx, *projectRoot)
+	binding, visible, _, err := ensureProjectBinding(ctx, handle, *projectRoot)
 	if err != nil {
 		return err
 	}

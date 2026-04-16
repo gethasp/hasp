@@ -104,8 +104,11 @@ func executeCommand(ctx context.Context, args []string, stdout io.Writer, stderr
 	if err != nil {
 		return err
 	}
-	binding, _, err := resolveBindingViewExecFn(handle, ctx, *projectRoot)
+	binding, _, _, err := ensureProjectBinding(ctx, handle, *projectRoot)
 	if err != nil {
+		return err
+	}
+	if err := requireProjectBinding(binding, *projectRoot); err != nil {
 		return err
 	}
 	items := make([]store.Item, 0, len(envRefs)+len(fileRefs))
@@ -190,8 +193,11 @@ func writeEnvCommand(ctx context.Context, args []string, stdout io.Writer, stder
 	if err != nil {
 		return err
 	}
-	binding, _, err := resolveBindingViewExecFn(handle, ctx, *projectRoot)
+	binding, _, _, err := ensureProjectBinding(ctx, handle, *projectRoot)
 	if err != nil {
+		return err
+	}
+	if err := requireProjectBinding(binding, *projectRoot); err != nil {
 		return err
 	}
 	lines := make([]string, 0, len(envRefs))

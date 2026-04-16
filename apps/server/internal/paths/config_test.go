@@ -41,9 +41,19 @@ func TestConfigPathAndRoundTrip(t *testing.T) {
 	if cfg.HomeDir != "" {
 		t.Fatalf("unexpected home dir in empty config: %q", cfg.HomeDir)
 	}
+	if cfg.AutoProtectRepos != nil || cfg.AutoInstallHooks != nil || cfg.DefaultCapturePolicy != "" {
+		t.Fatalf("unexpected machine defaults in empty config: %+v", cfg)
+	}
 
 	wantHome := filepath.Join(t.TempDir(), "vault-home")
-	if err := SaveConfig(CLIConfig{HomeDir: wantHome}); err != nil {
+	autoProtect := true
+	autoInstallHooks := false
+	if err := SaveConfig(CLIConfig{
+		HomeDir:              wantHome,
+		AutoProtectRepos:     &autoProtect,
+		AutoInstallHooks:     &autoInstallHooks,
+		DefaultCapturePolicy: "session",
+	}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 	got, err := LoadConfig()
@@ -52,6 +62,55 @@ func TestConfigPathAndRoundTrip(t *testing.T) {
 	}
 	if got.HomeDir != wantHome {
 		t.Fatalf("home dir = %q, want %q", got.HomeDir, wantHome)
+	}
+	if got.AutoProtectRepos == nil || !*got.AutoProtectRepos {
+		t.Fatalf("expected auto-protect default to round trip, got %+v", got)
+	}
+	if got.AutoInstallHooks == nil || *got.AutoInstallHooks {
+		t.Fatalf("expected auto-install-hooks false to round trip, got %+v", got)
+	}
+	if got.DefaultCapturePolicy != "session" {
+		t.Fatalf("default capture policy = %q, want session", got.DefaultCapturePolicy)
+	}
+}
+
+func TestLoadAndSaveConfigTrimMachineDefaults(t *testing.T) {
+	base := t.TempDir()
+	origUserConfigDir := userConfigDir
+	origRead := configReadFileFn
+	origWrite := configWriteFileFn
+	origMkdir := configMkdirAllFn
+	defer func() {
+		userConfigDir = origUserConfigDir
+		configReadFileFn = origRead
+		configWriteFileFn = origWrite
+		configMkdirAllFn = origMkdir
+	}()
+
+	userConfigDir = func() (string, error) { return base, nil }
+	configReadFileFn = os.ReadFile
+	configWriteFileFn = os.WriteFile
+	configMkdirAllFn = os.MkdirAll
+
+	autoProtect := true
+	autoInstallHooks := true
+	if err := SaveConfig(CLIConfig{
+		HomeDir:              "  /tmp/hasp-home  ",
+		AutoProtectRepos:     &autoProtect,
+		AutoInstallHooks:     &autoInstallHooks,
+		DefaultCapturePolicy: "  auto  ",
+	}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	got, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got.HomeDir != "/tmp/hasp-home" {
+		t.Fatalf("trimmed home dir = %q", got.HomeDir)
+	}
+	if got.DefaultCapturePolicy != "auto" {
+		t.Fatalf("trimmed default capture policy = %q", got.DefaultCapturePolicy)
 	}
 }
 

@@ -183,11 +183,14 @@ func TestSetupResolveAgentsAndDetection(t *testing.T) {
 
 func TestSetupResolveBoolOptionsAndPassword(t *testing.T) {
 	lockAppSeams(t)
-	prompt := newSetupPrompter(bytes.NewBufferString("n\ny\nn\n"), io.Discard)
+	prompt := newSetupPrompter(bytes.NewBufferString("n\nn\ny\nn\n"), io.Discard)
 	opts := setupOptions{}
 	agents := []setupAgentSpec{{ID: "claude-code", Format: "json", ConfigPath: func(string) string { return filepath.Join(t.TempDir(), ".claude.json") }}}
 	if err := setupResolveBoolOptions(&opts, prompt, agents); err != nil {
 		t.Fatalf("resolve bool options: %v", err)
+	}
+	if opts.AutoProtectRepos.value {
+		t.Fatal("expected auto protect repos false")
 	}
 	if opts.InstallHooks.value {
 		t.Fatal("expected install hooks false")
@@ -561,8 +564,8 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 
 	input := strings.Join([]string{
 		"",
-		repo,
 		"",
+		"n",
 		"n",
 		"n",
 		"n",
@@ -579,7 +582,7 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 	if !strings.Contains(text, "Setup complete") {
 		t.Fatalf("expected human setup summary, got %q", text)
 	}
-	if !strings.Contains(text, haspHome) || !strings.Contains(text, repo) {
-		t.Fatalf("expected summary to mention hasp home and repo, got %q", text)
+	if !strings.Contains(text, haspHome) || !strings.Contains(text, "Automatic repo adoption") {
+		t.Fatalf("expected summary to mention hasp home and machine defaults, got %q", text)
 	}
 }

@@ -78,6 +78,7 @@ type setupOptions struct {
 	HaspHome                string
 	Repo                    string
 	Agents                  setupAgentFlags
+	AutoProtectRepos        setupOptionalBool
 	PasswordEnv             string
 	PasswordStdin           bool
 	ImportPath              string
@@ -110,6 +111,7 @@ type setupPlanPreview struct {
 	HaspHome                string
 	ProjectRoot             string
 	Agents                  []setupAgentSpec
+	AutoProtectRepos        bool
 	ImportPath              string
 	BindImports             bool
 	InstallHooks            bool
@@ -122,6 +124,9 @@ type setupSummary struct {
 	ConfigPath        string                   `json:"config_path"`
 	InitState         string                   `json:"init_state"`
 	ProjectRoot       string                   `json:"project_root"`
+	AutoProtectRepos  bool                     `json:"auto_protect_repos"`
+	AutoInstallHooks  bool                     `json:"auto_install_hooks"`
+	DefaultPolicy     store.SecretPolicy       `json:"default_policy"`
 	Binding           *store.Binding           `json:"binding,omitempty"`
 	Visible           []store.VisibleReference `json:"visible,omitempty"`
 	ImportPreview     *importPreview           `json:"import_preview,omitempty"`
@@ -229,9 +234,11 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 	var installHooks setupOptionalBool
 	var convenienceUnlock setupOptionalBool
 	var overwriteExistingConfig setupOptionalBool
+	var autoProtectRepos setupOptionalBool
 	fs.Var(&agents, "agent", "agent id")
 	fs.Var(&bindItems, "bind-item", "item name")
 	fs.Var(&aliases, "alias", "alias=item")
+	fs.Var(&autoProtectRepos, "auto-protect-repos", "true|false")
 	fs.Var(&installHooks, "install-hooks", "true|false")
 	fs.Var(&convenienceUnlock, "enable-convenience-unlock", "true|false")
 	fs.Var(&overwriteExistingConfig, "overwrite-existing-config", "true|false")
@@ -253,6 +260,7 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 		HaspHome:                strings.TrimSpace(*haspHome),
 		Repo:                    strings.TrimSpace(*repo),
 		Agents:                  agents,
+		AutoProtectRepos:        autoProtectRepos,
 		PasswordEnv:             strings.TrimSpace(*passwordEnv),
 		PasswordStdin:           *passwordStdin,
 		ImportPath:              strings.TrimSpace(*importPath),
@@ -281,11 +289,14 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	}
 	opts.HaspHome = resolvedHome
 
-	projectRoot, err := setupResolveProjectRoot(ctx, opts, prompt)
-	if err != nil {
-		return setupSummary{}, err
+	projectRoot := ""
+	if strings.TrimSpace(opts.Repo) != "" {
+		projectRoot, err = setupResolveProjectRoot(ctx, opts, prompt)
+		if err != nil {
+			return setupSummary{}, err
+		}
+		opts.Repo = projectRoot
 	}
-	opts.Repo = projectRoot
 	if err := setupValidateHomePath(resolvedHome, projectRoot); err != nil {
 		return setupSummary{}, err
 	}
@@ -306,6 +317,9 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err := setupResolveBoolOptions(&opts, prompt, selectedAgents); err != nil {
 		return setupSummary{}, err
 	}
+	if err := validateProjectScopedSetupOptions(opts); err != nil {
+		return setupSummary{}, err
+	}
 	if err := validateSetupNonInteractive(opts); err != nil {
 		return setupSummary{}, err
 	}
@@ -319,6 +333,7 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			HaspHome:                resolvedHome,
 			ProjectRoot:             projectRoot,
 			Agents:                  selectedAgents,
+			AutoProtectRepos:        opts.AutoProtectRepos.value,
 			ImportPath:              opts.ImportPath,
 			BindImports:             opts.BindImports,
 			InstallHooks:            opts.InstallHooks.value,
@@ -334,7 +349,12 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		return setupSummary{}, err
 	}
 
-	if err := setupSaveConfigFn(paths.CLIConfig{HomeDir: resolvedHome}); err != nil {
+	if err := setupSaveConfigFn(paths.CLIConfig{
+		HomeDir:              resolvedHome,
+		AutoProtectRepos:     setupBoolPointer(opts.AutoProtectRepos.value),
+		AutoInstallHooks:     setupBoolPointer(opts.InstallHooks.value),
+		DefaultCapturePolicy: string(opts.DefaultPolicy),
+	}); err != nil {
 		return setupSummary{}, err
 	}
 	restoreHome, err := setupSetEnvFn(paths.EnvHome, resolvedHome)
@@ -353,13 +373,15 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	}
 
 	currentAliases := map[string]string{}
-	if existingBinding, _, err := setupResolveBindingViewFn(ctx, handle, projectRoot); err == nil {
-		currentAliases = cloneAliasSet(existingBinding.Aliases)
+	if projectRoot != "" {
+		if existingBinding, _, err := setupResolveBindingViewFn(ctx, handle, projectRoot); err == nil {
+			currentAliases = cloneAliasSet(existingBinding.Aliases)
+		}
 	}
 
 	var preview *importPreview
 	if opts.ImportPath != "" {
-		prepared, err := prepareImport(opts.ImportPath, opts.ImportFormat, "", setupImportInput(prompt, opts), opts.BindImports, currentAliases)
+		prepared, err := prepareImport(opts.ImportPath, opts.ImportFormat, "", setupImportInput(prompt, opts), opts.BindImports && projectRoot != "", currentAliases)
 		if err != nil {
 			return setupSummary{}, err
 		}
@@ -372,9 +394,15 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		return setupSummary{}, err
 	}
 
-	binding, visible, err := setupFinalizeBindingFn(ctx, handle, projectRoot, opts)
-	if err != nil {
-		return setupSummary{}, err
+	var (
+		binding store.Binding
+		visible []store.VisibleReference
+	)
+	if projectRoot != "" {
+		binding, visible, err = setupFinalizeBindingFn(ctx, handle, projectRoot, opts)
+		if err != nil {
+			return setupSummary{}, err
+		}
 	}
 
 	convenienceState := "disabled"
@@ -405,7 +433,9 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		ConfigPath:        configPath,
 		InitState:         initState,
 		ProjectRoot:       projectRoot,
-		Binding:           &binding,
+		AutoProtectRepos:  opts.AutoProtectRepos.value,
+		AutoInstallHooks:  opts.InstallHooks.value,
+		DefaultPolicy:     opts.DefaultPolicy,
 		Visible:           visible,
 		ImportPreview:     preview,
 		Imported:          imported,
@@ -413,7 +443,10 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		ConvenienceUnlock: convenienceState,
 		Verification:      verification,
 		Notes:             setupNotes(selectedAgents, configExists, opts, convenienceState),
-		NextSteps:         setupNextSteps(projectRoot, binding, resolvedHome, convenienceState),
+		NextSteps:         setupNextSteps(projectRoot, binding, resolvedHome, convenienceState, opts.AutoProtectRepos.value, opts.InstallHooks.value),
+	}
+	if projectRoot != "" {
+		summary.Binding = &binding
 	}
 	return summary, nil
 }
@@ -548,25 +581,48 @@ func setupResolveAgents(opts setupOptions, prompt *setupPrompter) ([]setupAgentS
 }
 
 func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents []setupAgentSpec) error {
+	if !opts.AutoProtectRepos.set {
+		if opts.NonInteractive {
+			opts.AutoProtectRepos = setupOptionalBool{set: true, value: true}
+		} else {
+			if err := setupWriteStage(prompt.out, "Repo coverage",
+				"HASP can automatically protect projects the first time you use it in them.",
+				"Repo scope still stays local and project-specific under the hood.",
+			); err != nil {
+				return err
+			}
+			value, err := promptBool(prompt, "Automatically protect projects on first use", true)
+			if err != nil {
+				return err
+			}
+			opts.AutoProtectRepos = setupOptionalBool{set: true, value: value}
+		}
+	}
 	if !opts.InstallHooks.set {
 		if opts.NonInteractive {
-			return errors.New("non-interactive setup requires --install-hooks=true|false")
+			opts.InstallHooks = setupOptionalBool{set: true, value: true}
+		} else {
+			label := "Install repo guardrails automatically for new repos"
+			if !opts.AutoProtectRepos.value {
+				label = "Install repo guardrails automatically if you later enable auto-protect"
+			}
+			value, err := promptBool(prompt, label, true)
+			if err != nil {
+				return err
+			}
+			opts.InstallHooks = setupOptionalBool{set: true, value: value}
 		}
-		value, err := promptBool(prompt, "Install repo guardrails for this repository", true)
-		if err != nil {
-			return err
-		}
-		opts.InstallHooks = setupOptionalBool{set: true, value: value}
 	}
 	if !opts.EnableConvenienceUnlock.set {
 		if opts.NonInteractive {
-			return errors.New("non-interactive setup requires --enable-convenience-unlock=true|false")
+			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: defaultSetupConvenienceUnlock()}
+		} else {
+			value, err := promptBool(prompt, "Use convenience unlock on this machine when available", defaultSetupConvenienceUnlock())
+			if err != nil {
+				return err
+			}
+			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value}
 		}
-		value, err := promptBool(prompt, "Use convenience unlock on this machine when available", defaultSetupConvenienceUnlock())
-		if err != nil {
-			return err
-		}
-		opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value}
 	}
 	if opts.ImportPath == "" && !opts.NonInteractive {
 		if err := setupWriteStage(prompt.out, "Optional import",
@@ -587,7 +643,7 @@ func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents [
 		}
 		opts.ImportPath = strings.TrimSpace(value)
 	}
-	if opts.ImportPath != "" && !opts.BindImports && !opts.NonInteractive {
+	if opts.ImportPath != "" && !opts.BindImports && !opts.NonInteractive && strings.TrimSpace(opts.Repo) != "" {
 		value, err := promptBool(prompt, "Bind imported secrets to this repository now", true)
 		if err != nil {
 			return err
@@ -614,9 +670,6 @@ func validateSetupNonInteractive(opts setupOptions) error {
 	}
 	if opts.HaspHome == "" {
 		return errors.New("non-interactive setup requires --hasp-home")
-	}
-	if opts.Repo == "" {
-		return errors.New("non-interactive setup requires --repo")
 	}
 	if len(opts.Agents) == 0 {
 		return errors.New("non-interactive setup requires at least one --agent")
@@ -1069,13 +1122,18 @@ func setupNotes(agents []setupAgentSpec, configExisted bool, opts setupOptions, 
 	return notes
 }
 
-func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, convenienceState string) []string {
+func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, convenienceState string, autoProtect bool, autoInstallHooks bool) []string {
 	steps := []string{
 		"verify MCP with: printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\\n' | hasp mcp",
-		"review the repo binding with: hasp project status --project-root \"" + projectRoot + "\"",
 	}
-	if len(binding.Aliases) > 0 {
+	if strings.TrimSpace(projectRoot) != "" {
+		steps = append(steps, "review the repo binding with: hasp project status --project-root \""+projectRoot+"\"")
+	}
+	if strings.TrimSpace(projectRoot) != "" && len(binding.Aliases) > 0 {
 		steps = append(steps, "test one brokered command with: hasp run --project-root \""+projectRoot+"\" --env NAME=<alias> --grant-project window --grant-secret session --grant-window 15m -- your-command")
+	} else {
+		steps = append(steps, "the first time you use HASP in a project, it will adopt that project automatically")
+		steps = append(steps, "inspect an adopted repo with: hasp project status --project-root /path/to/repo")
 	}
 	if convenienceState != "enabled" {
 		steps = append(steps, "future CLI commands still need HASP_MASTER_PASSWORD unless you rerun setup and enable convenience unlock")
@@ -1086,7 +1144,7 @@ func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, 
 
 func renderSetupSummary(out io.Writer, summary setupSummary) error {
 	if err := setupWriteStage(out, "Setup complete",
-		"HASP is configured for this machine and repository.",
+		"HASP is configured for this machine.",
 	); err != nil {
 		return err
 	}
@@ -1096,7 +1154,10 @@ func renderSetupSummary(out io.Writer, summary setupSummary) error {
 	if _, err := fmt.Fprintf(out, "Saved CLI config: %s\n", summary.ConfigPath); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "Protected repository: %s\n", summary.ProjectRoot); err != nil {
+	if _, err := fmt.Fprintf(out, "Automatic repo adoption: %s\n", setupEnabledDisabled(summary.AutoProtectRepos)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Automatic repo guardrails: %s\n", setupYesNo(summary.AutoInstallHooks)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(out, "Vault state: %s\n", summary.InitState); err != nil {
@@ -1104,6 +1165,11 @@ func renderSetupSummary(out io.Writer, summary setupSummary) error {
 	}
 	if _, err := fmt.Fprintf(out, "Convenience unlock: %s\n", summary.ConvenienceUnlock); err != nil {
 		return err
+	}
+	if strings.TrimSpace(summary.ProjectRoot) != "" {
+		if _, err := fmt.Fprintf(out, "Protected repository: %s\n", summary.ProjectRoot); err != nil {
+			return err
+		}
 	}
 	if len(summary.Agents) > 0 {
 		if _, err := fmt.Fprintln(out, "Configured agents:"); err != nil {
@@ -1136,7 +1202,7 @@ func setupWriteIntro(out io.Writer) error {
 	return setupWriteStage(out, "HASP setup",
 		"HASP setup will:",
 		"1. choose where local encrypted HASP data lives on this machine",
-		"2. bind one repository so HASP can broker secrets there",
+		"2. set defaults for automatically protecting repos on first use",
 		"3. configure selected coding agents to talk to HASP over MCP",
 		"Press Enter to accept the default shown in brackets.",
 	)
@@ -1253,9 +1319,12 @@ func parseSetupAgentMenuSelection(supported []setupAgentSpec, value string) ([]s
 func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
 	lines := []string{
 		fmt.Sprintf("Local HASP data: %s", setupDisplayPath(plan.HaspHome)),
-		fmt.Sprintf("Protected repository: %s", plan.ProjectRoot),
+		fmt.Sprintf("Automatic repo adoption: %s", setupEnabledDisabled(plan.AutoProtectRepos)),
 		fmt.Sprintf("Install repo guardrails: %s", setupYesNo(plan.InstallHooks)),
 		fmt.Sprintf("Convenience unlock: %s", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
+	}
+	if strings.TrimSpace(plan.ProjectRoot) != "" {
+		lines = append(lines, fmt.Sprintf("Protect this repo now: %s", plan.ProjectRoot))
 	}
 	if strings.TrimSpace(plan.ImportPath) == "" {
 		lines = append(lines, "Import during setup: skip for now")
@@ -1334,6 +1403,11 @@ func setupSavedHomeLooksUsable(path string) bool {
 
 func defaultSetupConvenienceUnlock() bool {
 	return setupGOOS == "darwin"
+}
+
+func setupBoolPointer(value bool) *bool {
+	v := value
+	return &v
 }
 
 func setupYesNo(value bool) string {

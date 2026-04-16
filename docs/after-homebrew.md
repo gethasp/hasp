@@ -17,9 +17,16 @@ hasp setup
 That guided flow now walks through:
 
 - where local encrypted HASP data lives on this machine
-- which repository HASP should protect
+- machine defaults for automatic project protection
 - which coding agents should be configured for MCP
 - a final review step before HASP writes local changes
+
+You do not have to manually onboard every repo up front anymore.
+
+After machine setup, HASP can automatically adopt a project the first time you
+use HASP inside it. Repo-scoped bindings still exist under the hood, but they
+are created for you from machine defaults instead of requiring manual setup
+first.
 
 The rest of this page is the manual flow and the troubleshooting fallback.
 

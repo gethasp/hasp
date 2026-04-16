@@ -105,7 +105,8 @@ func TestSetupResolveBoolOptionsExistingConfigAndImportPrompt(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := setupOptions{}
-	prompt := newSetupPrompter(bytes.NewBufferString("y\nn\ny\n/path/to/import.env\ny\ny\n"), io.Discard)
+	opts.Repo = t.TempDir()
+	prompt := newSetupPrompter(bytes.NewBufferString("y\nn\ny\ny\n/path/to/import.env\ny\ny\n"), io.Discard)
 	agents := []setupAgentSpec{{ID: "claude-code", Format: "json", ConfigPath: func(string) string { return filepath.Join(homeDir, ".claude.json") }}}
 	if err := setupResolveBoolOptions(&opts, prompt, agents); err != nil {
 		t.Fatalf("resolve bool options: %v", err)
