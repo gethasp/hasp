@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +106,17 @@ type setupAgentOutcome struct {
 	Changed    bool   `json:"changed"`
 }
 
+type setupPlanPreview struct {
+	HaspHome                string
+	ProjectRoot             string
+	Agents                  []setupAgentSpec
+	ImportPath              string
+	BindImports             bool
+	InstallHooks            bool
+	EnableConvenienceUnlock bool
+	ConfigExists            bool
+}
+
 type setupSummary struct {
 	HaspHome          string                   `json:"hasp_home"`
 	ConfigPath        string                   `json:"config_path"`
@@ -170,6 +182,7 @@ var (
 	}
 	setupWriteIntroFn          = setupWriteIntro
 	setupWriteSelectedAgentsFn = setupWriteSelectedAgents
+	setupWriteConfirmationFn   = setupWriteConfirmation
 	setupResolveBindingViewFn  = func(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
 		return handle.ResolveBindingView(ctx, projectRoot)
 	}
@@ -299,6 +312,20 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	configExists := setupAnyExistingAgentConfig(selectedAgents)
 	if configExists && !opts.OverwriteExistingConfig.value {
 		return setupSummary{}, errors.New("setup aborted because overwrite approval was denied for existing agent config files")
+	}
+	if !opts.NonInteractive {
+		if err := setupConfirmPlan(prompt, setupPlanPreview{
+			HaspHome:                resolvedHome,
+			ProjectRoot:             projectRoot,
+			Agents:                  selectedAgents,
+			ImportPath:              opts.ImportPath,
+			BindImports:             opts.BindImports,
+			InstallHooks:            opts.InstallHooks.value,
+			EnableConvenienceUnlock: opts.EnableConvenienceUnlock.value,
+			ConfigExists:            configExists,
+		}); err != nil {
+			return setupSummary{}, err
+		}
 	}
 
 	password, vaultExists, err := setupResolvePasswordFn(prompt, opts, resolvedHome)
@@ -501,42 +528,23 @@ func setupResolveAgents(opts setupOptions, prompt *setupPrompter) ([]setupAgentS
 		return selectSetupAgents(supported, []string(opts.Agents))
 	}
 	detected := detectSetupAgents(supported)
-	defaultIDs := make([]string, 0, len(detected))
-	for _, spec := range detected {
-		defaultIDs = append(defaultIDs, spec.ID)
-	}
-	if len(defaultIDs) == 0 {
-		defaultIDs = []string{"codex-cli"}
-	}
+	defaultIDs := setupDefaultAgentIDs(detected)
 	if opts.NonInteractive {
 		return nil, errors.New("non-interactive setup requires at least one --agent")
 	}
-	choices := []string{}
-	for _, spec := range supported {
-		choices = append(choices, spec.ID)
-	}
-	lines := []string{
-		"HASP can add a local MCP entry for supported coding agents and will back up any existing config before changing it.",
-	}
-	if len(detected) > 0 {
-		detectedLabels := make([]string, 0, len(detected))
-		for _, spec := range detected {
-			detectedLabels = append(detectedLabels, spec.Label)
-		}
-		lines = append(lines, "Detected on this machine: "+strings.Join(detectedLabels, ", "))
-	} else {
-		lines = append(lines, "No supported agent was auto-detected. Press Enter to configure Codex CLI by default, or type another supported id.")
-	}
-	if err := setupWriteStage(prompt.out, "Agent setup", lines...); err != nil {
+	if err := setupWriteAgentMenu(prompt.out, supported, defaultIDs); err != nil {
 		return nil, err
 	}
-	value, err := promptString(prompt, "Agents to configure for MCP (comma-separated ids: "+strings.Join(choices, ", ")+")", strings.Join(defaultIDs, ","))
+	defaultSelection := setupDefaultAgentSelection(supported, defaultIDs)
+	value, err := promptString(prompt, "Select agents to configure (numbers separated by commas)", defaultSelection)
 	if err != nil {
 		return nil, err
 	}
-	var flags setupAgentFlags
-	_ = flags.Set(value)
-	return selectSetupAgents(supported, []string(flags))
+	selected, err := parseSetupAgentMenuSelection(supported, value)
+	if err != nil {
+		return nil, err
+	}
+	return selectSetupAgents(supported, selected)
 }
 
 func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents []setupAgentSpec) error {
@@ -1156,6 +1164,126 @@ func setupWriteSelectedAgents(out io.Writer, agents []setupAgentSpec) error {
 	return setupWriteStage(out, "Agent targets", lines...)
 }
 
+func setupWriteAgentMenu(out io.Writer, supported []setupAgentSpec, defaultIDs []string) error {
+	lines := []string{
+		"Choose which coding agents HASP should configure for MCP.",
+		"Enter one or more numbers separated by commas. Existing config files are backed up before mutation.",
+	}
+	defaultSet := map[string]struct{}{}
+	for _, id := range defaultIDs {
+		defaultSet[id] = struct{}{}
+	}
+	for idx, agent := range supported {
+		suffix := ""
+		if _, ok := defaultSet[agent.ID]; ok {
+			suffix = " [default]"
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s%s", idx+1, agent.Label, suffix))
+		lines = append(lines, fmt.Sprintf("   writes %s", setupDisplayPath(agent.ConfigPath(""))))
+	}
+	return setupWriteStage(out, "Agent setup", lines...)
+}
+
+func setupDefaultAgentIDs(detected []setupAgentSpec) []string {
+	defaultIDs := make([]string, 0, len(detected))
+	for _, spec := range detected {
+		defaultIDs = append(defaultIDs, spec.ID)
+	}
+	if len(defaultIDs) == 0 {
+		defaultIDs = []string{"codex-cli"}
+	}
+	return defaultIDs
+}
+
+func setupDefaultAgentSelection(supported []setupAgentSpec, defaultIDs []string) string {
+	indexes := make([]string, 0, len(defaultIDs))
+	for _, id := range defaultIDs {
+		for idx, spec := range supported {
+			if spec.ID == id {
+				indexes = append(indexes, strconv.Itoa(idx+1))
+				break
+			}
+		}
+	}
+	if len(indexes) == 0 {
+		return "1"
+	}
+	return strings.Join(indexes, ",")
+}
+
+func parseSetupAgentMenuSelection(supported []setupAgentSpec, value string) ([]string, error) {
+	selected := []string{}
+	seen := map[string]struct{}{}
+	for _, raw := range strings.Split(value, ",") {
+		token := strings.TrimSpace(raw)
+		if token == "" {
+			continue
+		}
+		if index, err := strconv.Atoi(token); err == nil {
+			if index < 1 || index > len(supported) {
+				return nil, fmt.Errorf("unsupported setup agent selection %q", token)
+			}
+			id := supported[index-1].ID
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			selected = append(selected, id)
+			continue
+		}
+		idx := slices.IndexFunc(supported, func(spec setupAgentSpec) bool { return spec.ID == token })
+		if idx < 0 {
+			return nil, fmt.Errorf("unsupported setup agent selection %q", token)
+		}
+		id := supported[idx].ID
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		selected = append(selected, id)
+	}
+	return selected, nil
+}
+
+func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
+	lines := []string{
+		fmt.Sprintf("Local HASP data: %s", setupDisplayPath(plan.HaspHome)),
+		fmt.Sprintf("Protected repository: %s", plan.ProjectRoot),
+		fmt.Sprintf("Install repo guardrails: %s", setupYesNo(plan.InstallHooks)),
+		fmt.Sprintf("Convenience unlock: %s", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
+	}
+	if strings.TrimSpace(plan.ImportPath) == "" {
+		lines = append(lines, "Import during setup: skip for now")
+	} else {
+		lines = append(lines, fmt.Sprintf("Import during setup: %s", plan.ImportPath))
+		lines = append(lines, fmt.Sprintf("Bind imported secrets now: %s", setupYesNo(plan.BindImports)))
+	}
+	if plan.ConfigExists {
+		lines = append(lines, "Existing agent config files will be updated with backups.")
+	}
+	if len(plan.Agents) > 0 {
+		lines = append(lines, "Agent config targets:")
+		for _, agent := range plan.Agents {
+			lines = append(lines, fmt.Sprintf("- %s -> %s", agent.Label, setupDisplayPath(agent.ConfigPath(""))))
+		}
+	}
+	return setupWriteStage(out, "Review before apply", lines...)
+}
+
+func setupConfirmPlan(prompt *setupPrompter, plan setupPlanPreview) error {
+	if err := setupWriteConfirmationFn(prompt.out, plan); err != nil {
+		return err
+	}
+	proceed, err := promptBool(prompt, "Apply these changes now", true)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return errors.New("setup cancelled before making changes")
+	}
+	return nil
+}
+
 func setupDisplayPath(path string) string {
 	home, err := setupUserHomeDirFn()
 	if err != nil {
@@ -1173,6 +1301,20 @@ func setupDisplayPath(path string) string {
 
 func defaultSetupConvenienceUnlock() bool {
 	return setupGOOS == "darwin"
+}
+
+func setupYesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
+func setupEnabledDisabled(value bool) string {
+	if value {
+		return "enabled when available"
+	}
+	return "disabled"
 }
 
 func promptString(prompt *setupPrompter, label string, defaultValue string) (string, error) {

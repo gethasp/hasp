@@ -649,8 +649,26 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		if err := setupWriteIntro(&out); err != nil {
 			t.Fatalf("write intro: %v", err)
 		}
+		if err := setupWriteAgentMenu(&out, []setupAgentSpec{
+			{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }},
+			{ID: "cursor", Label: "Cursor", ConfigPath: func(string) string { return "/tmp/cursor.json" }},
+		}, []string{"cursor"}); err != nil {
+			t.Fatalf("write agent menu: %v", err)
+		}
 		if err := setupWriteSelectedAgents(&out, []setupAgentSpec{{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}); err != nil {
 			t.Fatalf("write selected agents: %v", err)
+		}
+		if err := setupWriteConfirmation(&out, setupPlanPreview{
+			HaspHome:                "/tmp/.hasp",
+			ProjectRoot:             "/tmp/repo",
+			Agents:                  []setupAgentSpec{{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}},
+			ImportPath:              "/tmp/.env",
+			BindImports:             true,
+			InstallHooks:            true,
+			EnableConvenienceUnlock: true,
+			ConfigExists:            true,
+		}); err != nil {
+			t.Fatalf("write confirmation: %v", err)
 		}
 		if err := renderSetupSummary(&out, setupSummary{
 			HaspHome:          "/tmp/.hasp",
@@ -668,7 +686,7 @@ func TestSetupPresentationHelpers(t *testing.T) {
 			t.Fatalf("render summary: %v", err)
 		}
 		text := out.String()
-		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents:") {
+		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents:") || !strings.Contains(text, "Review before apply") {
 			t.Fatalf("unexpected presentation output %q", text)
 		}
 
@@ -689,6 +707,18 @@ func TestSetupPresentationHelpers(t *testing.T) {
 			})
 			if err == nil {
 				t.Fatalf("expected render summary write failure at call %d", failAt)
+			}
+		}
+		for failAt := 1; failAt <= 6; failAt++ {
+			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
+			if err := setupWriteConfirmation(writer, setupPlanPreview{
+				HaspHome:                "/tmp/.hasp",
+				ProjectRoot:             "/tmp/repo",
+				Agents:                  []setupAgentSpec{{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}},
+				InstallHooks:            true,
+				EnableConvenienceUnlock: true,
+			}); err == nil {
+				t.Fatalf("expected write confirmation failure at call %d", failAt)
 			}
 		}
 		out.Reset()
@@ -753,6 +783,39 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		if err := setupWriteSelectedAgents(io.Discard, nil); err != nil {
 			t.Fatalf("expected empty selected agents writer to succeed, got %v", err)
 		}
+		if got := setupDefaultAgentIDs(nil); len(got) != 1 || got[0] != "codex-cli" {
+			t.Fatalf("unexpected default agent ids %+v", got)
+		}
+		if got := setupDefaultAgentSelection([]setupAgentSpec{{ID: "codex-cli"}, {ID: "cursor"}}, []string{"cursor"}); got != "2" {
+			t.Fatalf("unexpected default agent selection %q", got)
+		}
+		if got := setupDefaultAgentSelection([]setupAgentSpec{{ID: "codex-cli"}}, []string{"missing"}); got != "1" {
+			t.Fatalf("unexpected fallback default agent selection %q", got)
+		}
+		selection, err := parseSetupAgentMenuSelection([]setupAgentSpec{{ID: "codex-cli"}, {ID: "cursor"}}, "2,codex-cli,2")
+		if err != nil || len(selection) != 2 || selection[0] != "cursor" || selection[1] != "codex-cli" {
+			t.Fatalf("unexpected parsed selection %+v err=%v", selection, err)
+		}
+		selection, err = parseSetupAgentMenuSelection([]setupAgentSpec{{ID: "codex-cli"}, {ID: "cursor"}}, " , cursor , ")
+		if err != nil || len(selection) != 1 || selection[0] != "cursor" {
+			t.Fatalf("unexpected parsed selection with blanks %+v err=%v", selection, err)
+		}
+		selection, err = parseSetupAgentMenuSelection([]setupAgentSpec{{ID: "codex-cli"}, {ID: "cursor"}}, "cursor,cursor")
+		if err != nil || len(selection) != 1 || selection[0] != "cursor" {
+			t.Fatalf("unexpected parsed duplicate id selection %+v err=%v", selection, err)
+		}
+		if _, err := parseSetupAgentMenuSelection([]setupAgentSpec{{ID: "codex-cli"}}, "9"); err == nil {
+			t.Fatal("expected invalid menu selection error")
+		}
+		if _, err := parseSetupAgentMenuSelection([]setupAgentSpec{{ID: "codex-cli"}}, "missing"); err == nil {
+			t.Fatal("expected invalid menu token error")
+		}
+		if setupYesNo(true) != "yes" || setupYesNo(false) != "no" {
+			t.Fatal("unexpected yes/no formatting")
+		}
+		if setupEnabledDisabled(true) != "enabled when available" || setupEnabledDisabled(false) != "disabled" {
+			t.Fatal("unexpected enabled/disabled formatting")
+		}
 		for failAt := 1; failAt <= 3; failAt++ {
 			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
 			if err := setupWriteStage(writer, "Title", "line"); err == nil {
@@ -762,6 +825,10 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		writer := &setupNthWriteErrWriter{allow: 0, err: errors.New("write fail")}
 		if err := setupWriteSelectedAgents(writer, []setupAgentSpec{{Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}); err == nil {
 			t.Fatal("expected setupWriteSelectedAgents failure")
+		}
+		writer = &setupNthWriteErrWriter{allow: 0, err: errors.New("write fail")}
+		if err := setupWriteAgentMenu(writer, []setupAgentSpec{{Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}, []string{"codex-cli"}); err == nil {
+			t.Fatal("expected setupWriteAgentMenu failure")
 		}
 		if value, err := promptBool(newSetupPrompter(bytes.NewBufferString("\n"), io.Discard), "label", true); err != nil || !value {
 			t.Fatalf("expected blank promptBool to use default true, got %v err=%v", value, err)
@@ -823,12 +890,14 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		origNewStore := newVaultStoreFn
 		origWriteIntro := setupWriteIntroFn
 		origWriteSelected := setupWriteSelectedAgentsFn
+		origWriteConfirmation := setupWriteConfirmationFn
 		defer func() {
 			setupUserHomeDirFn = origHome
 			setupCanonicalProjectRoot = origCanon
 			newVaultStoreFn = origNewStore
 			setupWriteIntroFn = origWriteIntro
 			setupWriteSelectedAgentsFn = origWriteSelected
+			setupWriteConfirmationFn = origWriteConfirmation
 		}()
 		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
 		setupCanonicalProjectRoot = func(_ context.Context, value string) (string, error) { return value, nil }
@@ -851,6 +920,11 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		setupWriteSelectedAgentsFn = func(io.Writer, []setupAgentSpec) error { return errors.New("selected fail") }
 		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "selected fail") {
 			t.Fatalf("expected selected-agent write failure, got %v", err)
+		}
+		setupWriteSelectedAgentsFn = origWriteSelected
+		setupWriteConfirmationFn = func(io.Writer, setupPlanPreview) error { return errors.New("confirm fail") }
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "confirm fail") {
+			t.Fatalf("expected confirmation write failure, got %v", err)
 		}
 	})
 
@@ -931,6 +1005,9 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		}
 		if _, err := setupResolveAgents(setupOptions{}, newSetupPrompter(setupErrReader{}, io.Discard)); err == nil {
 			t.Fatal("expected interactive agent prompt failure")
+		}
+		if _, err := setupResolveAgents(setupOptions{}, newSetupPrompter(bytes.NewBufferString("9\n"), io.Discard)); err == nil {
+			t.Fatal("expected interactive invalid menu selection failure")
 		}
 		if _, err := setupResolveAgents(setupOptions{}, newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")})); err == nil {
 			t.Fatal("expected agent stage writer failure")
@@ -1068,6 +1145,18 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		prompt = &setupPrompter{reader: bufio.NewReader(bytes.NewBufferString("visible\n")), out: io.Discard, file: tempFile}
 		if password, err := promptPassword(prompt, "pw"); err != nil || password != "visible" {
 			t.Fatalf("expected stty fallback visible password, got %q err=%v", password, err)
+		}
+	})
+
+	t.Run("setupConfirmPlan cancel path", func(t *testing.T) {
+		lockAppSeams(t)
+		prompt := newSetupPrompter(bytes.NewBufferString("n\n"), io.Discard)
+		if err := setupConfirmPlan(prompt, setupPlanPreview{HaspHome: "/tmp/.hasp", ProjectRoot: "/tmp/repo"}); err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("expected cancelled confirmation, got %v", err)
+		}
+		prompt = newSetupPrompter(setupErrReader{}, io.Discard)
+		if err := setupConfirmPlan(prompt, setupPlanPreview{HaspHome: "/tmp/.hasp", ProjectRoot: "/tmp/repo"}); err == nil {
+			t.Fatal("expected confirmation prompt failure")
 		}
 	})
 }

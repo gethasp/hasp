@@ -19,6 +19,7 @@ That guided flow now walks through:
 - where local encrypted HASP data lives on this machine
 - which repository HASP should protect
 - which coding agents should be configured for MCP
+- a final review step before HASP writes local changes
 
 The rest of this page is the manual flow and the troubleshooting fallback.
 

@@ -171,7 +171,7 @@ func TestSetupResolveAgentsAndDetection(t *testing.T) {
 		t.Fatal("expected unsupported agent error")
 	}
 
-	prompt := newSetupPrompter(bytes.NewBufferString("cursor,claude-code\n"), io.Discard)
+	prompt := newSetupPrompter(bytes.NewBufferString("3,2\n"), io.Discard)
 	resolved, err := setupResolveAgents(setupOptions{}, prompt)
 	if err != nil {
 		t.Fatalf("resolve interactive agents: %v", err)
@@ -557,10 +557,11 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 	input := strings.Join([]string{
 		"",
 		repo,
-		"codex-cli",
+		"",
 		"n",
 		"n",
 		"n",
+		"y",
 		"correct horse battery staple",
 		"correct horse battery staple",
 	}, "\n") + "\n"

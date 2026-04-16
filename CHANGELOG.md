@@ -4,6 +4,13 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.3]
+
+- Replace the freeform interactive agent prompt in `hasp setup` with a numbered agent selection menu.
+- Add a final review-and-confirm screen before `hasp setup` writes local vault, repo, or agent config changes.
+- Keep interactive setup human-readable while preserving `--json` and non-interactive automation paths.
+- Maintain a stable default `go test ./...` path and a corrected `100.0%` coverage gate after the setup redesign.
+
 ## [v0.1.2]
 
 - Redesign `hasp setup` into a more contextual staged onboarding flow with clearer machine, repo, and agent guidance.
