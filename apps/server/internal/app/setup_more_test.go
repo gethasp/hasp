@@ -207,9 +207,14 @@ func TestSetupResolveBoolOptionsAndPassword(t *testing.T) {
 		t.Fatalf("resolve stdin password = %q err=%v", password, err)
 	}
 
-	prompt = newSetupPrompter(bytes.NewBufferString("one\ntwo\n"), io.Discard)
-	if _, _, err := setupResolvePassword(prompt, setupOptions{}, t.TempDir()); err == nil {
-		t.Fatal("expected mismatched password confirmation")
+	var retryOut bytes.Buffer
+	prompt = newSetupPrompter(bytes.NewBufferString("one\ntwo\ncorrect horse battery staple\ncorrect horse battery staple\n"), &retryOut)
+	password, _, err = setupResolvePassword(prompt, setupOptions{}, t.TempDir())
+	if err != nil || password != "correct horse battery staple" {
+		t.Fatalf("expected retry-after-mismatch password success, got %q err=%v", password, err)
+	}
+	if !strings.Contains(retryOut.String(), "did not match") {
+		t.Fatalf("expected retry message after mismatch, got %q", retryOut.String())
 	}
 }
 

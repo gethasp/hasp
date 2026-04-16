@@ -682,21 +682,26 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 		return password, vaultExists, nil
 	}
 
-	first, err := promptPassword(prompt, "Choose a local HASP master password")
-	if err != nil {
-		return "", vaultExists, err
+	for {
+		first, err := promptPassword(prompt, "Choose a local HASP master password")
+		if err != nil {
+			return "", vaultExists, err
+		}
+		second, err := promptPassword(prompt, "Confirm master password")
+		if err != nil {
+			return "", vaultExists, err
+		}
+		if first != second {
+			if _, err := fmt.Fprintln(prompt.out, "Master passwords did not match. Try again."); err != nil {
+				return "", vaultExists, err
+			}
+			continue
+		}
+		if strings.TrimSpace(first) == "" {
+			return "", vaultExists, errors.New("master password is required")
+		}
+		return first, vaultExists, nil
 	}
-	second, err := promptPassword(prompt, "Confirm master password")
-	if err != nil {
-		return "", vaultExists, err
-	}
-	if first != second {
-		return "", vaultExists, errors.New("master password confirmation does not match")
-	}
-	if strings.TrimSpace(first) == "" {
-		return "", vaultExists, errors.New("master password is required")
-	}
-	return first, vaultExists, nil
 }
 
 func setupVaultExists(home string) bool {

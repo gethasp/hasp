@@ -322,6 +322,24 @@ func TestSetupResolvePasswordAdditionalCoverage(t *testing.T) {
 			t.Fatalf("expected blank new-vault password error, got %v", err)
 		}
 	})
+
+	t.Run("new vault mismatch retries in place", func(t *testing.T) {
+		var out bytes.Buffer
+		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("one\ntwo\nfinal-pass\nfinal-pass\n"), &out), setupOptions{}, t.TempDir())
+		if err != nil || exists || password != "final-pass" {
+			t.Fatalf("expected retry success, got password=%q exists=%v err=%v", password, exists, err)
+		}
+		if !strings.Contains(out.String(), "did not match") {
+			t.Fatalf("expected mismatch retry message, got %q", out.String())
+		}
+	})
+
+	t.Run("new vault mismatch message write failure", func(t *testing.T) {
+		writer := &setupNthWriteErrWriter{allow: 4, err: errors.New("retry write fail")}
+		if _, _, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("one\ntwo\n"), writer), setupOptions{}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "retry write fail") {
+			t.Fatalf("expected retry message write failure, got %v", err)
+		}
+	})
 }
 
 func TestSetupImportAndBindAdditionalCoverage(t *testing.T) {
@@ -1115,6 +1133,10 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		secondReader := io.MultiReader(strings.NewReader("first\n"), errReader{err: errors.New("second fail")})
 		if _, _, err := setupResolvePassword(newSetupPrompter(secondReader, io.Discard), setupOptions{}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "second fail") {
 			t.Fatalf("expected second prompt error, got %v", err)
+		}
+		prompt := newSetupPrompter(bytes.NewBufferString("one\ntwo\ncorrect\ncorrect\n"), errWriter{err: errors.New("write fail")})
+		if _, _, err := setupResolvePassword(prompt, setupOptions{}, t.TempDir()); err == nil {
+			t.Fatal("expected retry message write failure")
 		}
 
 		t.Setenv("HASP_HOME", t.TempDir())

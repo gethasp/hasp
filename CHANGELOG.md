@@ -4,6 +4,11 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.5]
+
+- When interactive `hasp setup` master password confirmation does not match, setup now retries the password step in place instead of aborting the whole flow.
+- Keep the retry path fully covered while preserving the corrected `100.0%` repo coverage gate.
+
 ## [v0.1.4]
 
 - Ignore saved setup defaults that point into ephemeral temp directories, so stale test or temp paths no longer show up as the default local HASP data directory.
