@@ -41,12 +41,24 @@ func TestSetupResolveHomeBranches(t *testing.T) {
 		t.Fatalf("expected explicit absolute home, got %q err=%v", resolved, err)
 	}
 
-	if err := paths.SaveConfig(paths.CLIConfig{HomeDir: filepath.Join(configHome, "saved-home")}); err != nil {
+	savedHome := filepath.Join(configHome, "saved-home")
+	if err := os.MkdirAll(savedHome, 0o700); err != nil {
+		t.Fatalf("mkdir saved config home: %v", err)
+	}
+	if err := paths.SaveConfig(paths.CLIConfig{HomeDir: savedHome}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 	resolved, _, err = setupResolveHome(setupOptions{NonInteractive: true}, newSetupPrompter(bytes.NewBuffer(nil), io.Discard))
-	if err != nil || resolved != filepath.Join(configHome, "saved-home") {
+	if err != nil || resolved != savedHome {
 		t.Fatalf("expected saved config home, got %q err=%v", resolved, err)
+	}
+
+	if err := paths.SaveConfig(paths.CLIConfig{HomeDir: filepath.Join(configHome, "missing-home")}); err != nil {
+		t.Fatalf("save missing config home: %v", err)
+	}
+	resolved, _, err = setupResolveHome(setupOptions{NonInteractive: true}, newSetupPrompter(bytes.NewBuffer(nil), io.Discard))
+	if err != nil || resolved != ".hasp" {
+		t.Fatalf("expected stale saved home to fall back, got %q err=%v", resolved, err)
 	}
 
 	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
@@ -88,7 +100,7 @@ func TestSetupResolveBoolOptionsExistingConfigAndImportPrompt(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := setupOptions{}
-	prompt := newSetupPrompter(bytes.NewBufferString("y\nn\n/path/to/import.env\ny\ny\n"), io.Discard)
+	prompt := newSetupPrompter(bytes.NewBufferString("y\nn\ny\n/path/to/import.env\ny\ny\n"), io.Discard)
 	agents := []setupAgentSpec{{ID: "claude-code", Format: "json", ConfigPath: func(string) string { return filepath.Join(homeDir, ".claude.json") }}}
 	if err := setupResolveBoolOptions(&opts, prompt, agents); err != nil {
 		t.Fatalf("resolve bool options: %v", err)

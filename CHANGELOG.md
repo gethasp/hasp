@@ -4,6 +4,13 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.2]
+
+- Redesign `hasp setup` into a more contextual staged onboarding flow with clearer machine, repo, and agent guidance.
+- Stop stale saved setup paths from surfacing dead temp directories as the default local HASP data path.
+- Keep interactive setup human-readable while preserving `--json` and non-interactive machine output for automation.
+- Stabilize the default parallel Go test path while keeping the corrected coverage gate at `100.0%`.
+
 ## [v0.1.1]
 
 - Add the new `hasp setup` flow for first-run machine, repo, and agent MCP configuration.

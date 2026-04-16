@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -72,6 +73,7 @@ func (s *setupAgentFlags) Set(value string) error {
 
 type setupOptions struct {
 	NonInteractive          bool
+	JSONOutput              bool
 	HaspHome                string
 	Repo                    string
 	Agents                  setupAgentFlags
@@ -166,7 +168,9 @@ var (
 	setupImportPathFn         = func(ctx context.Context, handle *store.Handle, path string, opts store.ImportOptions) (store.ImportResult, error) {
 		return handle.ImportPath(ctx, path, opts)
 	}
-	setupResolveBindingViewFn = func(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
+	setupWriteIntroFn          = setupWriteIntro
+	setupWriteSelectedAgentsFn = setupWriteSelectedAgents
+	setupResolveBindingViewFn  = func(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
 		return handle.ResolveBindingView(ctx, projectRoot)
 	}
 	setupEnableConvenienceUnlockFn = func(ctx context.Context, handle *store.Handle) error { return handle.EnableConvenienceUnlock(ctx) }
@@ -174,6 +178,7 @@ var (
 	setupVerifyHarnessFn           = setupVerifyHarness
 	setupMCPServeFn                = mcp.Serve
 	setupMCPToolNamesFn            = mcp.ToolNames
+	setupGOOS                      = runtime.GOOS
 )
 
 func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -185,6 +190,9 @@ func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io
 	if err != nil {
 		return err
 	}
+	if !opts.NonInteractive && !opts.JSONOutput {
+		return renderSetupSummary(stdout, summary)
+	}
 	return json.NewEncoder(stdout).Encode(summary)
 }
 
@@ -192,6 +200,7 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	nonInteractive := fs.Bool("non-interactive", false, "")
+	jsonOutput := fs.Bool("json", false, "")
 	haspHome := fs.String("hasp-home", "", "")
 	repo := fs.String("repo", "", "")
 	passwordEnv := fs.String("master-password-env", "", "")
@@ -226,6 +235,7 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 	}
 	return setupOptions{
 		NonInteractive:          *nonInteractive,
+		JSONOutput:              *jsonOutput,
 		HaspHome:                strings.TrimSpace(*haspHome),
 		Repo:                    strings.TrimSpace(*repo),
 		Agents:                  agents,
@@ -245,6 +255,11 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 
 func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut io.Writer) (setupSummary, error) {
 	prompt := newSetupPrompter(stdin, promptOut)
+	if !opts.NonInteractive && promptOut != nil {
+		if err := setupWriteIntroFn(prompt.out); err != nil {
+			return setupSummary{}, err
+		}
+	}
 
 	resolvedHome, configPath, err := setupResolveHome(opts, prompt)
 	if err != nil {
@@ -267,6 +282,11 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	}
 	if len(selectedAgents) == 0 {
 		return setupSummary{}, errors.New("setup requires at least one supported agent")
+	}
+	if !opts.NonInteractive {
+		if err := setupWriteSelectedAgentsFn(prompt.out, selectedAgents); err != nil {
+			return setupSummary{}, err
+		}
 	}
 
 	if err := setupResolveBoolOptions(&opts, prompt, selectedAgents); err != nil {
@@ -408,13 +428,24 @@ func setupResolveHome(opts setupOptions, prompt *setupPrompter) (string, string,
 		return "", "", err
 	}
 	defaultHome := strings.TrimSpace(cfg.HomeDir)
+	if defaultHome != "" {
+		if _, err := os.Stat(defaultHome); errors.Is(err, os.ErrNotExist) {
+			defaultHome = ""
+		}
+	}
 	if defaultHome == "" {
 		defaultHome = defaultSetupHome()
 	}
 	if opts.NonInteractive {
 		return defaultHome, configPath, nil
 	}
-	value, err := promptString(prompt, "HASP vault directory", defaultHome)
+	if err := setupWriteStage(prompt.out, "Machine setup",
+		"Choose where HASP keeps its local encrypted data on this machine.",
+		"This stores the encrypted vault, audit log, and runtime files outside your repo.",
+	); err != nil {
+		return "", "", err
+	}
+	value, err := promptStringWithDisplayDefault(prompt, "Local HASP data directory", defaultHome, setupDisplayPath(defaultHome))
 	if err != nil {
 		return "", "", err
 	}
@@ -434,9 +465,8 @@ func defaultSetupHome() string {
 	if err == nil && strings.TrimSpace(home) != "" {
 		return filepath.Join(home, ".hasp")
 	}
-	resolved, err := paths.Resolve()
-	if err == nil && strings.TrimSpace(resolved.HomeDir) != "" {
-		return resolved.HomeDir
+	if home := strings.TrimSpace(os.Getenv(paths.EnvHome)); home != "" {
+		return home
 	}
 	return ".hasp"
 }
@@ -452,7 +482,13 @@ func setupResolveProjectRoot(ctx context.Context, opts setupOptions, prompt *set
 	if opts.NonInteractive {
 		return "", errors.New("non-interactive setup requires --repo")
 	}
-	value, err := promptString(prompt, "Project directory to bind", defaultRoot)
+	if err := setupWriteStage(prompt.out, "Repo setup",
+		"Choose the repository HASP should protect.",
+		"HASP will bind aliases, broker secrets for commands in this repo, and optionally install repo guardrails.",
+	); err != nil {
+		return "", err
+	}
+	value, err := promptString(prompt, "Repository root to protect", defaultRoot)
 	if err != nil {
 		return "", err
 	}
@@ -479,7 +515,22 @@ func setupResolveAgents(opts setupOptions, prompt *setupPrompter) ([]setupAgentS
 	for _, spec := range supported {
 		choices = append(choices, spec.ID)
 	}
-	value, err := promptString(prompt, "Coding agents ("+strings.Join(choices, ", ")+")", strings.Join(defaultIDs, ","))
+	lines := []string{
+		"HASP can add a local MCP entry for supported coding agents and will back up any existing config before changing it.",
+	}
+	if len(detected) > 0 {
+		detectedLabels := make([]string, 0, len(detected))
+		for _, spec := range detected {
+			detectedLabels = append(detectedLabels, spec.Label)
+		}
+		lines = append(lines, "Detected on this machine: "+strings.Join(detectedLabels, ", "))
+	} else {
+		lines = append(lines, "No supported agent was auto-detected. Press Enter to configure Codex CLI by default, or type another supported id.")
+	}
+	if err := setupWriteStage(prompt.out, "Agent setup", lines...); err != nil {
+		return nil, err
+	}
+	value, err := promptString(prompt, "Agents to configure for MCP (comma-separated ids: "+strings.Join(choices, ", ")+")", strings.Join(defaultIDs, ","))
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +544,7 @@ func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents [
 		if opts.NonInteractive {
 			return errors.New("non-interactive setup requires --install-hooks=true|false")
 		}
-		value, err := promptBool(prompt, "Install repo hooks", true)
+		value, err := promptBool(prompt, "Install repo guardrails for this repository", true)
 		if err != nil {
 			return err
 		}
@@ -503,31 +554,44 @@ func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents [
 		if opts.NonInteractive {
 			return errors.New("non-interactive setup requires --enable-convenience-unlock=true|false")
 		}
-		value, err := promptBool(prompt, "Enable convenience unlock on this machine", false)
+		value, err := promptBool(prompt, "Use convenience unlock on this machine when available", defaultSetupConvenienceUnlock())
 		if err != nil {
 			return err
 		}
 		opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value}
 	}
 	if opts.ImportPath == "" && !opts.NonInteractive {
-		value, err := promptString(prompt, "Import one local secret file now (optional path, blank to skip)", "")
+		if err := setupWriteStage(prompt.out, "Optional import",
+			"You can import a local .env or JSON secret file now, or skip this and use `hasp import` later.",
+		); err != nil {
+			return err
+		}
+		shouldImport, err := promptBool(prompt, "Import a local secret file now", false)
+		if err != nil {
+			return err
+		}
+		if !shouldImport {
+			goto maybeOverwrite
+		}
+		value, err := promptString(prompt, "Path to .env or JSON secret file", "")
 		if err != nil {
 			return err
 		}
 		opts.ImportPath = strings.TrimSpace(value)
 	}
 	if opts.ImportPath != "" && !opts.BindImports && !opts.NonInteractive {
-		value, err := promptBool(prompt, "Bind imported items to the repo", true)
+		value, err := promptBool(prompt, "Bind imported secrets to this repository now", true)
 		if err != nil {
 			return err
 		}
 		opts.BindImports = value
 	}
+maybeOverwrite:
 	if setupAnyExistingAgentConfig(agents) && !opts.OverwriteExistingConfig.set {
 		if opts.NonInteractive {
 			return errors.New("non-interactive setup requires --overwrite-existing-config=true|false when agent config files already exist")
 		}
-		value, err := promptBool(prompt, "Update existing agent config files with backups", true)
+		value, err := promptBool(prompt, "Allow HASP to update existing agent config files and create backups", true)
 		if err != nil {
 			return err
 		}
@@ -1007,9 +1071,117 @@ func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, 
 	return steps
 }
 
+func renderSetupSummary(out io.Writer, summary setupSummary) error {
+	if err := setupWriteStage(out, "Setup complete",
+		"HASP is configured for this machine and repository.",
+	); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Local HASP data: %s\n", summary.HaspHome); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Saved CLI config: %s\n", summary.ConfigPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Protected repository: %s\n", summary.ProjectRoot); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Vault state: %s\n", summary.InitState); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Convenience unlock: %s\n", summary.ConvenienceUnlock); err != nil {
+		return err
+	}
+	if len(summary.Agents) > 0 {
+		if _, err := fmt.Fprintln(out, "Configured agents:"); err != nil {
+			return err
+		}
+		for _, agent := range summary.Agents {
+			suffix := "updated"
+			if !agent.Changed {
+				suffix = "unchanged"
+			}
+			if _, err := fmt.Fprintf(out, "- %s -> %s (%s)\n", agent.Label, agent.ConfigPath, suffix); err != nil {
+				return err
+			}
+		}
+	}
+	if len(summary.NextSteps) > 0 {
+		if _, err := fmt.Fprintln(out, "Next steps:"); err != nil {
+			return err
+		}
+		for _, step := range summary.NextSteps {
+			if _, err := fmt.Fprintf(out, "- %s\n", step); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func setupWriteIntro(out io.Writer) error {
+	return setupWriteStage(out, "HASP setup",
+		"HASP setup will:",
+		"1. choose where local encrypted HASP data lives on this machine",
+		"2. bind one repository so HASP can broker secrets there",
+		"3. configure selected coding agents to talk to HASP over MCP",
+		"Press Enter to accept the default shown in brackets.",
+	)
+}
+
+func setupWriteStage(out io.Writer, title string, lines ...string) error {
+	if _, err := fmt.Fprintf(out, "%s\n", title); err != nil {
+		return err
+	}
+	for _, line := range lines {
+		if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupWriteSelectedAgents(out io.Writer, agents []setupAgentSpec) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(agents)+1)
+	lines = append(lines, "Selected agent config targets:")
+	for _, agent := range agents {
+		lines = append(lines, fmt.Sprintf("- %s -> %s", agent.Label, agent.ConfigPath("")))
+	}
+	return setupWriteStage(out, "Agent targets", lines...)
+}
+
+func setupDisplayPath(path string) string {
+	home, err := setupUserHomeDirFn()
+	if err != nil {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	prefix := home + string(filepath.Separator)
+	if strings.HasPrefix(path, prefix) {
+		return "~" + string(filepath.Separator) + strings.TrimPrefix(path, prefix)
+	}
+	return path
+}
+
+func defaultSetupConvenienceUnlock() bool {
+	return setupGOOS == "darwin"
+}
+
 func promptString(prompt *setupPrompter, label string, defaultValue string) (string, error) {
+	return promptStringWithDisplayDefault(prompt, label, defaultValue, defaultValue)
+}
+
+func promptStringWithDisplayDefault(prompt *setupPrompter, label string, defaultValue string, displayDefault string) (string, error) {
 	if defaultValue != "" {
-		if _, err := fmt.Fprintf(prompt.out, "%s [%s]: ", label, defaultValue); err != nil {
+		if _, err := fmt.Fprintf(prompt.out, "%s [%s]: ", label, displayDefault); err != nil {
 			return "", err
 		}
 	} else {

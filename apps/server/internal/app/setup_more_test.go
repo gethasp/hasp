@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -184,7 +183,7 @@ func TestSetupResolveAgentsAndDetection(t *testing.T) {
 
 func TestSetupResolveBoolOptionsAndPassword(t *testing.T) {
 	lockAppSeams(t)
-	prompt := newSetupPrompter(bytes.NewBufferString("n\ny\ny\n"), io.Discard)
+	prompt := newSetupPrompter(bytes.NewBufferString("n\ny\nn\n"), io.Discard)
 	opts := setupOptions{}
 	agents := []setupAgentSpec{{ID: "claude-code", Format: "json", ConfigPath: func(string) string { return filepath.Join(t.TempDir(), ".claude.json") }}}
 	if err := setupResolveBoolOptions(&opts, prompt, agents); err != nil {
@@ -561,7 +560,7 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 		"codex-cli",
 		"n",
 		"n",
-		"",
+		"n",
 		"correct horse battery staple",
 		"correct horse battery staple",
 	}, "\n") + "\n"
@@ -570,17 +569,11 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 		t.Fatalf("interactive setup: %v", err)
 	}
 
-	var summary setupSummary
-	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
-		t.Fatalf("decode interactive setup summary: %v", err)
+	text := stdout.String()
+	if !strings.Contains(text, "Setup complete") {
+		t.Fatalf("expected human setup summary, got %q", text)
 	}
-	if summary.InitState != "created" || summary.ProjectRoot == "" {
-		t.Fatalf("unexpected interactive summary: %+v", summary)
-	}
-	if summary.ConvenienceUnlock != "disabled" {
-		t.Fatalf("expected disabled convenience unlock, got %+v", summary)
-	}
-	if summary.HaspHome != haspHome {
-		t.Fatalf("unexpected interactive HASP_HOME: %+v", summary)
+	if !strings.Contains(text, haspHome) || !strings.Contains(text, repo) {
+		t.Fatalf("expected summary to mention hasp home and repo, got %q", text)
 	}
 }

@@ -16,6 +16,8 @@ func TestSetupCommandConfiguresAgentsAndMCPHarness(t *testing.T) {
 	userHome := t.TempDir()
 	haspHome := filepath.Join(t.TempDir(), "hasp-home")
 	repo := t.TempDir()
+	t.Setenv("HOME", userHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
 	t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
 
 	origHome := setupUserHomeDirFn

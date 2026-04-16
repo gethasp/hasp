@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -530,6 +531,16 @@ func TestSetupResolveHomeAdditionalCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("defaultSetupHome uses HASP_HOME env fallback", func(t *testing.T) {
+		origHome := setupUserHomeDirFn
+		defer func() { setupUserHomeDirFn = origHome }()
+		setupUserHomeDirFn = func() (string, error) { return "", errors.New("no home") }
+		t.Setenv(paths.EnvHome, "/tmp/hasp-env")
+		if got := defaultSetupHome(); got != "/tmp/hasp-env" {
+			t.Fatalf("expected env fallback, got %q", got)
+		}
+	})
+
 	t.Run("prompt error propagates", func(t *testing.T) {
 		userHome := t.TempDir()
 		configHome := t.TempDir()
@@ -540,6 +551,19 @@ func TestSetupResolveHomeAdditionalCoverage(t *testing.T) {
 		setupUserHomeDirFn = func() (string, error) { return userHome, nil }
 		if _, _, err := setupResolveHome(setupOptions{}, newSetupPrompter(setupErrReader{}, io.Discard)); err == nil {
 			t.Fatal("expected prompt read failure")
+		}
+	})
+
+	t.Run("stage writer failure propagates", func(t *testing.T) {
+		userHome := t.TempDir()
+		configHome := t.TempDir()
+		t.Setenv("HOME", userHome)
+		t.Setenv("XDG_CONFIG_HOME", configHome)
+		origHome := setupUserHomeDirFn
+		defer func() { setupUserHomeDirFn = origHome }()
+		setupUserHomeDirFn = func() (string, error) { return userHome, nil }
+		if _, _, err := setupResolveHome(setupOptions{}, newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")})); err == nil {
+			t.Fatal("expected stage writer failure")
 		}
 	})
 
@@ -569,6 +593,178 @@ func TestSetupResolveHomeAdditionalCoverage(t *testing.T) {
 		setupAbsFn = func(string) (string, error) { return "", errors.New("abs fail") }
 		if _, _, err := setupResolveHome(setupOptions{HaspHome: "."}, newSetupPrompter(bytes.NewBuffer(nil), io.Discard)); err == nil {
 			t.Fatal("expected explicit-home abs failure")
+		}
+	})
+}
+
+func TestSetupPresentationHelpers(t *testing.T) {
+	t.Run("prompt string with display default", func(t *testing.T) {
+		lockAppSeams(t)
+		var out bytes.Buffer
+		value, err := promptStringWithDisplayDefault(newSetupPrompter(bytes.NewBufferString("\n"), &out), "label", "/Users/tester/.hasp", "~/.hasp")
+		if err != nil || value != "/Users/tester/.hasp" {
+			t.Fatalf("unexpected value=%q err=%v", value, err)
+		}
+		if !strings.Contains(out.String(), "[~/.hasp]") {
+			t.Fatalf("expected display default in output, got %q", out.String())
+		}
+	})
+
+	t.Run("display path and convenience defaults", func(t *testing.T) {
+		lockAppSeams(t)
+		origHome := setupUserHomeDirFn
+		origGOOS := setupGOOS
+		defer func() {
+			setupUserHomeDirFn = origHome
+			setupGOOS = origGOOS
+		}()
+		setupUserHomeDirFn = func() (string, error) { return "/Users/tester", nil }
+		if got := setupDisplayPath("/Users/tester"); got != "~" {
+			t.Fatalf("unexpected home display path %q", got)
+		}
+		if got := setupDisplayPath("/Users/tester/.hasp"); got != "~/.hasp" {
+			t.Fatalf("unexpected display path %q", got)
+		}
+		setupUserHomeDirFn = func() (string, error) { return "", errors.New("home fail") }
+		if got := setupDisplayPath("/tmp/custom"); got != "/tmp/custom" {
+			t.Fatalf("unexpected fallback display path %q", got)
+		}
+		setupUserHomeDirFn = func() (string, error) { return "/Users/tester", nil }
+		if got := setupDisplayPath("/tmp/custom"); got != "/tmp/custom" {
+			t.Fatalf("unexpected non-home display path %q", got)
+		}
+		setupGOOS = "darwin"
+		if !defaultSetupConvenienceUnlock() {
+			t.Fatal("expected darwin default convenience unlock")
+		}
+		setupGOOS = "linux"
+		if defaultSetupConvenienceUnlock() {
+			t.Fatal("expected non-darwin default convenience unlock false")
+		}
+	})
+
+	t.Run("stage and summary writers", func(t *testing.T) {
+		lockAppSeams(t)
+		var out bytes.Buffer
+		if err := setupWriteIntro(&out); err != nil {
+			t.Fatalf("write intro: %v", err)
+		}
+		if err := setupWriteSelectedAgents(&out, []setupAgentSpec{{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}); err != nil {
+			t.Fatalf("write selected agents: %v", err)
+		}
+		if err := renderSetupSummary(&out, setupSummary{
+			HaspHome:          "/tmp/.hasp",
+			ConfigPath:        "/tmp/hasp-cli.json",
+			InitState:         "created",
+			ProjectRoot:       "/tmp/repo",
+			ConvenienceUnlock: "enabled",
+			Agents: []setupAgentOutcome{{
+				Label:      "Codex CLI",
+				ConfigPath: "/tmp/codex.toml",
+				Changed:    true,
+			}},
+			NextSteps: []string{"next"},
+		}); err != nil {
+			t.Fatalf("render summary: %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents:") {
+			t.Fatalf("unexpected presentation output %q", text)
+		}
+
+		for failAt := 1; failAt <= 12; failAt++ {
+			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
+			err := renderSetupSummary(writer, setupSummary{
+				HaspHome:          "/tmp/.hasp",
+				ConfigPath:        "/tmp/hasp-cli.json",
+				InitState:         "created",
+				ProjectRoot:       "/tmp/repo",
+				ConvenienceUnlock: "enabled",
+				Agents: []setupAgentOutcome{{
+					Label:      "Codex CLI",
+					ConfigPath: "/tmp/codex.toml",
+					Changed:    true,
+				}},
+				NextSteps: []string{"next"},
+			})
+			if err == nil {
+				t.Fatalf("expected render summary write failure at call %d", failAt)
+			}
+		}
+		out.Reset()
+		if err := renderSetupSummary(&out, setupSummary{
+			HaspHome:          "/tmp/.hasp",
+			ConfigPath:        "/tmp/hasp-cli.json",
+			InitState:         "created",
+			ProjectRoot:       "/tmp/repo",
+			ConvenienceUnlock: "enabled",
+			Agents: []setupAgentOutcome{{
+				Label:      "Codex CLI",
+				ConfigPath: "/tmp/codex.toml",
+				Changed:    false,
+			}},
+		}); err != nil {
+			t.Fatalf("render summary unchanged agent: %v", err)
+		}
+		if !strings.Contains(out.String(), "(unchanged)") {
+			t.Fatalf("expected unchanged agent suffix, got %q", out.String())
+		}
+	})
+
+	t.Run("setup command json and human output modes", func(t *testing.T) {
+		lockAppSeams(t)
+		userHome := t.TempDir()
+		haspHome := filepath.Join(t.TempDir(), "hasp-home")
+		repo := t.TempDir()
+		t.Setenv("HOME", userHome)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
+		t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
+
+		origHome := setupUserHomeDirFn
+		origLookPath := setupLookPathFn
+		defer func() {
+			setupUserHomeDirFn = origHome
+			setupLookPathFn = origLookPath
+		}()
+		setupUserHomeDirFn = func() (string, error) { return userHome, nil }
+		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
+
+		var stdout bytes.Buffer
+		if err := setupCommand(context.Background(), []string{
+			"--non-interactive",
+			"--json",
+			"--hasp-home", haspHome,
+			"--repo", repo,
+			"--agent", "codex-cli",
+			"--master-password-env", "SETUP_MASTER_PASSWORD",
+			"--install-hooks=false",
+			"--enable-convenience-unlock=false",
+			"--overwrite-existing-config=true",
+		}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+			t.Fatalf("setup command json mode: %v", err)
+		}
+		if !json.Valid(stdout.Bytes()) {
+			t.Fatalf("expected json output, got %q", stdout.String())
+		}
+	})
+
+	t.Run("stage writers and prompt bool branches", func(t *testing.T) {
+		lockAppSeams(t)
+		if err := setupWriteSelectedAgents(io.Discard, nil); err != nil {
+			t.Fatalf("expected empty selected agents writer to succeed, got %v", err)
+		}
+		for failAt := 1; failAt <= 3; failAt++ {
+			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
+			if err := setupWriteStage(writer, "Title", "line"); err == nil {
+				t.Fatalf("expected setupWriteStage failure at call %d", failAt)
+			}
+		}
+		writer := &setupNthWriteErrWriter{allow: 0, err: errors.New("write fail")}
+		if err := setupWriteSelectedAgents(writer, []setupAgentSpec{{Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}); err == nil {
+			t.Fatal("expected setupWriteSelectedAgents failure")
+		}
+		if value, err := promptBool(newSetupPrompter(bytes.NewBufferString("\n"), io.Discard), "label", true); err != nil || !value {
+			t.Fatalf("expected blank promptBool to use default true, got %v err=%v", value, err)
 		}
 	})
 }
@@ -611,6 +807,50 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		}, bytes.NewBuffer(nil), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "unlock fail") {
 			t.Fatalf("expected convenience unlock failure, got %v", err)
+		}
+	})
+
+	t.Run("runSetup intro and selected-agent write errors", func(t *testing.T) {
+		lockAppSeams(t)
+		homeDir := t.TempDir()
+		projectRoot := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+		t.Setenv("SETUP_RESIDUAL_PW", "correct horse battery staple")
+
+		origHome := setupUserHomeDirFn
+		origCanon := setupCanonicalProjectRoot
+		origNewStore := newVaultStoreFn
+		origWriteIntro := setupWriteIntroFn
+		origWriteSelected := setupWriteSelectedAgentsFn
+		defer func() {
+			setupUserHomeDirFn = origHome
+			setupCanonicalProjectRoot = origCanon
+			newVaultStoreFn = origNewStore
+			setupWriteIntroFn = origWriteIntro
+			setupWriteSelectedAgentsFn = origWriteSelected
+		}()
+		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
+		setupCanonicalProjectRoot = func(_ context.Context, value string) (string, error) { return value, nil }
+		newVaultStoreFn = func() (*store.Store, error) { return store.New(&memorySetupKeyring{}) }
+
+		opts := setupOptions{
+			HaspHome:                filepath.Join(t.TempDir(), "hasp-home"),
+			Repo:                    projectRoot,
+			Agents:                  setupAgentFlags{"codex-cli"},
+			PasswordEnv:             "SETUP_RESIDUAL_PW",
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
+			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
+		}
+		setupWriteIntroFn = func(io.Writer) error { return errors.New("intro fail") }
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "intro fail") {
+			t.Fatalf("expected intro failure, got %v", err)
+		}
+		setupWriteIntroFn = origWriteIntro
+		setupWriteSelectedAgentsFn = func(io.Writer, []setupAgentSpec) error { return errors.New("selected fail") }
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "selected fail") {
+			t.Fatalf("expected selected-agent write failure, got %v", err)
 		}
 	})
 
@@ -680,6 +920,9 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		if _, err := setupResolveProjectRoot(context.Background(), setupOptions{}, newSetupPrompter(setupErrReader{}, io.Discard)); err == nil {
 			t.Fatal("expected project root prompt failure")
 		}
+		if _, err := setupResolveProjectRoot(context.Background(), setupOptions{}, newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")})); err == nil {
+			t.Fatal("expected project root stage writer failure")
+		}
 
 		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
 		setupUserHomeDirFn = func() (string, error) { return t.TempDir(), nil }
@@ -688,6 +931,9 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		}
 		if _, err := setupResolveAgents(setupOptions{}, newSetupPrompter(setupErrReader{}, io.Discard)); err == nil {
 			t.Fatal("expected interactive agent prompt failure")
+		}
+		if _, err := setupResolveAgents(setupOptions{}, newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")})); err == nil {
+			t.Fatal("expected agent stage writer failure")
 		}
 	})
 
@@ -706,6 +952,20 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		agents := []setupAgentSpec{{ID: "claude-code", ConfigPath: func(string) string { return configPath }}}
 		if err := setupResolveBoolOptions(&opts, newSetupPrompter(setupErrReader{}, io.Discard), agents); err == nil {
 			t.Fatal("expected overwrite prompt failure")
+		}
+		opts = setupOptions{
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
+		}
+		if err := setupResolveBoolOptions(&opts, newSetupPrompter(bytes.NewBuffer(nil), errWriter{err: errors.New("stage fail")}), nil); err == nil {
+			t.Fatal("expected optional import stage writer failure")
+		}
+		opts = setupOptions{
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
+		}
+		if err := setupResolveBoolOptions(&opts, newSetupPrompter(io.MultiReader(strings.NewReader("y\n"), setupErrReader{}), io.Discard), nil); err == nil {
+			t.Fatal("expected import path prompt failure")
 		}
 
 		parentFile := filepath.Join(t.TempDir(), "parent")
