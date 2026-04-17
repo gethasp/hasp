@@ -432,7 +432,12 @@ func TestServeIgnoresNotifications(t *testing.T) {
 	var input bytes.Buffer
 	var output bytes.Buffer
 	enc := json.NewEncoder(&input)
-	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"}); err != nil {
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": currentProtocolVersion},
+	}); err != nil {
 		t.Fatalf("encode initialize: %v", err)
 	}
 	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
@@ -454,6 +459,9 @@ func TestServeIgnoresNotifications(t *testing.T) {
 	if initResp["id"].(float64) != 1 {
 		t.Fatalf("unexpected initialize response id: %+v", initResp)
 	}
+	if initResp["result"].(map[string]any)["protocolVersion"] != currentProtocolVersion {
+		t.Fatalf("unexpected negotiated protocol version: %+v", initResp)
+	}
 
 	var listResp map[string]any
 	if err := dec.Decode(&listResp); err != nil {
@@ -470,13 +478,32 @@ func TestServeIgnoresNotifications(t *testing.T) {
 }
 
 func TestDispatchCoversInitializeListAndMethodErrors(t *testing.T) {
-	initResp := dispatch(context.Background(), request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	initResp := dispatch(context.Background(), request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params:  json.RawMessage(`{"protocolVersion":"2026-04-13"}`),
+	})
 	if initResp.Error != nil {
 		t.Fatalf("unexpected initialize error: %+v", initResp.Error)
 	}
-	serverInfo := initResp.Result.(map[string]any)["serverInfo"].(map[string]any)
+	initResult := initResp.Result.(map[string]any)
+	if initResult["protocolVersion"] != "2026-04-13" {
+		t.Fatalf("expected requested supported protocol version, got %+v", initResult)
+	}
+	serverInfo := initResult["serverInfo"].(map[string]any)
 	if serverInfo["name"] != "hasp" {
 		t.Fatalf("unexpected server info: %+v", serverInfo)
+	}
+
+	fallbackResp := dispatch(context.Background(), request{
+		JSONRPC: "2.0",
+		ID:      9,
+		Method:  "initialize",
+		Params:  json.RawMessage(`{"protocolVersion":"2099-01-01"}`),
+	})
+	if fallbackResp.Result.(map[string]any)["protocolVersion"] != currentProtocolVersion {
+		t.Fatalf("expected fallback protocol version, got %+v", fallbackResp.Result)
 	}
 
 	listResp := dispatch(context.Background(), request{JSONRPC: "2.0", ID: 2, Method: "tools/list"})

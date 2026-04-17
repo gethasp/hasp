@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,10 @@ type request struct {
 	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type initializeParams struct {
+	ProtocolVersion string `json:"protocolVersion"`
 }
 
 type response struct {
@@ -37,6 +42,13 @@ type tool struct {
 type toolCall struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+}
+
+const currentProtocolVersion = "2025-06-18"
+
+var supportedProtocolVersions = map[string]struct{}{
+	currentProtocolVersion: {},
+	"2026-04-13":           {},
 }
 
 func Serve(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
@@ -67,7 +79,7 @@ func dispatch(ctx context.Context, req request) response {
 	switch req.Method {
 	case "initialize":
 		return response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-			"protocolVersion": "2026-04-13",
+			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "hasp", "version": runtime.Version()},
 		}}
@@ -90,4 +102,18 @@ func dispatch(ctx context.Context, req request) response {
 
 func fail(id any, code int, message string) response {
 	return response{JSONRPC: "2.0", ID: id, Error: &respError{Code: code, Message: message}}
+}
+
+func negotiateProtocolVersion(params json.RawMessage) string {
+	if len(bytes.TrimSpace(params)) == 0 {
+		return currentProtocolVersion
+	}
+	var init initializeParams
+	if err := json.Unmarshal(params, &init); err != nil {
+		return currentProtocolVersion
+	}
+	if _, ok := supportedProtocolVersions[init.ProtocolVersion]; ok {
+		return init.ProtocolVersion
+	}
+	return currentProtocolVersion
 }

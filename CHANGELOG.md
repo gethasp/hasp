@@ -4,6 +4,11 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.20]
+
+- Negotiate the MCP protocol version during `initialize` so Claude accepts `hasp mcp` instead of rejecting the hard-coded `2026-04-13` handshake.
+- Keep compatibility with stricter clients by preferring the stable `2025-06-18` MCP protocol while still tolerating clients that explicitly request the newer version.
+
 ## [v0.1.19]
 
 - Keep `hasp setup` responsive after password entry by time-bounding the optional macOS convenience-unlock enable and verification path instead of waiting on slow keychain failures.
