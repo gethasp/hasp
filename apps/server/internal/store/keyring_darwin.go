@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,6 +18,9 @@ func NewDefaultKeyring() Keyring {
 }
 
 func (DarwinKeyring) Set(ctx context.Context, service string, account string, value string) error {
+	if err := ensureUsableDefaultKeychain(ctx); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, securityBinaryPath(), "add-generic-password", "-U", "-a", account, "-s", service, "-w", value)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.New(strings.TrimSpace(string(out)))
@@ -46,4 +50,20 @@ func securityBinaryPath() string {
 		return override
 	}
 	return "/usr/bin/security"
+}
+
+func ensureUsableDefaultKeychain(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, securityBinaryPath(), "default-keychain")
+	out, err := cmd.Output()
+	if err != nil {
+		return ErrKeyringUnavailable
+	}
+	path := strings.Trim(strings.TrimSpace(string(out)), "\"")
+	if path == "" {
+		return ErrKeyringUnavailable
+	}
+	if _, err := os.Stat(filepath.Clean(path)); err != nil {
+		return ErrKeyringUnavailable
+	}
+	return nil
 }

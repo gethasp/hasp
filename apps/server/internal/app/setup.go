@@ -198,11 +198,12 @@ var (
 		_, err := vaultStore.OpenWithConvenienceUnlock(ctx)
 		return err
 	}
-	setupWriteAgentConfigsFn       = setupWriteAgentConfigs
-	setupVerifyHarnessFn           = setupVerifyHarness
-	setupMCPServeFn                = mcp.Serve
-	setupMCPToolNamesFn            = mcp.ToolNames
-	setupGOOS                      = runtime.GOOS
+	setupWriteAgentConfigsFn      = setupWriteAgentConfigs
+	setupVerifyHarnessFn          = setupVerifyHarness
+	setupMCPServeFn               = mcp.Serve
+	setupMCPToolNamesFn           = mcp.ToolNames
+	setupConvenienceUnlockTimeout = time.Second
+	setupGOOS                     = runtime.GOOS
 )
 
 func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -412,14 +413,18 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 
 	convenienceState := "disabled"
 	if opts.EnableConvenienceUnlock.value {
-		if err := setupEnableConvenienceUnlockFn(ctx, handle); err != nil {
-			if errors.Is(err, store.ErrKeyringUnavailable) {
+		if err := setupRunConvenienceUnlockStep(ctx, func(stepCtx context.Context) error {
+			return setupEnableConvenienceUnlockFn(stepCtx, handle)
+		}); err != nil {
+			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
 			} else {
 				return setupSummary{}, err
 			}
-		} else if err := setupVerifyConvenienceUnlockFn(ctx, vaultStore); err != nil {
-			if errors.Is(err, store.ErrKeyringUnavailable) {
+		} else if err := setupRunConvenienceUnlockStep(ctx, func(stepCtx context.Context) error {
+			return setupVerifyConvenienceUnlockFn(stepCtx, vaultStore)
+		}); err != nil {
+			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
 			} else {
 				return setupSummary{}, err
@@ -460,6 +465,19 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		summary.Binding = &binding
 	}
 	return summary, nil
+}
+
+func setupRunConvenienceUnlockStep(ctx context.Context, step func(context.Context) error) error {
+	if setupConvenienceUnlockTimeout <= 0 {
+		return step(ctx)
+	}
+	stepCtx, cancel := context.WithTimeout(ctx, setupConvenienceUnlockTimeout)
+	defer cancel()
+	return step(stepCtx)
+}
+
+func setupConvenienceUnlockUnavailable(err error) bool {
+	return errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool) (*store.Handle, string, string, error) {

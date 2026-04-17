@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -1094,6 +1095,61 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		}
 		if summary.ConvenienceUnlock != "unavailable" {
 			t.Fatalf("expected unavailable convenience unlock after failed verify, got %+v", summary)
+		}
+	})
+
+	t.Run("runSetup convenience enable timeout becomes unavailable", func(t *testing.T) {
+		lockAppSeams(t)
+		homeDir := t.TempDir()
+		projectRoot := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+		t.Setenv("SETUP_RESIDUAL_PW", "correct horse battery staple")
+
+		origHome := setupUserHomeDirFn
+		origNewStore := newVaultStoreFn
+		origEnable := setupEnableConvenienceUnlockFn
+		origVerify := setupVerifyConvenienceUnlockFn
+		origCanon := setupCanonicalProjectRoot
+		origTimeout := setupConvenienceUnlockTimeout
+		defer func() {
+			setupUserHomeDirFn = origHome
+			newVaultStoreFn = origNewStore
+			setupEnableConvenienceUnlockFn = origEnable
+			setupVerifyConvenienceUnlockFn = origVerify
+			setupCanonicalProjectRoot = origCanon
+			setupConvenienceUnlockTimeout = origTimeout
+		}()
+
+		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
+		setupCanonicalProjectRoot = func(_ context.Context, value string) (string, error) { return value, nil }
+		newVaultStoreFn = func() (*store.Store, error) { return store.New(&memorySetupKeyring{}) }
+		setupConvenienceUnlockTimeout = time.Millisecond
+		setupEnableConvenienceUnlockFn = func(ctx context.Context, _ *store.Handle) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		setupVerifyConvenienceUnlockFn = func(context.Context, *store.Store) error {
+			t.Fatal("verify should not run after enable timeout")
+			return nil
+		}
+
+		summary, err := runSetup(context.Background(), setupOptions{
+			NonInteractive:          true,
+			HaspHome:                filepath.Join(t.TempDir(), "hasp-home"),
+			Repo:                    projectRoot,
+			Agents:                  setupAgentFlags{"codex-cli"},
+			PasswordEnv:             "SETUP_RESIDUAL_PW",
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: true},
+			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
+			DefaultPolicy:           store.PolicySession,
+		}, bytes.NewBuffer(nil), io.Discard)
+		if err != nil {
+			t.Fatalf("run setup with timed-out convenience enable: %v", err)
+		}
+		if summary.ConvenienceUnlock != "unavailable" {
+			t.Fatalf("expected unavailable convenience unlock after enable timeout, got %+v", summary)
 		}
 	})
 

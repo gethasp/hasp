@@ -4,6 +4,11 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.19]
+
+- Keep `hasp setup` responsive after password entry by time-bounding the optional macOS convenience-unlock enable and verification path instead of waiting on slow keychain failures.
+- Skip macOS convenience-unlock setup entirely when no usable default keychain exists, so setup falls back cleanly instead of surfacing the `Keychain Not Found` system dialog.
+
 ## [v0.1.18]
 
 - Stop `hasp mcp` from replying to JSON-RPC notifications, so Codex no longer fails MCP startup with `Transport closed` during the `notifications/initialized` handshake.

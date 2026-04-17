@@ -28,7 +28,11 @@ func TestDarwinKeyringCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "security.log")
 	scriptPath := filepath.Join(tmpDir, "security")
-	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >> \""+logPath+"\"\ncase \"$1\" in\nfind-generic-password) printf 'stored-value\\n' ;;\nesac\n"), 0o755); err != nil {
+	keychainPath := filepath.Join(tmpDir, "login.keychain-db")
+	if err := os.WriteFile(keychainPath, []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write fake keychain: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >> \""+logPath+"\"\ncase \"$1\" in\ndefault-keychain) printf '\""+keychainPath+"\"\\n' ;;\nfind-generic-password) printf 'stored-value\\n' ;;\nesac\n"), 0o755); err != nil {
 		t.Fatalf("write fake security: %v", err)
 	}
 	origPath := os.Getenv("PATH")
@@ -53,11 +57,33 @@ func TestDarwinKeyringCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read command log: %v", err)
 	}
-	if !strings.Contains(string(data), "add-generic-password") || !strings.Contains(string(data), "find-generic-password") || !strings.Contains(string(data), "delete-generic-password") {
+	if !strings.Contains(string(data), "default-keychain") || !strings.Contains(string(data), "add-generic-password") || !strings.Contains(string(data), "find-generic-password") || !strings.Contains(string(data), "delete-generic-password") {
 		t.Fatalf("unexpected command log: %s", string(data))
 	}
 	if _, ok := NewDefaultKeyring().(DarwinKeyring); !ok {
 		t.Fatal("expected darwin default keyring")
+	}
+}
+
+func TestDarwinKeyringSetSkipsWhenDefaultKeychainMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "security.log")
+	scriptPath := filepath.Join(tmpDir, "security")
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >> \""+logPath+"\"\nif [[ \"$1\" == \"default-keychain\" ]]; then\n  echo 'security: SecKeychainCopyDefault: A default keychain could not be found.' >&2\n  exit 1\nfi\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake security: %v", err)
+	}
+	t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+
+	keyring := DarwinKeyring{}
+	if err := keyring.Set(context.Background(), "svc", "acct", "value"); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("expected keyring unavailable, got %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(data), "add-generic-password") {
+		t.Fatalf("expected add-generic-password to be skipped, got %s", string(data))
 	}
 }
 
