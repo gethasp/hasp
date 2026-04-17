@@ -173,6 +173,13 @@ func sessionOpenCommand(ctx context.Context, args []string, stdout io.Writer, s 
 	if err != nil {
 		return err
 	}
+	handle, err := openVaultHandleFn(ctx)
+	if err != nil {
+		return err
+	}
+	if _, _, _, err := ensureProjectBinding(ctx, handle, canonicalRoot); err != nil {
+		return err
+	}
 	client, err := ensureClient(ctx, s)
 	if err != nil {
 		return err
@@ -263,5 +270,9 @@ func openVaultHandle(ctx context.Context) (*store.Handle, error) {
 	if err == nil {
 		return openStoreWithPasswordFn(ctx, vaultStore, password)
 	}
-	return vaultStore.OpenWithConvenienceUnlock(ctx)
+	handle, unlockErr := vaultStore.OpenWithConvenienceUnlock(ctx)
+	if unlockErr != nil && errors.Is(unlockErr, store.ErrKeyringUnavailable) {
+		return nil, fmt.Errorf("HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable")
+	}
+	return handle, unlockErr
 }

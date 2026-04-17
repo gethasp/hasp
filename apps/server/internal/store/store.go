@@ -28,13 +28,15 @@ var (
 	// Tests create and open many ephemeral vaults across multiple packages.
 	// Using a lower derivation cost only inside `go test` keeps the default
 	// parallel suite stable without changing production envelopes.
-	passwordIterations = func() int {
-		if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-			return testPasswordIterations
-		}
-		return productionPasswordIterations
-	}()
+	passwordIterations = derivePasswordIterations(filepath.Base(os.Args[0]))
 )
+
+func derivePasswordIterations(binaryName string) int {
+	if strings.HasSuffix(strings.TrimSpace(binaryName), ".test") {
+		return testPasswordIterations
+	}
+	return productionPasswordIterations
+}
 
 type ItemKind string
 

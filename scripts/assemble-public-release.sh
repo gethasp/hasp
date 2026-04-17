@@ -61,7 +61,7 @@ fi
 
 /bin/mkdir -p "$formula_dir"
 release_export_public_key "$signing_key" "$public_key_file"
-signing_fingerprint="$(gpg --batch --list-keys --with-colons "$signing_key" | awk -F: '/^fpr:/ {print $10; exit}')"
+signing_fingerprint="$(release_gpg --list-keys --with-colons "$signing_key" | awk -F: '/^fpr:/ {print $10; exit}')"
 printf '%s\n' "$signing_fingerprint" >"$fingerprint_file"
 : >"$checksum_file"
 
@@ -97,7 +97,7 @@ for tarball in "${tarballs[@]}"; do
   metadata_entries+=("    {\"name\":\"$artifact_name\",\"version\":\"$version\",\"os\":\"$os\",\"arch\":\"$arch\",\"tarball\":\"$tarball_name\",\"url\":\"$base_url/$tarball_name\",\"sha256\":\"$(release_sha256 "$tarball")\"}")
 done
 
-gpg --batch --yes --armor --detach-sign --local-user "$signing_key" --output "$signature_file" "$checksum_file"
+release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
 
 {
   printf '{\n'

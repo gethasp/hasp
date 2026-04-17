@@ -164,6 +164,17 @@ export HASP_MASTER_PASSWORD='choose-a-strong-password'
 
 For agents that are not first-class support profiles yet, use the generic broker path in `agent-profiles/generic.md`.
 
+If you already enabled automatic repo adoption and want to enroll several local
+git repos at once, use:
+
+```bash
+./bin/hasp project adopt --under /path/to/workspaces --preview
+./bin/hasp project adopt --under /path/to/workspaces
+```
+
+That scans for git-backed project roots, skips non-project directories, and
+binds the matching repos using the machine defaults from `hasp setup`.
+
 ## Safe command execution
 
 ```bash
@@ -219,6 +230,20 @@ Verify a packaged release before install:
 The packaged installer verifies the signed checksum manifest, the tarball signature, and the packaged binary signature before it stages the install tree.
 
 ## Repo guardrails
+
+Bulk-adopt local git repos into HASP-managed project bindings:
+
+```bash
+./bin/hasp project adopt --under /path/to/workspaces --preview
+./bin/hasp project adopt --under /path/to/workspaces
+```
+
+Behavior:
+
+- scans under the given directory for git-backed project roots
+- skips non-project directories
+- uses machine defaults for hook installation and default capture policy
+- does not require background crawling or always-on discovery
 
 Packaged helpers:
 

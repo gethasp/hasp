@@ -47,6 +47,15 @@ func TestPasswordIterationsAreReducedInTests(t *testing.T) {
 	}
 }
 
+func TestDerivePasswordIterations(t *testing.T) {
+	if got := derivePasswordIterations("hasp.test"); got != testPasswordIterations {
+		t.Fatalf("derivePasswordIterations(test) = %d, want %d", got, testPasswordIterations)
+	}
+	if got := derivePasswordIterations("hasp"); got != productionPasswordIterations {
+		t.Fatalf("derivePasswordIterations(prod) = %d, want %d", got, productionPasswordIterations)
+	}
+}
+
 func TestInitOpenAndCRUDItems(t *testing.T) {
 	store := newTestStore(t)
 
@@ -221,6 +230,49 @@ func TestOpenWithConvenienceUnlockFailsWhenUnavailable(t *testing.T) {
 	}
 	if _, err := store.OpenWithConvenienceUnlock(context.Background()); !errors.Is(err, ErrKeyringUnavailable) {
 		t.Fatalf("expected keyring unavailable, got %v", err)
+	}
+}
+
+func TestEncodeAndDecodeConvenienceKey(t *testing.T) {
+	raw := []byte{0x00, 0x01, 0x02, 0xab, 0xcd, 0xef}
+	encoded := encodeConvenienceKey(raw)
+	decoded, err := decodeConvenienceKey(encoded)
+	if err != nil {
+		t.Fatalf("decode encoded convenience key: %v", err)
+	}
+	if string(decoded) != string(raw) {
+		t.Fatalf("decoded key mismatch: got %x want %x", decoded, raw)
+	}
+
+	fallback, err := decodeConvenienceKey("plain-text-key")
+	if err != nil {
+		t.Fatalf("decode fallback convenience key: %v", err)
+	}
+	if string(fallback) != "plain-text-key" {
+		t.Fatalf("fallback decode = %q", string(fallback))
+	}
+
+	if _, err := decodeConvenienceKey(""); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("expected unavailable on empty convenience key, got %v", err)
+	}
+}
+
+func TestOpenWithConvenienceUnlockFailsOnEmptyStoredKey(t *testing.T) {
+	keyring := newMemoryKeyring()
+	store := newTestStoreWithKeyring(t, keyring)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	if err := handle.EnableConvenienceUnlock(context.Background()); err != nil {
+		t.Fatalf("enable convenience unlock: %v", err)
+	}
+	keyring.values[keyringService+"|"+store.keyringAccount()] = ""
+	if _, err := store.OpenWithConvenienceUnlock(context.Background()); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("expected unavailable on empty stored key, got %v", err)
 	}
 }
 

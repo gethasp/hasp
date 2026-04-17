@@ -73,8 +73,8 @@ func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *te
 }
 
 func TestUpsertCodexMCPServerConfigReplacesExistingBlock(t *testing.T) {
-	updated := upsertCodexMCPServerConfig([]byte("model = \"gpt-5.4\"\n"), "/tmp/hasp-home")
-	if !strings.Contains(updated, "[mcp_servers.hasp]") || !strings.Contains(updated, "command = \"hasp\"") {
+	updated := upsertCodexMCPServerConfig([]byte("model = \"gpt-5.4\"\n"), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
+	if !strings.Contains(updated, "[mcp_servers.hasp]") || !strings.Contains(updated, "command = \"/opt/homebrew/bin/hasp\"") {
 		t.Fatalf("missing hasp mcp block: %s", updated)
 	}
 	if !strings.Contains(updated, "HASP_HOME = \"/tmp/hasp-home\"") {
@@ -93,7 +93,7 @@ HASP_HOME = "/old"
 
 [notice]
 hide = true
-`), "/tmp/hasp-home")
+`), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
 	if strings.Contains(replaced, "command = \"old\"") || strings.Contains(replaced, "/old") {
 		t.Fatalf("old hasp block was not replaced: %s", replaced)
 	}
@@ -103,7 +103,7 @@ hide = true
 }
 
 func TestUpsertJSONMCPServerConfigPreservesExistingContent(t *testing.T) {
-	updated, err := upsertJSONMCPServerConfig([]byte(`{"theme":"dark","mcpServers":{"other":{"command":"foo","args":["bar"]}}}`), "/tmp/hasp-home")
+	updated, err := upsertJSONMCPServerConfig([]byte(`{"theme":"dark","mcpServers":{"other":{"command":"foo","args":["bar"]}}}`), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
 	if err != nil {
 		t.Fatalf("upsert json config: %v", err)
 	}
@@ -124,6 +124,9 @@ func TestUpsertJSONMCPServerConfigPreservesExistingContent(t *testing.T) {
 	haspEntry, ok := mcpServers["hasp"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected hasp entry, got %+v", mcpServers["hasp"])
+	}
+	if haspEntry["command"] != "/opt/homebrew/bin/hasp" {
+		t.Fatalf("expected absolute hasp command path, got %+v", haspEntry)
 	}
 	envMap, ok := haspEntry["env"].(map[string]any)
 	if !ok || envMap["HASP_HOME"] != "/tmp/hasp-home" {
@@ -152,6 +155,7 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 	origNewStore := newVaultStoreFn
 	origHome := setupUserHomeDirFn
 	origLookPath := setupLookPathFn
+	origExecPath := setupExecutableFn
 	origRead := setupReadFileFn
 	origWrite := setupWriteFileFn
 	origMkdir := setupMkdirAllFn
@@ -162,6 +166,7 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 		newVaultStoreFn = origNewStore
 		setupUserHomeDirFn = origHome
 		setupLookPathFn = origLookPath
+		setupExecutableFn = origExecPath
 		setupReadFileFn = origRead
 		setupWriteFileFn = origWrite
 		setupMkdirAllFn = origMkdir
@@ -172,7 +177,8 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 
 	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
 	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
-	setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
+	setupLookPathFn = func(string) (string, error) { return "/opt/homebrew/bin/hasp", nil }
+	setupExecutableFn = func() (string, error) { return "/opt/homebrew/bin/hasp", nil }
 	setupReadFileFn = os.ReadFile
 	setupWriteFileFn = os.WriteFile
 	setupMkdirAllFn = os.MkdirAll
@@ -258,7 +264,7 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 		if strings.Contains(text, "correct horse battery staple") {
 			t.Fatalf("config leaked master password: %s", text)
 		}
-		if !strings.Contains(text, "\"command\": \"hasp\"") {
+		if !strings.Contains(text, "\"command\": \"/opt/homebrew/bin/hasp\"") {
 			t.Fatalf("config missing hasp MCP command: %s", text)
 		}
 		if !strings.Contains(text, "\"HASP_HOME\": "+strconvQuote(haspHome)) {

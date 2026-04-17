@@ -264,6 +264,19 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 		t.Fatalf("expected check-repo canonical failure, got %v", err)
 	}
 	appCanonicalProjectRootFn = origCanonical
+	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault fail") }
+	if err := sessionOpenCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "vault fail") {
+		t.Fatalf("expected session open vault failure, got %v", err)
+	}
+	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return handle, nil }
+	resolveBindingViewAppFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{}, nil, errors.New("binding fail")
+	}
+	if err := sessionOpenCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "binding fail") {
+		t.Fatalf("expected session open binding failure, got %v", err)
+	}
+	openVaultHandleFn = origOpenVaultHandle
+	resolveBindingViewAppFn = origResolveBindingApp
 	walkProjectDirFn = func(string, fs.WalkDirFunc) error { return errors.New("walk fail") }
 	if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard); err == nil || !strings.Contains(err.Error(), "walk fail") {
 		t.Fatalf("expected check-repo walk failure, got %v", err)

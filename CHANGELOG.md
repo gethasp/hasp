@@ -4,6 +4,63 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.18]
+
+- Stop `hasp mcp` from replying to JSON-RPC notifications, so Codex no longer fails MCP startup with `Transport closed` during the `notifications/initialized` handshake.
+- Add regression coverage for the initialize plus notification handshake so future releases keep the MCP stream valid for stricter clients.
+
+## [v0.1.17]
+
+- Rework the interactive `hasp setup` confirmation and completion screens into grouped, aligned blocks so machine defaults, agent targets, statuses, and next steps are easier to scan at a glance.
+- Add stronger TTY-only color hierarchy for stage bullets, config paths, summary labels, statuses, and numbered next steps while keeping non-TTY output clean and the `100.0%` coverage gate intact.
+
+## [v0.1.15]
+
+- Support noninteractive GPG signing for public release packaging with `HASP_RELEASE_GPG_PASSPHRASE` or `HASP_RELEASE_GPG_PASSPHRASE_FILE`, so passphrase-protected release keys work in CI and scripted maintainer flows.
+- Extend the release smoke lane to cover passphrase-protected signing for both packaged release sidecars and assembled public release metadata, while keeping the public export verification lane green.
+
+## [v0.1.14]
+
+- Tighten the interactive `hasp setup` presentation so stage guidance uses cleaner bullets, TTY color accents, and a standalone success lead instead of the old indented summary line.
+- Lock the setup-output polish down with exact-output regressions while keeping the absolute MCP command path fix and the `100.0%` coverage gate intact.
+
+## [v0.1.13]
+
+- Write absolute `hasp` command paths into generated Codex and JSON MCP client configs so launcher environments do not depend on ambient PATH resolution.
+- Keep the setup retry fix, convenience-unlock compatibility fix, truthful version reporting, and `100.0%` coverage gate intact.
+
+## [v0.1.12]
+
+- Store convenience-unlock key material in a keychain-compatible encoded form and decode it on readback, so macOS convenience unlock works reliably on real installed binaries.
+- Keep the existing-vault setup retry fix, truthful embedded version reporting, and `100.0%` coverage gate intact.
+
+## [v0.1.11]
+
+- Embed the build version into HASP binaries so `hasp version` reports the binary’s own release identity instead of reading a nearby repo `VERSION` file from the current working directory.
+- Keep the existing-vault setup retry fix and `100.0%` coverage gate intact while making stale installed binaries easier to detect.
+
+## [v0.1.10]
+
+- Re-cut the setup retry fix release from a real-PTY-validated `HEAD` so the published version is unambiguous.
+- Preserve the existing-vault password retry behavior, convenience-unlock verification, and the integration regressions added for both paths.
+
+## [v0.1.9]
+
+- Keep interactive `hasp setup` on the existing-vault password prompt after a wrong password instead of aborting the whole flow.
+- Add integration coverage for the exact retry path so future releases catch this regression automatically.
+
+## [v0.1.8]
+
+- Verify convenience unlock during `hasp setup` by reopening the vault through the keychain path before reporting success.
+- Return a clearer CLI error when neither `HASP_MASTER_PASSWORD` nor convenience unlock is available for a vault-opening command.
+- Add integration coverage for the exact setup/status regression so future releases catch this mismatch automatically.
+
+## [v0.1.7]
+
+- Add `hasp project adopt --under <dir> [--preview]` so operators can scan and enroll multiple local git repos using machine defaults without background crawling.
+- Extend the CLI integration coverage and edge-case tests for bulk adoption and password-iteration selection, bringing the repo Go coverage gate back to `100.0%`.
+- Keep the curated public export boundary valid while landing the new V1 adoption path.
+
 ## [v0.1.6]
 
 - Shift `hasp setup` to a machine-wide onboarding model with defaults for automatic project adoption on first use.

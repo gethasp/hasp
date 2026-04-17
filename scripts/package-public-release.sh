@@ -46,6 +46,7 @@ for target in "${targets[@]}"; do
   (
     export GOOS="$goos"
     export GOARCH="$goarch"
+    /bin/rm -rf "$repo_root/dist/release"
     bash "$repo_root/scripts/package-release.sh" >/dev/null
     /bin/cp -f "$repo_root"/dist/release/*.tar.gz "$release_root"/
     /bin/rm -rf "$repo_root/dist/release"

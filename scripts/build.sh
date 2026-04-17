@@ -4,6 +4,7 @@ set -euo pipefail
 mode="${1:-}"
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$repo_root"
+version="$(< VERSION)"
 
 server_pkg="./apps/server/cmd/hasp"
 server_mod="./apps/server/go.mod"
@@ -17,12 +18,12 @@ mkdir -p bin
 cd "$repo_root/apps/server"
 case "$mode" in
   --debug)
-    go build -o "$repo_root/bin/hasp" ./cmd/hasp
+    go build -ldflags="-X github.com/gethasp/hasp/apps/server/internal/runtime.buildVersion=$version" -o "$repo_root/bin/hasp" ./cmd/hasp
     ;;
   --min-size)
-    go build -trimpath -buildvcs=false -ldflags="-s -w" -gcflags=all=-l -o "$repo_root/bin/hasp" ./cmd/hasp
+    go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/gethasp/hasp/apps/server/internal/runtime.buildVersion=$version" -gcflags=all=-l -o "$repo_root/bin/hasp" ./cmd/hasp
     ;;
   *)
-    go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$repo_root/bin/hasp" ./cmd/hasp
+    go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/gethasp/hasp/apps/server/internal/runtime.buildVersion=$version" -o "$repo_root/bin/hasp" ./cmd/hasp
     ;;
 esac

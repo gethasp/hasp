@@ -7,9 +7,13 @@ import (
 )
 
 var versionGetwd = os.Getwd
+var buildVersion = ""
 
 func Version() string {
 	if value := strings.TrimSpace(os.Getenv("HASP_VERSION")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(buildVersion); value != "" {
 		return value
 	}
 	dir, err := versionGetwd()

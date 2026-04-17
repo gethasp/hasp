@@ -18,7 +18,7 @@ type request struct {
 
 type response struct {
 	JSONRPC string     `json:"jsonrpc"`
-	ID      any        `json:"id,omitempty"`
+	ID      any        `json:"id"`
 	Result  any        `json:"result,omitempty"`
 	Error   *respError `json:"error,omitempty"`
 }
@@ -49,6 +49,12 @@ func Serve(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
 				return nil
 			}
 			return err
+		}
+		// Ignore notifications. Codex sends `notifications/initialized`, and
+		// replying to a notification produces unsolicited traffic on the MCP
+		// stream that stricter clients reject.
+		if req.ID == nil {
+			continue
 		}
 		resp := dispatch(ctx, req)
 		if err := enc.Encode(resp); err != nil {

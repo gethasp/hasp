@@ -29,6 +29,15 @@ func (w *setupNthWriteErrWriter) Write(p []byte) (int, error) {
 	return 0, w.err
 }
 
+type setupCountWriter struct {
+	writes int
+}
+
+func (w *setupCountWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return len(p), nil
+}
+
 type unavailableSetupKeyring struct{}
 
 func (unavailableSetupKeyring) Set(context.Context, string, string, string) error {
@@ -776,11 +785,54 @@ func TestSetupPresentationHelpers(t *testing.T) {
 			t.Fatalf("render summary: %v", err)
 		}
 		text := out.String()
-		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents:") || !strings.Contains(text, "Review before apply") {
+		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents") || !strings.Contains(text, "Review before apply") {
 			t.Fatalf("unexpected presentation output %q", text)
 		}
+		if !strings.Contains(text, "  • HASP setup will:") {
+			t.Fatalf("expected bulleted intro line, got %q", text)
+		}
+		if !strings.Contains(text, "  1. choose where local encrypted HASP data lives on this machine") {
+			t.Fatalf("expected numbered intro step to stay numbered, got %q", text)
+		}
+		if !strings.Contains(text, "  3. configure selected coding agents to talk to HASP over MCP\n\n  • Press Enter to accept the default shown in brackets.") {
+			t.Fatalf("expected spacing between numbered intro list and trailing prose, got %q", text)
+		}
+		if !strings.Contains(text, "  • Enter numbers like 1 or 1,3. Existing config files are backed up before mutation.\n\n  1. Codex CLI") {
+			t.Fatalf("expected spacing between agent prose and numbered list, got %q", text)
+		}
+		if !strings.Contains(text, "\n✓ HASP is configured for this machine.\n") {
+			t.Fatalf("expected summary lead without stage indentation, got %q", text)
+		}
+		if strings.Contains(text, "\n  HASP is configured for this machine.\n") {
+			t.Fatalf("expected summary lead indentation bug to stay fixed, got %q", text)
+		}
+		if !strings.Contains(text, "\nMachine\n") || !strings.Contains(text, "\nDefaults\n") || !strings.Contains(text, "\nNext steps\n") {
+			t.Fatalf("expected grouped summary sections, got %q", text)
+		}
+		if !strings.Contains(text, "Local HASP data") || !strings.Contains(text, "Automatic repo adoption") {
+			t.Fatalf("expected aligned summary key/value rows, got %q", text)
+		}
+		if !strings.Contains(text, "1. next") {
+			t.Fatalf("expected numbered next step, got %q", text)
+		}
 
-		for failAt := 1; failAt <= 12; failAt++ {
+		countWriter := &setupCountWriter{}
+		if err := renderSetupSummary(countWriter, setupSummary{
+			HaspHome:          "/tmp/.hasp",
+			ConfigPath:        "/tmp/hasp-cli.json",
+			InitState:         "created",
+			ProjectRoot:       "/tmp/repo",
+			ConvenienceUnlock: "enabled",
+			Agents: []setupAgentOutcome{{
+				Label:      "Codex CLI",
+				ConfigPath: "/tmp/codex.toml",
+				Changed:    true,
+			}},
+			NextSteps: []string{"next"},
+		}); err != nil {
+			t.Fatalf("count render summary: %v", err)
+		}
+		for failAt := 1; failAt <= countWriter.writes; failAt++ {
 			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
 			err := renderSetupSummary(writer, setupSummary{
 				HaspHome:          "/tmp/.hasp",
@@ -799,29 +851,18 @@ func TestSetupPresentationHelpers(t *testing.T) {
 				t.Fatalf("expected render summary write failure at call %d", failAt)
 			}
 		}
-		writer := &setupNthWriteErrWriter{allow: 9, err: errors.New("next steps write fail")}
-		if err := renderSetupSummary(writer, setupSummary{
-			HaspHome:         "/tmp/.hasp",
-			ConfigPath:       "/tmp/hasp-cli.json",
-			InitState:        "created",
-			AutoProtectRepos: true,
-			AutoInstallHooks: true,
-			NextSteps:        []string{"one"},
-		}); err == nil {
-			t.Fatal("expected next-steps heading write failure")
+
+		countWriter = &setupCountWriter{}
+		if err := setupWriteConfirmation(countWriter, setupPlanPreview{
+			HaspHome:                "/tmp/.hasp",
+			ProjectRoot:             "/tmp/repo",
+			Agents:                  []setupAgentSpec{{ID: "codex-cli", Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}},
+			InstallHooks:            true,
+			EnableConvenienceUnlock: true,
+		}); err != nil {
+			t.Fatalf("count write confirmation: %v", err)
 		}
-		writer = &setupNthWriteErrWriter{allow: 10, err: errors.New("next step line fail")}
-		if err := renderSetupSummary(writer, setupSummary{
-			HaspHome:         "/tmp/.hasp",
-			ConfigPath:       "/tmp/hasp-cli.json",
-			InitState:        "created",
-			AutoProtectRepos: true,
-			AutoInstallHooks: true,
-			NextSteps:        []string{"one"},
-		}); err == nil {
-			t.Fatal("expected next-step line write failure")
-		}
-		for failAt := 1; failAt <= 6; failAt++ {
+		for failAt := 1; failAt <= countWriter.writes; failAt++ {
 			writer := &setupNthWriteErrWriter{allow: failAt - 1, err: errors.New("write fail")}
 			if err := setupWriteConfirmation(writer, setupPlanPreview{
 				HaspHome:                "/tmp/.hasp",
@@ -850,6 +891,21 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "(unchanged)") {
 			t.Fatalf("expected unchanged agent suffix, got %q", out.String())
+		}
+
+		out.Reset()
+		if err := setupWriteConfirmation(&out, setupPlanPreview{
+			HaspHome:                "/tmp/.hasp",
+			ImportPath:              "/tmp/.env",
+			BindImports:             true,
+			AutoProtectRepos:        false,
+			InstallHooks:            false,
+			EnableConvenienceUnlock: false,
+		}); err != nil {
+			t.Fatalf("write confirmation with import preview: %v", err)
+		}
+		if !strings.Contains(out.String(), "Import during setup") || !strings.Contains(out.String(), "Bind imported secrets") {
+			t.Fatalf("expected confirmation import details, got %q", out.String())
 		}
 	})
 
@@ -934,7 +990,11 @@ func TestSetupPresentationHelpers(t *testing.T) {
 				t.Fatalf("expected setupWriteStage failure at call %d", failAt)
 			}
 		}
-		writer := &setupNthWriteErrWriter{allow: 0, err: errors.New("write fail")}
+		writer := &setupNthWriteErrWriter{allow: 2, err: errors.New("separator fail")}
+		if err := setupWriteStage(writer, "Title", "explanation", "1. step"); err == nil {
+			t.Fatal("expected setupWriteStage separator failure")
+		}
+		writer = &setupNthWriteErrWriter{allow: 0, err: errors.New("write fail")}
 		if err := setupWriteSelectedAgents(writer, []setupAgentSpec{{Label: "Codex CLI", ConfigPath: func(string) string { return "/tmp/codex.toml" }}}); err == nil {
 			t.Fatal("expected setupWriteSelectedAgents failure")
 		}
@@ -960,11 +1020,13 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		origHome := setupUserHomeDirFn
 		origNewStore := newVaultStoreFn
 		origEnable := setupEnableConvenienceUnlockFn
+		origVerify := setupVerifyConvenienceUnlockFn
 		origCanon := setupCanonicalProjectRoot
 		defer func() {
 			setupUserHomeDirFn = origHome
 			newVaultStoreFn = origNewStore
 			setupEnableConvenienceUnlockFn = origEnable
+			setupVerifyConvenienceUnlockFn = origVerify
 			setupCanonicalProjectRoot = origCanon
 		}()
 
@@ -986,6 +1048,95 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		}, bytes.NewBuffer(nil), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "unlock fail") {
 			t.Fatalf("expected convenience unlock failure, got %v", err)
+		}
+	})
+
+	t.Run("runSetup convenience verify unavailable branch", func(t *testing.T) {
+		lockAppSeams(t)
+		homeDir := t.TempDir()
+		projectRoot := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+		t.Setenv("SETUP_RESIDUAL_PW", "correct horse battery staple")
+
+		origHome := setupUserHomeDirFn
+		origNewStore := newVaultStoreFn
+		origEnable := setupEnableConvenienceUnlockFn
+		origVerify := setupVerifyConvenienceUnlockFn
+		origCanon := setupCanonicalProjectRoot
+		defer func() {
+			setupUserHomeDirFn = origHome
+			newVaultStoreFn = origNewStore
+			setupEnableConvenienceUnlockFn = origEnable
+			setupVerifyConvenienceUnlockFn = origVerify
+			setupCanonicalProjectRoot = origCanon
+		}()
+
+		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
+		setupCanonicalProjectRoot = func(_ context.Context, value string) (string, error) { return value, nil }
+		newVaultStoreFn = func() (*store.Store, error) { return store.New(&memorySetupKeyring{}) }
+		setupEnableConvenienceUnlockFn = func(context.Context, *store.Handle) error { return nil }
+		setupVerifyConvenienceUnlockFn = func(context.Context, *store.Store) error { return store.ErrKeyringUnavailable }
+
+		summary, err := runSetup(context.Background(), setupOptions{
+			NonInteractive:          true,
+			HaspHome:                filepath.Join(t.TempDir(), "hasp-home"),
+			Repo:                    projectRoot,
+			Agents:                  setupAgentFlags{"codex-cli"},
+			PasswordEnv:             "SETUP_RESIDUAL_PW",
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: true},
+			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
+			DefaultPolicy:           store.PolicySession,
+		}, bytes.NewBuffer(nil), io.Discard)
+		if err != nil {
+			t.Fatalf("run setup with unavailable verify: %v", err)
+		}
+		if summary.ConvenienceUnlock != "unavailable" {
+			t.Fatalf("expected unavailable convenience unlock after failed verify, got %+v", summary)
+		}
+	})
+
+	t.Run("runSetup convenience verify generic failure branch", func(t *testing.T) {
+		lockAppSeams(t)
+		homeDir := t.TempDir()
+		projectRoot := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+		t.Setenv("SETUP_RESIDUAL_PW", "correct horse battery staple")
+
+		origHome := setupUserHomeDirFn
+		origNewStore := newVaultStoreFn
+		origEnable := setupEnableConvenienceUnlockFn
+		origVerify := setupVerifyConvenienceUnlockFn
+		origCanon := setupCanonicalProjectRoot
+		defer func() {
+			setupUserHomeDirFn = origHome
+			newVaultStoreFn = origNewStore
+			setupEnableConvenienceUnlockFn = origEnable
+			setupVerifyConvenienceUnlockFn = origVerify
+			setupCanonicalProjectRoot = origCanon
+		}()
+
+		setupUserHomeDirFn = func() (string, error) { return homeDir, nil }
+		setupCanonicalProjectRoot = func(_ context.Context, value string) (string, error) { return value, nil }
+		newVaultStoreFn = func() (*store.Store, error) { return store.New(&memorySetupKeyring{}) }
+		setupEnableConvenienceUnlockFn = func(context.Context, *store.Handle) error { return nil }
+		setupVerifyConvenienceUnlockFn = func(context.Context, *store.Store) error { return errors.New("verify fail") }
+
+		_, err := runSetup(context.Background(), setupOptions{
+			NonInteractive:          true,
+			HaspHome:                filepath.Join(t.TempDir(), "hasp-home"),
+			Repo:                    projectRoot,
+			Agents:                  setupAgentFlags{"codex-cli"},
+			PasswordEnv:             "SETUP_RESIDUAL_PW",
+			InstallHooks:            setupOptionalBool{set: true, value: false},
+			EnableConvenienceUnlock: setupOptionalBool{set: true, value: true},
+			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
+			DefaultPolicy:           store.PolicySession,
+		}, bytes.NewBuffer(nil), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "verify fail") {
+			t.Fatalf("expected convenience verify failure, got %v", err)
 		}
 	})
 
@@ -1323,6 +1474,171 @@ func TestSetupResolveProjectAndAgentResidualCoverage(t *testing.T) {
 		selected, err := setupResolveAgents(setupOptions{}, newSetupPrompter(bytes.NewBufferString("\n"), io.Discard))
 		if err != nil || len(selected) == 0 {
 			t.Fatalf("expected default selected agents, got %+v err=%v", selected, err)
+		}
+	})
+
+	t.Run("setupHaspCommandPath prefers lookpath then executable", func(t *testing.T) {
+		origLook := setupLookPathFn
+		origExec := setupExecutableFn
+		defer func() {
+			setupLookPathFn = origLook
+			setupExecutableFn = origExec
+		}()
+
+		setupLookPathFn = func(string) (string, error) { return "/opt/homebrew/bin/hasp", nil }
+		setupExecutableFn = func() (string, error) { return "/tmp/fallback-hasp", nil }
+		if got := setupHaspCommandPath(); got != "/opt/homebrew/bin/hasp" {
+			t.Fatalf("expected lookpath result, got %q", got)
+		}
+
+		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
+		setupExecutableFn = func() (string, error) { return "/tmp/hasp", nil }
+		if got := setupHaspCommandPath(); got != "/tmp/hasp" {
+			t.Fatalf("expected executable fallback, got %q", got)
+		}
+
+		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
+		setupExecutableFn = func() (string, error) { return "/tmp/fallback-hasp", nil }
+		if got := setupHaspCommandPath(); got != "hasp" {
+			t.Fatalf("expected generic fallback, got %q", got)
+		}
+	})
+
+	t.Run("setup visual helpers cover color and empty branches", func(t *testing.T) {
+		devnull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatalf("open /dev/null: %v", err)
+		}
+		defer devnull.Close()
+
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("TERM", "xterm-256color")
+		if !setupWriterSupportsColor(devnull) {
+			t.Fatal("expected color support on char-device writer")
+		}
+		if !strings.Contains(setupStageHeader(devnull, "Title"), "\x1b[1;36m") {
+			t.Fatal("expected colored stage header")
+		}
+		if !strings.Contains(setupSummarySectionHeader(devnull, "Summary"), "\x1b[1m") {
+			t.Fatal("expected colored summary section header")
+		}
+		if !strings.Contains(setupSummaryLead(devnull, "ready"), "\x1b[1;32m") {
+			t.Fatal("expected colored summary lead")
+		}
+		if !strings.Contains(setupSummaryKeyValue(devnull, "Status", "enabled"), "\x1b[1;32m") {
+			t.Fatal("expected enabled values to be highlighted")
+		}
+		if !strings.Contains(setupSummaryKeyValue(devnull, "Path", "~/file"), "\x1b[36m") {
+			t.Fatal("expected path values to be highlighted")
+		}
+		if !strings.Contains(setupSummaryAgentLine(devnull, setupAgentOutcome{
+			Label:      "Codex CLI",
+			ConfigPath: "/tmp/codex.toml",
+			Changed:    false,
+		}), "\x1b[2m(unchanged)\x1b[0m") {
+			t.Fatal("expected unchanged agent status to be dimmed")
+		}
+		if !strings.Contains(setupSummaryStepLine(devnull, 2, "next"), "\x1b[1;36m2.\x1b[0m") {
+			t.Fatal("expected step index to be highlighted")
+		}
+		if got := setupStageLine(devnull, ""); got != "" {
+			t.Fatalf("expected empty stage line, got %q", got)
+		}
+		if got := setupStageLine(devnull, "- bullet"); !strings.Contains(got, "- bullet") {
+			t.Fatalf("expected dash line preserved as list item, got %q", got)
+		}
+		if got := setupStageLine(devnull, "2. second"); !strings.Contains(got, "2.") || !strings.Contains(got, "second") {
+			t.Fatalf("expected numbered line preserved as numbered item, got %q", got)
+		}
+		if got := setupStageLine(devnull, "plain line"); !strings.Contains(got, "•") || !strings.Contains(got, "plain line") {
+			t.Fatalf("expected plain line to gain setup bullet, got %q", got)
+		}
+		if got := setupStageLine(devnull, "   config: /tmp/file"); !strings.Contains(got, "config") || !strings.Contains(got, "/tmp/file") {
+			t.Fatalf("expected config line preserved and styled, got %q", got)
+		}
+		if got := setupStageLine(devnull, "   plain indented"); got != "   plain indented" {
+			t.Fatalf("expected generic indented line preserved, got %q", got)
+		}
+		if got := setupStageLine(devnull, "2.second"); !strings.Contains(got, "2.second") {
+			t.Fatalf("expected malformed numbered line fallback, got %q", got)
+		}
+		if kind := setupStageLineKind("1. first"); kind != "numeric" {
+			t.Fatalf("expected numeric line kind, got %q", kind)
+		}
+		if kind := setupStageLineKind(""); kind != "" {
+			t.Fatalf("expected empty line kind, got %q", kind)
+		}
+		if kind := setupStageLineKind("   config: /tmp/file"); kind != "config" {
+			t.Fatalf("expected config line kind, got %q", kind)
+		}
+		if kind := setupStageLineKind("- bullet"); kind != "dash" {
+			t.Fatalf("expected dash line kind, got %q", kind)
+		}
+		if kind := setupStageLineKind("   plain indented"); kind != "indented" {
+			t.Fatalf("expected indented line kind, got %q", kind)
+		}
+		if kind := setupStageLineKind("plain"); kind != "text" {
+			t.Fatalf("expected text line kind, got %q", kind)
+		}
+		if !setupShouldSeparateStageLines("Enter numbers like 1 or 1,3.", "1. Codex CLI") {
+			t.Fatal("expected prose-to-numbered separation")
+		}
+		if !setupShouldSeparateStageLines("3. finish setup", "Press Enter to continue.") {
+			t.Fatal("expected numbered-to-prose separation")
+		}
+		if setupShouldSeparateStageLines("HASP setup will:", "1. choose where local encrypted HASP data lives on this machine") {
+			t.Fatal("did not expect separation after a list header line")
+		}
+		if prefix, rest, ok := setupSplitNumericPrefix("3. third"); !ok || prefix != "3." || rest != "third" {
+			t.Fatalf("expected numeric prefix split, got prefix=%q rest=%q ok=%v", prefix, rest, ok)
+		}
+		if _, _, ok := setupSplitNumericPrefix("plain"); ok {
+			t.Fatal("expected non-numbered line to skip numeric split")
+		}
+		if got := setupSummaryValue(devnull, "unavailable"); !strings.Contains(got, "\x1b[1;33m") {
+			t.Fatalf("expected unavailable to be highlighted as warning, got %q", got)
+		}
+		if got := setupSummaryValue(devnull, "existing"); !strings.Contains(got, "\x1b[1;36m") {
+			t.Fatalf("expected existing to be highlighted as neutral status, got %q", got)
+		}
+		if got := setupSummaryValue(devnull, "plain text"); got != "plain text" {
+			t.Fatalf("expected plain values to stay plain, got %q", got)
+		}
+
+		t.Setenv("NO_COLOR", "1")
+		if setupWriterSupportsColor(devnull) {
+			t.Fatal("expected NO_COLOR to disable color support")
+		}
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("TERM", "dumb")
+		if setupWriterSupportsColor(devnull) {
+			t.Fatal("expected TERM=dumb to disable color support")
+		}
+		t.Setenv("TERM", "xterm-256color")
+
+		var nilFile *os.File
+		if setupWriterSupportsColor(nilFile) {
+			t.Fatal("expected nil *os.File writer to disable color support")
+		}
+
+		tempFile, err := os.CreateTemp(t.TempDir(), "setup-visual-*.txt")
+		if err != nil {
+			t.Fatalf("create temp file: %v", err)
+		}
+		if setupWriterSupportsColor(tempFile) {
+			t.Fatal("expected regular file writer to be treated as non-color")
+		}
+		if got := setupStyle(tempFile, "1;32", "text"); got != "text" {
+			t.Fatalf("expected non-color style passthrough, got %q", got)
+		}
+		if err := setupWriteKeyValueBlock(tempFile, "Empty"); err != nil {
+			t.Fatalf("expected empty key/value block to be a no-op, got %v", err)
+		}
+		if err := tempFile.Close(); err != nil {
+			t.Fatalf("close temp file: %v", err)
+		}
+		if setupWriterSupportsColor(tempFile) {
+			t.Fatal("expected closed file stat failure to disable color support")
 		}
 	})
 }

@@ -26,6 +26,7 @@ git push origin v0.1.0
 3. `CHANGELOG.md` contains a `## [vX.Y.Z]` section for the tag
 4. the public release secrets are available:
    - base64-encoded GPG signing key material
+   - `HASP_RELEASE_GPG_PASSPHRASE` if that key is passphrase-protected
    - Cloudflare R2 credentials, if artifact mirroring is enabled
 
 ## What the release publishes
@@ -42,6 +43,13 @@ git push origin v0.1.0
 
 The public release workflow builds and packages from this public repo, then
 publishes immutable release assets.
+
+If the release signing key is passphrase-protected, the workflow supplies the
+passphrase through `HASP_RELEASE_GPG_PASSPHRASE` and the signing scripts use
+GPG loopback mode. Local maintainers can use the same path with either:
+
+- `HASP_RELEASE_GPG_PASSPHRASE`
+- `HASP_RELEASE_GPG_PASSPHRASE_FILE`
 
 If the R2 mirror is configured, it mirrors the same release bytes to the stable
 download host. The release host must never point at mutable or rebuilt bytes.

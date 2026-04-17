@@ -111,7 +111,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  setup [--non-interactive ...]")
 	fmt.Fprintln(w, "  bootstrap --profile <id> [--import <path|->] [--bind-imports] | bootstrap generic | bootstrap profiles | bootstrap doctor --profile <id>|generic")
 	fmt.Fprintln(w, "  import [--project-root <path>] [--bind] [--name <name>] [--preview] [--format auto|env|json] <path|->")
-	fmt.Fprintln(w, "  project bind|status|unbind")
+	fmt.Fprintln(w, "  project adopt|bind|status|unbind")
 	fmt.Fprintln(w, "  daemon serve|start|stop|status")
 	fmt.Fprintln(w, "  ping")
 	fmt.Fprintln(w, "  status")

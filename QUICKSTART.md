@@ -60,6 +60,17 @@ bin/hasp bootstrap \
   --alias secret_01=API_TOKEN
 ```
 
+If you already enabled automatic repo adoption and want to enroll several local
+git repos at once, use:
+
+```bash
+bin/hasp project adopt --under /path/to/workspaces --preview
+bin/hasp project adopt --under /path/to/workspaces
+```
+
+That scans for git-backed project roots, skips non-project directories, and
+binds the matching repos using the machine defaults from `hasp setup`.
+
 ## 5. Use the brokered path
 
 ```bash

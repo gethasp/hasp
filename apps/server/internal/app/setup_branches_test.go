@@ -203,7 +203,15 @@ func TestSetupWriteAgentConfigsInvalidFormatAndNoop(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	data, err := upsertJSONMCPServerConfig(nil, "")
+	origLook := setupLookPathFn
+	origExec := setupExecutableFn
+	defer func() {
+		setupLookPathFn = origLook
+		setupExecutableFn = origExec
+	}()
+	setupLookPathFn = func(string) (string, error) { return "/bin/hasp", nil }
+	setupExecutableFn = func() (string, error) { return "/bin/hasp", nil }
+	data, err := upsertJSONMCPServerConfig(nil, "", "/bin/hasp")
 	if err != nil {
 		t.Fatalf("upsert json config: %v", err)
 	}
@@ -474,7 +482,7 @@ func TestSetupExtraBranchCoverage(t *testing.T) {
 	if _, err := setupSetEnv("bad=name", "value"); err == nil {
 		t.Fatal("expected invalid env name error")
 	}
-	if _, err := upsertJSONMCPServerConfig([]byte(`{bad`), ""); err == nil {
+	if _, err := upsertJSONMCPServerConfig([]byte(`{bad`), "", "/bin/hasp"); err == nil {
 		t.Fatal("expected invalid JSON error")
 	}
 }

@@ -178,6 +178,7 @@ var (
 	setupSaveConfigFn         = paths.SaveConfig
 	setupConfigPathFn         = paths.ConfigPath
 	setupLoadConfigFn         = paths.LoadConfig
+	setupExecutableFn         = os.Executable
 	setupCanonicalProjectRoot = store.CanonicalProjectRoot
 	setupResolvePasswordFn    = setupResolvePassword
 	setupSetEnvFn             = setupSetEnv
@@ -193,6 +194,10 @@ var (
 		return handle.ResolveBindingView(ctx, projectRoot)
 	}
 	setupEnableConvenienceUnlockFn = func(ctx context.Context, handle *store.Handle) error { return handle.EnableConvenienceUnlock(ctx) }
+	setupVerifyConvenienceUnlockFn = func(ctx context.Context, vaultStore *store.Store) error {
+		_, err := vaultStore.OpenWithConvenienceUnlock(ctx)
+		return err
+	}
 	setupWriteAgentConfigsFn       = setupWriteAgentConfigs
 	setupVerifyHarnessFn           = setupVerifyHarness
 	setupMCPServeFn                = mcp.Serve
@@ -367,7 +372,7 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err != nil {
 		return setupSummary{}, err
 	}
-	handle, initState, err := setupEnsureHandle(ctx, vaultStore, password, vaultExists)
+	handle, initState, _, err := setupOpenHandleWithRetry(ctx, prompt, vaultStore, password, vaultExists, opts.NonInteractive)
 	if err != nil {
 		return setupSummary{}, err
 	}
@@ -413,6 +418,12 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			} else {
 				return setupSummary{}, err
 			}
+		} else if err := setupVerifyConvenienceUnlockFn(ctx, vaultStore); err != nil {
+			if errors.Is(err, store.ErrKeyringUnavailable) {
+				convenienceState = "unavailable"
+			} else {
+				return setupSummary{}, err
+			}
 		} else {
 			convenienceState = "enabled"
 		}
@@ -449,6 +460,28 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		summary.Binding = &binding
 	}
 	return summary, nil
+}
+
+func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool) (*store.Handle, string, string, error) {
+	for {
+		handle, initState, err := setupEnsureHandle(ctx, vaultStore, password, vaultExists)
+		if err == nil {
+			return handle, initState, password, nil
+		}
+		if !vaultExists || nonInteractive || !errors.Is(err, store.ErrInvalidPassword) {
+			return nil, "", password, err
+		}
+		if _, writeErr := fmt.Fprintln(prompt.out, "invalid master password"); writeErr != nil {
+			return nil, "", password, writeErr
+		}
+		password, err = promptPassword(prompt, "Enter your HASP master password")
+		if err != nil {
+			return nil, "", password, err
+		}
+		if strings.TrimSpace(password) == "" {
+			return nil, "", password, errors.New("master password is required")
+		}
+	}
 }
 
 func newSetupPrompter(stdin io.Reader, out io.Writer) *setupPrompter {
@@ -944,9 +977,9 @@ func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAg
 		var updated []byte
 		switch agent.Format {
 		case "toml":
-			updated = []byte(upsertCodexMCPServerConfig(existing, haspHome))
+			updated = []byte(upsertCodexMCPServerConfig(existing, haspHome, setupHaspCommandPath()))
 		case "json":
-			updated, err = upsertJSONMCPServerConfig(existing, haspHome)
+			updated, err = upsertJSONMCPServerConfig(existing, haspHome, setupHaspCommandPath())
 			if err != nil {
 				return nil, err
 			}
@@ -969,10 +1002,20 @@ func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAg
 	return outcomes, nil
 }
 
-func upsertCodexMCPServerConfig(existing []byte, haspHome string) string {
+func setupHaspCommandPath() string {
+	if path, err := setupLookPathFn("hasp"); err == nil && strings.TrimSpace(path) != "" {
+		return path
+	}
+	if path, err := setupExecutableFn(); err == nil && strings.TrimSpace(path) != "" && filepath.Base(path) == "hasp" {
+		return path
+	}
+	return "hasp"
+}
+
+func upsertCodexMCPServerConfig(existing []byte, haspHome string, commandPath string) string {
 	blockLines := []string{
 		"[mcp_servers.hasp]",
-		"command = \"hasp\"",
+		"command = " + strconvQuote(commandPath),
 		"args = [\"mcp\"]",
 	}
 	if strings.TrimSpace(haspHome) != "" {
@@ -1014,7 +1057,7 @@ func upsertCodexMCPServerConfig(existing []byte, haspHome string) string {
 	return strings.TrimLeft(strings.Join(out, "\n"), "\n") + "\n"
 }
 
-func upsertJSONMCPServerConfig(existing []byte, haspHome string) ([]byte, error) {
+func upsertJSONMCPServerConfig(existing []byte, haspHome string, commandPath string) ([]byte, error) {
 	config := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		if err := json.Unmarshal(existing, &config); err != nil {
@@ -1030,7 +1073,7 @@ func upsertJSONMCPServerConfig(existing []byte, haspHome string) ([]byte, error)
 		mcpServers = typed
 	}
 	serverConfig := map[string]any{
-		"command": "hasp",
+		"command": commandPath,
 		"args":    []string{"mcp"},
 	}
 	if strings.TrimSpace(haspHome) != "" {
@@ -1143,54 +1186,52 @@ func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, 
 }
 
 func renderSetupSummary(out io.Writer, summary setupSummary) error {
-	if err := setupWriteStage(out, "Setup complete",
-		"HASP is configured for this machine.",
+	if err := setupWriteStage(out, "Setup complete"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, setupSummaryLead(out, "HASP is configured for this machine.")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	if err := setupWriteKeyValueBlock(out, "Machine",
+		setupSummaryKeyValue(out, "Local HASP data", summary.HaspHome),
+		setupSummaryKeyValue(out, "Saved CLI config", summary.ConfigPath),
 	); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "Local HASP data: %s\n", summary.HaspHome); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(out, "Saved CLI config: %s\n", summary.ConfigPath); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(out, "Automatic repo adoption: %s\n", setupEnabledDisabled(summary.AutoProtectRepos)); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(out, "Automatic repo guardrails: %s\n", setupYesNo(summary.AutoInstallHooks)); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(out, "Vault state: %s\n", summary.InitState); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(out, "Convenience unlock: %s\n", summary.ConvenienceUnlock); err != nil {
-		return err
+	defaults := []string{
+		setupSummaryKeyValue(out, "Automatic repo adoption", setupEnabledDisabled(summary.AutoProtectRepos)),
+		setupSummaryKeyValue(out, "Automatic repo guardrails", setupYesNo(summary.AutoInstallHooks)),
+		setupSummaryKeyValue(out, "Vault state", summary.InitState),
+		setupSummaryKeyValue(out, "Convenience unlock", summary.ConvenienceUnlock),
 	}
 	if strings.TrimSpace(summary.ProjectRoot) != "" {
-		if _, err := fmt.Fprintf(out, "Protected repository: %s\n", summary.ProjectRoot); err != nil {
-			return err
-		}
+		defaults = append(defaults, setupSummaryKeyValue(out, "Protected repository", summary.ProjectRoot))
+	}
+	if err := setupWriteKeyValueBlock(out, "Defaults", defaults...); err != nil {
+		return err
 	}
 	if len(summary.Agents) > 0 {
-		if _, err := fmt.Fprintln(out, "Configured agents:"); err != nil {
+		if err := setupWriteSummarySection(out, "Configured agents"); err != nil {
 			return err
 		}
 		for _, agent := range summary.Agents {
-			suffix := "updated"
-			if !agent.Changed {
-				suffix = "unchanged"
-			}
-			if _, err := fmt.Fprintf(out, "- %s -> %s (%s)\n", agent.Label, agent.ConfigPath, suffix); err != nil {
+			if _, err := fmt.Fprintln(out, setupSummaryAgentLine(out, agent)); err != nil {
 				return err
 			}
 		}
-	}
-	if len(summary.NextSteps) > 0 {
-		if _, err := fmt.Fprintln(out, "Next steps:"); err != nil {
+		if _, err := fmt.Fprintln(out); err != nil {
 			return err
 		}
-		for _, step := range summary.NextSteps {
-			if _, err := fmt.Fprintf(out, "- %s\n", step); err != nil {
+	}
+	if len(summary.NextSteps) > 0 {
+		if err := setupWriteSummarySection(out, "Next steps"); err != nil {
+			return err
+		}
+		for idx, step := range summary.NextSteps {
+			if _, err := fmt.Fprintln(out, setupSummaryStepLine(out, idx+1, step)); err != nil {
 				return err
 			}
 		}
@@ -1209,11 +1250,129 @@ func setupWriteIntro(out io.Writer) error {
 }
 
 func setupWriteStage(out io.Writer, title string, lines ...string) error {
-	if _, err := fmt.Fprintf(out, "== %s ==\n", title); err != nil {
+	if _, err := fmt.Fprintln(out, setupStageHeader(out, title)); err != nil {
+		return err
+	}
+	prevLine := ""
+	for _, line := range lines {
+		if setupShouldSeparateStageLines(prevLine, line) {
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out, setupStageLine(out, line)); err != nil {
+			return err
+		}
+		if strings.TrimSpace(line) != "" {
+			prevLine = line
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupStageHeader(out io.Writer, title string) string {
+	text := "== " + title + " =="
+	return setupStyle(out, "1;36", text)
+}
+
+func setupStageLine(out io.Writer, line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(line, "   config: ") {
+		return "   " + setupSummaryLabel(out, "config") + ": " + setupSummaryValue(out, strings.TrimPrefix(line, "   config: "))
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "-"),
+		strings.HasPrefix(trimmed, "1."),
+		strings.HasPrefix(trimmed, "2."),
+		strings.HasPrefix(trimmed, "3."),
+		strings.HasPrefix(trimmed, "4."),
+		strings.HasPrefix(trimmed, "5."),
+		strings.HasPrefix(trimmed, "6."),
+		strings.HasPrefix(trimmed, "7."),
+		strings.HasPrefix(trimmed, "8."),
+		strings.HasPrefix(trimmed, "9."),
+		strings.HasPrefix(trimmed, "10."):
+		if prefix, rest, ok := setupSplitNumericPrefix(trimmed); ok {
+			return "  " + setupStyle(out, "1;36", prefix) + " " + rest
+		}
+		return "  " + line
+	case strings.HasPrefix(line, "   "):
+		return line
+	default:
+		return "  " + setupStyle(out, "36", "•") + " " + line
+	}
+}
+
+func setupShouldSeparateStageLines(prev string, current string) bool {
+	prevKind := setupStageLineKind(prev)
+	currentKind := setupStageLineKind(current)
+	switch {
+	case prevKind == "numeric" && currentKind == "text":
+		return true
+	case prevKind == "text" && currentKind == "numeric":
+		return !strings.HasSuffix(strings.TrimSpace(prev), ":")
+	default:
+		return false
+	}
+}
+
+func setupStageLineKind(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(line, "   config: ") {
+		return "config"
+	}
+	if _, _, ok := setupSplitNumericPrefix(trimmed); ok {
+		return "numeric"
+	}
+	if strings.HasPrefix(trimmed, "-") {
+		return "dash"
+	}
+	if strings.HasPrefix(line, "   ") {
+		return "indented"
+	}
+	return "text"
+}
+
+func setupWriterSupportsColor(out io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || strings.EqualFold(os.Getenv("TERM"), "dumb") {
+		return false
+	}
+	file, ok := out.(*os.File)
+	if !ok || file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func setupSummaryLead(out io.Writer, text string) string {
+	if !setupWriterSupportsColor(out) {
+		return "✓ " + text
+	}
+	return "\x1b[1;32m✓\x1b[0m " + text
+}
+
+func setupWriteKeyValueBlock(out io.Writer, title string, lines ...string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	if err := setupWriteSummarySection(out, title); err != nil {
 		return err
 	}
 	for _, line := range lines {
-		if _, err := fmt.Fprintf(out, "  %s\n", line); err != nil {
+		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
 	}
@@ -1221,6 +1380,77 @@ func setupWriteStage(out io.Writer, title string, lines ...string) error {
 		return err
 	}
 	return nil
+}
+
+func setupWriteSummarySection(out io.Writer, title string) error {
+	if _, err := fmt.Fprintln(out, setupSummarySectionHeader(out, title)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupSummarySectionHeader(out io.Writer, title string) string {
+	return setupStyle(out, "1", title)
+}
+
+func setupSummaryKeyValue(out io.Writer, label string, value string) string {
+	return "  " + setupSummaryLabel(out, fmt.Sprintf("%-24s", label)) + "  " + setupSummaryValue(out, value)
+}
+
+func setupSummaryLabel(out io.Writer, text string) string {
+	return setupStyle(out, "1", text)
+}
+
+func setupSummaryValue(out io.Writer, value string) string {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	switch lower {
+	case "yes", "enabled", "enabled when available", "updated", "created":
+		return setupStyle(out, "1;32", value)
+	case "no", "disabled", "unavailable", "skip for now":
+		return setupStyle(out, "1;33", value)
+	case "existing", "unchanged":
+		return setupStyle(out, "1;36", value)
+	}
+	if strings.HasPrefix(trimmed, "~") || strings.HasPrefix(trimmed, "/") {
+		return setupStyle(out, "36", value)
+	}
+	return value
+}
+
+func setupSummaryAgentLine(out io.Writer, agent setupAgentOutcome) string {
+	status := "updated"
+	if !agent.Changed {
+		status = "unchanged"
+	}
+	icon := "✓"
+	if !agent.Changed {
+		icon = "•"
+	}
+	return "  " + setupStyle(out, "1;32", icon) + " " +
+		setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label)) + "  " +
+		setupSummaryValue(out, agent.ConfigPath) + "  " +
+		setupStyle(out, "2", "("+status+")")
+}
+
+func setupSummaryStepLine(out io.Writer, index int, step string) string {
+	return "  " + setupStyle(out, "1;36", fmt.Sprintf("%d.", index)) + " " + step
+}
+
+func setupStyle(out io.Writer, code string, text string) string {
+	if !setupWriterSupportsColor(out) {
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+
+func setupSplitNumericPrefix(line string) (string, string, bool) {
+	for _, prefix := range []string{"10.", "9.", "8.", "7.", "6.", "5.", "4.", "3.", "2.", "1."} {
+		if strings.HasPrefix(line, prefix+" ") {
+			return prefix, strings.TrimPrefix(line, prefix+" "), true
+		}
+	}
+	return "", "", false
 }
 
 func setupWriteSelectedAgents(out io.Writer, agents []setupAgentSpec) error {
@@ -1317,31 +1547,51 @@ func parseSetupAgentMenuSelection(supported []setupAgentSpec, value string) ([]s
 }
 
 func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
+	if _, err := fmt.Fprintln(out, setupStageHeader(out, "Review before apply")); err != nil {
+		return err
+	}
 	lines := []string{
-		fmt.Sprintf("Local HASP data: %s", setupDisplayPath(plan.HaspHome)),
-		fmt.Sprintf("Automatic repo adoption: %s", setupEnabledDisabled(plan.AutoProtectRepos)),
-		fmt.Sprintf("Install repo guardrails: %s", setupYesNo(plan.InstallHooks)),
-		fmt.Sprintf("Convenience unlock: %s", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
+		setupSummaryKeyValue(out, "Local HASP data", setupDisplayPath(plan.HaspHome)),
+		setupSummaryKeyValue(out, "Automatic repo adoption", setupEnabledDisabled(plan.AutoProtectRepos)),
+		setupSummaryKeyValue(out, "Install repo guardrails", setupYesNo(plan.InstallHooks)),
+		setupSummaryKeyValue(out, "Convenience unlock", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
 	}
 	if strings.TrimSpace(plan.ProjectRoot) != "" {
-		lines = append(lines, fmt.Sprintf("Protect this repo now: %s", plan.ProjectRoot))
+		lines = append(lines, setupSummaryKeyValue(out, "Protect this repo now", plan.ProjectRoot))
 	}
 	if strings.TrimSpace(plan.ImportPath) == "" {
-		lines = append(lines, "Import during setup: skip for now")
+		lines = append(lines, setupSummaryKeyValue(out, "Import during setup", "skip for now"))
 	} else {
-		lines = append(lines, fmt.Sprintf("Import during setup: %s", plan.ImportPath))
-		lines = append(lines, fmt.Sprintf("Bind imported secrets now: %s", setupYesNo(plan.BindImports)))
+		lines = append(lines, setupSummaryKeyValue(out, "Import during setup", plan.ImportPath))
+		lines = append(lines, setupSummaryKeyValue(out, "Bind imported secrets", setupYesNo(plan.BindImports)))
 	}
-	if plan.ConfigExists {
-		lines = append(lines, "Existing agent config files will be updated with backups.")
-	}
-	if len(plan.Agents) > 0 {
-		lines = append(lines, "Agent config targets:")
-		for _, agent := range plan.Agents {
-			lines = append(lines, fmt.Sprintf("- %s -> %s", agent.Label, setupDisplayPath(agent.ConfigPath(""))))
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
 		}
 	}
-	return setupWriteStage(out, "Review before apply", lines...)
+	if plan.ConfigExists {
+		if _, err := fmt.Fprintln(out, setupStageLine(out, "Existing agent config files will be updated with backups.")); err != nil {
+			return err
+		}
+	}
+	if len(plan.Agents) > 0 {
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+		if err := setupWriteSummarySection(out, "Agent config targets"); err != nil {
+			return err
+		}
+		for _, agent := range plan.Agents {
+			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", "•")+" "+setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label))+"  "+setupSummaryValue(out, setupDisplayPath(agent.ConfigPath("")))); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	return nil
 }
 
 func setupConfirmPlan(prompt *setupPrompter, plan setupPlanPreview) error {

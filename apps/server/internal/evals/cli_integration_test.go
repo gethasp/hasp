@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
@@ -180,5 +181,68 @@ func TestCLISessionLifecycleEval(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	if _, _, err := runHasp(t, env, "", "write-env", "--project-root", env.projectRoot, "--session-token", expiredToken, "--output", filepath.Join(env.projectRoot, ".env"), "--env", "API_TOKEN=secret_01"); err == nil {
 		t.Fatal("write-env with expired session unexpectedly succeeded")
+	}
+}
+
+func TestCLIProjectAdoptEval(t *testing.T) {
+	env := newEvalEnv(t)
+	if _, _, err := runHasp(t, env, "", "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	baseDir := t.TempDir()
+	repoA := filepath.Join(baseDir, "repo-a")
+	repoB := filepath.Join(baseDir, "repo-b")
+	plainDir := filepath.Join(baseDir, "plain")
+	if err := os.MkdirAll(repoA, 0o755); err != nil {
+		t.Fatalf("mkdir repoA: %v", err)
+	}
+	if err := os.MkdirAll(repoB, 0o755); err != nil {
+		t.Fatalf("mkdir repoB: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(plainDir, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir plain: %v", err)
+	}
+	initGitRepo(t, repoA)
+	initGitRepo(t, repoB)
+
+	autoProtect := true
+	autoInstallHooks := false
+	if err := paths.SaveConfig(paths.CLIConfig{
+		HomeDir:              env.home,
+		AutoProtectRepos:     &autoProtect,
+		AutoInstallHooks:     &autoInstallHooks,
+		DefaultCapturePolicy: "access",
+	}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	stdout, _, err := runHasp(t, env, "", "project", "adopt", "--under", baseDir, "--preview")
+	if err != nil {
+		t.Fatalf("project adopt preview failed: %v", err)
+	}
+	preview := parseJSONMap(t, stdout)
+	candidates, ok := preview["candidates"].([]any)
+	if !ok || len(candidates) != 2 {
+		t.Fatalf("expected two repo candidates, got %v", preview)
+	}
+
+	stdout, _, err = runHasp(t, env, "", "project", "adopt", "--under", baseDir)
+	if err != nil {
+		t.Fatalf("project adopt failed: %v", err)
+	}
+	adopted := parseJSONMap(t, stdout)
+	if adopted["adopted_count"].(float64) != 2 {
+		t.Fatalf("expected adopted_count 2, got %v", adopted)
+	}
+
+	statusOut, _, err := runHasp(t, env, "", "project", "status", "--project-root", repoA)
+	if err != nil {
+		t.Fatalf("project status after adopt failed: %v", err)
+	}
+	status := parseJSONMap(t, statusOut)
+	binding, ok := status["binding"].(map[string]any)
+	if !ok || strings.TrimSpace(binding["id"].(string)) == "" {
+		t.Fatalf("expected bound project after adopt, got %v", status)
 	}
 }

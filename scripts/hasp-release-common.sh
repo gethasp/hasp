@@ -4,10 +4,14 @@ set -euo pipefail
 release_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release_repo_root="${HASP_ROOT_OVERRIDE:-$(cd "$release_script_dir/.." && pwd)}"
 release_ephemeral_gnupghome=""
+release_ephemeral_passphrase_file=""
 
 release_cleanup() {
   if [[ -n "$release_ephemeral_gnupghome" && -d "$release_ephemeral_gnupghome" ]]; then
     /bin/rm -rf "$release_ephemeral_gnupghome"
+  fi
+  if [[ -n "$release_ephemeral_passphrase_file" && -f "$release_ephemeral_passphrase_file" ]]; then
+    /bin/rm -f "$release_ephemeral_passphrase_file"
   fi
 }
 
@@ -107,7 +111,7 @@ release_require_manifest() {
 }
 
 release_list_secret_keys() {
-  gpg --batch --list-secret-keys --with-colons --fingerprint 2>/dev/null | awk -F: '
+  release_gpg --list-secret-keys --with-colons --fingerprint 2>/dev/null | awk -F: '
     $1 == "fpr" { fingerprint = $10 }
     $1 == "uid" && fingerprint != "" { print fingerprint; fingerprint = "" }
   '
@@ -120,6 +124,38 @@ release_create_ephemeral_key() {
     --quick-generate-key "HASP Local Release Test Key <hasp@example.invalid>" ed25519 sign 1d >/dev/null 2>&1
   export GNUPGHOME="$release_ephemeral_gnupghome"
   release_list_secret_keys | head -n 1
+}
+
+release_gpg() {
+  local args=(--batch)
+  if [[ -n "${HASP_RELEASE_GPG_HOMEDIR:-}" ]]; then
+    args+=(--homedir "$HASP_RELEASE_GPG_HOMEDIR")
+  elif [[ -n "$release_ephemeral_gnupghome" ]]; then
+    args+=(--homedir "$release_ephemeral_gnupghome")
+  elif [[ -n "${GNUPGHOME:-}" ]]; then
+    args+=(--homedir "$GNUPGHOME")
+  fi
+  gpg "${args[@]}" "$@"
+}
+
+release_signing_passphrase_file() {
+  if [[ -n "${HASP_RELEASE_GPG_PASSPHRASE_FILE:-}" ]]; then
+    if [[ ! -f "$HASP_RELEASE_GPG_PASSPHRASE_FILE" ]]; then
+      printf 'release GPG passphrase file not found: %s\n' "$HASP_RELEASE_GPG_PASSPHRASE_FILE" >&2
+      return 2
+    fi
+    printf '%s\n' "$HASP_RELEASE_GPG_PASSPHRASE_FILE"
+    return 0
+  fi
+  if [[ -z "${HASP_RELEASE_GPG_PASSPHRASE:-}" ]]; then
+    return 1
+  fi
+  if [[ -z "$release_ephemeral_passphrase_file" ]]; then
+    release_ephemeral_passphrase_file="$(mktemp)"
+    chmod 600 "$release_ephemeral_passphrase_file"
+    printf '%s' "$HASP_RELEASE_GPG_PASSPHRASE" >"$release_ephemeral_passphrase_file"
+  fi
+  printf '%s\n' "$release_ephemeral_passphrase_file"
 }
 
 release_select_signing_key() {
@@ -157,14 +193,29 @@ release_select_signing_key() {
 release_export_public_key() {
   local key_id="$1"
   local output_path="$2"
-  gpg --batch --armor --export "$key_id" >"$output_path"
+  release_gpg --armor --export "$key_id" >"$output_path"
 }
 
 release_detached_sign() {
   local key_id="$1"
   local input_path="$2"
   local output_path="$3"
-  gpg --batch --yes --armor --local-user "$key_id" --detach-sign --output "$output_path" "$input_path"
+  local args=(--yes --armor --local-user "$key_id" --detach-sign --output "$output_path")
+  local passphrase_file=""
+  if passphrase_file="$(release_signing_passphrase_file)"; then
+    args=(--yes --pinentry-mode loopback --passphrase-file "$passphrase_file" --armor --local-user "$key_id" --detach-sign --output "$output_path")
+  else
+    local passphrase_status=$?
+    if [[ "$passphrase_status" -gt 1 ]]; then
+      return 1
+    fi
+  fi
+  if ! release_gpg "${args[@]}" "$input_path"; then
+    if [[ -z "${HASP_RELEASE_GPG_PASSPHRASE:-}" && -z "${HASP_RELEASE_GPG_PASSPHRASE_FILE:-}" ]]; then
+      printf 'gpg signing failed; if the release key is passphrase-protected in noninteractive environments, set HASP_RELEASE_GPG_PASSPHRASE or HASP_RELEASE_GPG_PASSPHRASE_FILE\n' >&2
+    fi
+    return 1
+  fi
 }
 
 release_verify_signed_manifest() {

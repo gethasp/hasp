@@ -460,6 +460,44 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		t.Fatal("expected wrong password on existing vault")
 	}
 
+	attempts := 0
+	var promptOut bytes.Buffer
+	prompt = newSetupPrompter(bytes.NewBufferString("correct-password\n"), &promptOut)
+	origOpenStore := openStoreWithPasswordFn
+	defer func() { openStoreWithPasswordFn = origOpenStore }()
+	openStoreWithPasswordFn = func(context.Context, *store.Store, string) (*store.Handle, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, store.ErrInvalidPassword
+		}
+		return &store.Handle{}, nil
+	}
+	handle, state, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false)
+	if err != nil || handle == nil || state != "existing" || password != "correct-password" {
+		t.Fatalf("expected retry success, got handle=%v state=%q password=%q err=%v", handle != nil, state, password, err)
+	}
+	if !strings.Contains(promptOut.String(), "invalid master password") {
+		t.Fatalf("expected invalid password retry message, got %q", promptOut.String())
+	}
+
+	prompt = newSetupPrompter(bytes.NewBufferString(""), errWriter{err: errors.New("retry write fail")})
+	openStoreWithPasswordFn = func(context.Context, *store.Store, string) (*store.Handle, error) {
+		return nil, store.ErrInvalidPassword
+	}
+	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil || !strings.Contains(err.Error(), "retry write fail") {
+		t.Fatalf("expected retry write failure, got %v", err)
+	}
+
+	prompt = newSetupPrompter(setupErrReader{}, io.Discard)
+	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil {
+		t.Fatal("expected retry prompt read failure")
+	}
+
+	prompt = newSetupPrompter(bytes.NewBufferString("\n"), io.Discard)
+	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil || !strings.Contains(err.Error(), "master password is required") {
+		t.Fatalf("expected empty retry password failure, got %v", err)
+	}
+
 	specs := []setupAgentSpec{{
 		ID: "bad", Label: "Bad", Format: "yaml", ConfigPath: func(string) string {
 			return filepath.Join(t.TempDir(), "bad.cfg")
@@ -514,7 +552,7 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		t.Fatal("expected backup write failure")
 	}
 
-	if _, err := upsertJSONMCPServerConfig([]byte(`{"mcpServers":"bad"}`), ""); err == nil {
+	if _, err := upsertJSONMCPServerConfig([]byte(`{"mcpServers":"bad"}`), "", "/bin/hasp"); err == nil {
 		t.Fatal("expected invalid existing mcpServers object error")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -424,6 +425,47 @@ func TestServePropagatesEncodeFailure(t *testing.T) {
 	req := bytes.NewBufferString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
 	if err := Serve(context.Background(), req, failingWriter{err: errors.New("encode fail")}); err == nil {
 		t.Fatal("expected encode failure")
+	}
+}
+
+func TestServeIgnoresNotifications(t *testing.T) {
+	var input bytes.Buffer
+	var output bytes.Buffer
+	enc := json.NewEncoder(&input)
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"}); err != nil {
+		t.Fatalf("encode initialize: %v", err)
+	}
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
+		t.Fatalf("encode initialized notification: %v", err)
+	}
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}); err != nil {
+		t.Fatalf("encode tools/list: %v", err)
+	}
+
+	if err := Serve(context.Background(), &input, &output); err != nil {
+		t.Fatalf("serve mcp: %v", err)
+	}
+
+	dec := json.NewDecoder(&output)
+	var initResp map[string]any
+	if err := dec.Decode(&initResp); err != nil {
+		t.Fatalf("decode initialize response: %v", err)
+	}
+	if initResp["id"].(float64) != 1 {
+		t.Fatalf("unexpected initialize response id: %+v", initResp)
+	}
+
+	var listResp map[string]any
+	if err := dec.Decode(&listResp); err != nil {
+		t.Fatalf("decode tools/list response: %v", err)
+	}
+	if listResp["id"].(float64) != 2 {
+		t.Fatalf("unexpected tools/list response id: %+v", listResp)
+	}
+
+	var extra map[string]any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected notification to produce no response, got %+v err=%v", extra, err)
 	}
 }
 

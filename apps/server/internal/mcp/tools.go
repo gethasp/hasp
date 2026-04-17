@@ -11,6 +11,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -28,6 +29,7 @@ var (
 	canonicalProjectRootMCPFn = store.CanonicalProjectRoot
 	authorizeReferenceMCPFn   = brokerops.AuthorizeReference
 	runnerExecuteMCPFn        = runner.Execute
+	loadCLIConfigMCPFn        = paths.LoadConfig
 )
 
 func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
@@ -60,8 +62,11 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 	if err != nil {
 		return nil, err
 	}
-	binding, visible, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
+	binding, visible, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
 		return nil, err
 	}
 	if grantProject != "" {
@@ -82,6 +87,9 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 
 func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", ".")
+	if _, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot); err != nil {
+		return nil, err
+	}
 	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 	if err != nil {
 		return nil, err
@@ -132,8 +140,11 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if call.Name == "hasp_inject" && len(fileRefs) == 0 {
 		return nil, errors.New("files are required for hasp_inject")
 	}
-	binding, _, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
+	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
 		return nil, err
 	}
 	items := make([]store.Item, 0, len(envRefs)+len(fileRefs))
@@ -191,8 +202,11 @@ func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if existingErr != nil && !creatingNew {
 		return nil, existingErr
 	}
-	binding, _, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
+	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
 		return nil, err
 	}
 	if err := brokerops.AuthorizeCapture(ctx, handle, binding.ID, session.Token, name, projectGrant, secretGrant, 15*time.Minute, grantWrite); err != nil {
@@ -226,6 +240,95 @@ func appendAuditApproval(bindingID string, itemName string) {
 		return
 	}
 	_, _ = log.Append(audit.EventApprove, "agent", map[string]any{"action": "capture.write_grant", "binding_id": bindingID, "item_name": itemName})
+}
+
+func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
+	binding, visible, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
+	if err != nil {
+		return store.Binding{}, nil, err
+	}
+	if binding.ID != "" {
+		return binding, visible, nil
+	}
+	defaults, err := loadProjectDefaultsMCP()
+	if err != nil {
+		return store.Binding{}, nil, err
+	}
+	if !defaults.AutoProtectRepos {
+		return binding, visible, nil
+	}
+	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+	if err != nil {
+		return store.Binding{}, nil, err
+	}
+	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepoMCP(root)
+	if _, err := handle.UpsertBinding(ctx, root, cloneAliasSetMCP(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
+		return store.Binding{}, nil, err
+	}
+	return resolveBindingViewMCPFn(handle, ctx, root)
+}
+
+func requireProjectBindingMCP(binding store.Binding, projectRoot string) error {
+	if binding.ID != "" {
+		return nil
+	}
+	return fmt.Errorf("project %q is not managed yet; run inside a git repo with auto-protect enabled or bind it explicitly", projectRoot)
+}
+
+type projectDefaultsMCP struct {
+	AutoProtectRepos bool
+	AutoInstallHooks bool
+	DefaultPolicy    store.SecretPolicy
+}
+
+func loadProjectDefaultsMCP() (projectDefaultsMCP, error) {
+	cfg, err := loadCLIConfigMCPFn()
+	if err != nil {
+		return projectDefaultsMCP{}, err
+	}
+	autoProtect := true
+	if cfg.AutoProtectRepos != nil {
+		autoProtect = *cfg.AutoProtectRepos
+	}
+	autoInstallHooks := true
+	if cfg.AutoInstallHooks != nil {
+		autoInstallHooks = *cfg.AutoInstallHooks
+	}
+	policy := store.PolicySession
+	switch store.SecretPolicy(strings.TrimSpace(cfg.DefaultCapturePolicy)) {
+	case store.PolicyAuto, store.PolicySession, store.PolicyAccess:
+		policy = store.SecretPolicy(strings.TrimSpace(cfg.DefaultCapturePolicy))
+	case "":
+		policy = store.PolicySession
+	}
+	return projectDefaultsMCP{
+		AutoProtectRepos: autoProtect,
+		AutoInstallHooks: autoInstallHooks,
+		DefaultPolicy:    policy,
+	}, nil
+}
+
+func pathLooksLikeGitRepoMCP(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
+}
+
+func cloneAliasSetMCP(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func stringArg(values map[string]any, key string, fallback string) string {

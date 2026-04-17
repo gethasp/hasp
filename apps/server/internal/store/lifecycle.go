@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -124,7 +125,11 @@ func (s *Store) OpenWithConvenienceUnlock(_ context.Context) (*Handle, error) {
 	if err != nil {
 		return nil, ErrKeyringUnavailable
 	}
-	vaultKey, err := openBytesFn([]byte(deviceKey), *envelope.Header.ConvenienceWrap)
+	decodedKey, err := decodeConvenienceKey(deviceKey)
+	if err != nil {
+		return nil, ErrKeyringUnavailable
+	}
+	vaultKey, err := openBytesFn(decodedKey, *envelope.Header.ConvenienceWrap)
 	if err != nil {
 		return nil, ErrKeyringUnavailable
 	}
@@ -148,7 +153,7 @@ func (h *Handle) EnableConvenienceUnlock(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.store.keyring.Set(ctx, keyringService, h.store.keyringAccount(), string(deviceKey)); err != nil {
+	if err := h.store.keyring.Set(ctx, keyringService, h.store.keyringAccount(), encodeConvenienceKey(deviceKey)); err != nil {
 		return ErrKeyringUnavailable
 	}
 	envelope.Header.ConvenienceWrap = &wrap
@@ -159,6 +164,21 @@ func (h *Handle) EnableConvenienceUnlock(ctx context.Context) error {
 func (s *Store) keyringAccount() string {
 	sum := sha256Sum([]byte(s.paths.HomeDir))
 	return fmt.Sprintf("vault:%x", sum[:8])
+}
+
+func encodeConvenienceKey(value []byte) string {
+	return hex.EncodeToString(value)
+}
+
+func decodeConvenienceKey(value string) ([]byte, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, ErrKeyringUnavailable
+	}
+	if decoded, err := hex.DecodeString(trimmed); err == nil && len(decoded) > 0 {
+		return decoded, nil
+	}
+	return []byte(value), nil
 }
 
 func validateMasterPassword(masterPassword string) error {

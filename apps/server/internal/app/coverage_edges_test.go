@@ -485,6 +485,20 @@ func TestWrongPasswordAndBadPathBranches(t *testing.T) {
 	}
 }
 
+func TestOpenVaultHandleExplainsMissingPasswordAndUnavailableConvenienceUnlock(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+
+	t.Setenv("HASP_MASTER_PASSWORD", "")
+	if _, err := openVaultHandle(context.Background()); err == nil || !strings.Contains(err.Error(), "HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable") {
+		t.Fatalf("expected clearer convenience-unlock message, got %v", err)
+	}
+}
+
 func enableConvenienceUnlockForAppTests(t *testing.T, homeDir string, password string) {
 	t.Helper()
 	t.Setenv("HASP_HOME", homeDir)

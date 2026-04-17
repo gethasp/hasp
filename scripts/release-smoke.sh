@@ -6,6 +6,14 @@ cd "$repo_root"
 # shellcheck source=./hasp-release-common.sh
 source "$repo_root/scripts/hasp-release-common.sh"
 
+version="$(< VERSION)"
+smoke_gpg_home="$(mktemp -d)"
+chmod 700 "$smoke_gpg_home"
+export GNUPGHOME="$smoke_gpg_home"
+unset HASP_RELEASE_GPG_KEY_ID
+unset HASP_RELEASE_GPG_HOMEDIR
+unset HASP_RELEASE_GPG_PASSPHRASE
+unset HASP_RELEASE_GPG_PASSPHRASE_FILE
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
 tarball="$(bash ./scripts/package-release.sh)"
 release_dir="$(cd "$(dirname "$tarball")" && pwd)"
@@ -14,7 +22,13 @@ upgrade_root="$(mktemp -d)"
 temp_home="$(mktemp -d)"
 restore_home="$(mktemp -d)"
 hook_repo="$(mktemp -d)"
-trap '/bin/rm -rf "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo"' EXIT
+protected_gpg_home="$(mktemp -d)"
+protected_release_dir="$(mktemp -d)"
+protected_public_dir="$(mktemp -d)"
+protected_extract="$(mktemp -d)"
+protected_passphrase_file="$(mktemp)"
+chmod 700 "$protected_gpg_home"
+trap '/bin/rm -rf "$smoke_gpg_home" "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo" "$protected_gpg_home" "$protected_release_dir" "$protected_public_dir" "$protected_extract"; /bin/rm -f "$protected_passphrase_file"' EXIT
 
 bash ./scripts/hasp-verify-release.sh "$tarball" >/dev/null
 bash ./scripts/hasp-install-release.sh --verify "$tarball" "$install_root" >/dev/null
@@ -99,3 +113,31 @@ if [[ "${HASP_RUN_BREW_INSTALL_SMOKE:-0}" == "1" ]] && command -v brew >/dev/nul
 fi
 grep -q "url \"file://$tarball\"" "$release_dir/Formula/hasp.rb"
 grep -q "sha256 \"$(release_sha256 "$tarball")\"" "$release_dir/Formula/hasp.rb"
+
+protected_passphrase="release-smoke-gpg-passphrase"
+printf '%s' "$protected_passphrase" >"$protected_passphrase_file"
+chmod 600 "$protected_passphrase_file"
+GNUPGHOME="$protected_gpg_home" gpg --batch --pinentry-mode loopback --passphrase "$protected_passphrase" \
+  --quick-generate-key "HASP Protected Release Test Key <hasp@example.invalid>" ed25519 sign 1d >/dev/null 2>&1
+protected_key_id="$(GNUPGHOME="$protected_gpg_home" gpg --batch --list-secret-keys --with-colons --fingerprint | awk -F: '/^fpr:/ {print $10; exit}')"
+/bin/cp -f "$tarball" "$protected_release_dir/"
+/usr/bin/tar -xzf "$tarball" -C "$protected_extract"
+protected_tarball="$protected_release_dir/$(basename "$tarball")"
+protected_artifact_dir="$protected_extract/$(basename "${tarball%.tar.gz}")"
+HASP_RELEASE_GPG_HOMEDIR="$protected_gpg_home" \
+HASP_RELEASE_GPG_KEY_ID="$protected_key_id" \
+HASP_RELEASE_GPG_PASSPHRASE="$protected_passphrase" \
+  bash ./scripts/hasp-sign-release.sh "$protected_artifact_dir" "$protected_tarball" >/dev/null
+test -f "$protected_release_dir/SHA256SUMS.asc"
+test -f "$protected_release_dir/$(basename "$tarball").asc"
+test -f "$protected_release_dir/$(basename "${tarball%.tar.gz}")_bin.asc"
+unset HASP_RELEASE_GPG_PASSPHRASE
+for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+  /bin/cp -f "$protected_tarball" "$protected_public_dir/hasp_${version}_${target}.tar.gz"
+done
+HASP_RELEASE_GPG_HOMEDIR="$protected_gpg_home" \
+HASP_RELEASE_GPG_KEY_ID="$protected_key_id" \
+HASP_RELEASE_GPG_PASSPHRASE_FILE="$protected_passphrase_file" \
+  bash ./scripts/assemble-public-release.sh "$protected_public_dir" "https://example.invalid/hasp/releases/vtest" >/dev/null
+test -f "$protected_public_dir/SHA256SUMS.asc"
+grep -q 'https://example.invalid/hasp/releases/vtest/hasp_' "$protected_public_dir/release-metadata.json"
