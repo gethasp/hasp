@@ -601,7 +601,11 @@ func TestAgentLaunchOpenAndLookupFailures(t *testing.T) {
 		t.Fatalf("expected open vault failure, got %v", err)
 	}
 
-	openVaultHandleFn = origOpen
+	// Stub openVaultHandleFn to succeed so the flow can reach storeGetAgentFn
+	// and agentNewStarterFn. Relying on the real implementation here would
+	// require an initialized vault on disk, which is not the case in a clean
+	// CI environment.
+	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return &store.Handle{}, nil }
 	storeGetAgentFn = func(*store.Handle, string) (store.AgentConsumer, error) {
 		return store.AgentConsumer{}, errors.New("get fail")
 	}
