@@ -60,12 +60,26 @@ for mod in "${modules[@]}"; do
         continue
       fi
       pkg_profile="$(mktemp)"
-      go test "$pkg" -coverprofile="$pkg_profile" >/dev/null
+      pkg_log="$(mktemp)"
+      if ! go test "$pkg" -coverprofile="$pkg_profile" >"$pkg_log" 2>&1; then
+        echo "coverage run failed for $pkg:" >&2
+        cat "$pkg_log" >&2
+        rm -f "$pkg_log"
+        exit 1
+      fi
+      rm -f "$pkg_log"
       profiles+=("$pkg_profile")
     done < <(go list ./...)
 
     if [[ -d "./internal/evals" ]]; then
-      go test -tags=integration -coverpkg=./... ./internal/evals -coverprofile="$eval_profile" >/dev/null
+      eval_log="$(mktemp)"
+      if ! go test -tags=integration -coverpkg=./... ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
+        echo "coverage run failed for ./internal/evals:" >&2
+        cat "$eval_log" >&2
+        rm -f "$eval_log"
+        exit 1
+      fi
+      rm -f "$eval_log"
       profiles+=("$eval_profile")
     fi
 
