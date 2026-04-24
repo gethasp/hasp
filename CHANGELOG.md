@@ -4,6 +4,12 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.32]
+
+- Close the post-v0.1.31 V1 visibility remainder without widening the product: surface the stdin/shell-export rescue path in `hasp import --help`, write a paste-rescue section plus V1 threat-model-limits and licensing-and-usage blocks into the packaged `QUICKSTART.md`, and align `docs/quickstart.md` with the same blocks.
+- Reconcile the competitive baseline against shipped v0.1.31 behavior: refresh `docs/competition/matrix.json` and regenerate matrix.md/matrix.html, rewrite `docs/competition/v1-parity.md` to show that no open V1 parity items remain, and drop onboarding and generic-compatible first-proof lines from the weakest-points section of `docs/competition/v1-v4-market-landscape.md`.
+- Keep the Go verification bar at `100.0%` statement coverage across all 13 packages.
+
 ## [v0.1.31]
 
 - Finish V1 local-first parity: complete the onboarding eval so `hasp setup --non-interactive --json --bind-imports` reliably yields a ready brokered proof, and expose the generic-compatible first-proof surface through `hasp agent list-supported`, `hasp bootstrap print-config`, and the printed proof command.

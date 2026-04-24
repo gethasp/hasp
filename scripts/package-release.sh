@@ -164,6 +164,21 @@ export HASP_MASTER_PASSWORD='choose-a-strong-password'
 ./bin/hasp import service-account.json
 ```
 
+## Rescue pasted values or shell-export snippets
+
+If you already pasted credentials into a shell session or have an
+`export FOO=bar` snippet you want to move into the vault without creating a
+repo-visible env file, pipe it on stdin. HASP strips the `export ` prefix and
+imports the values with the same preview/commit flow as file-based import:
+
+```bash
+printf 'export API_TOKEN=abc123\n' | ./bin/hasp import --preview --format env -
+printf 'export API_TOKEN=abc123\n' | ./bin/hasp import --format env -
+```
+
+The stdin/paste path is an explicit human-driven capture flow. It does not
+replace the agent-safe broker contract.
+
 ## Support profile bootstrap
 
 ```bash
@@ -218,6 +233,24 @@ binds the matching repos using the machine defaults from `hasp setup`.
 ```
 
 The default uninstall path removes the installed release tree only. It does not remove `HASP_HOME` or repo hooks unless you ask for that explicitly.
+
+## V1 threat-model limits
+
+Before you rely on HASP, know what V1 is and is not:
+
+- V1 reduces accidental exposure and common local leaks on a normal developer machine.
+- V1 does not provide strong same-user local isolation.
+- V1 does not defend against malicious same-user local processes.
+- Shell exports and pasted values are not a protected boundary. Route them through the stdin import path above instead of relying on ambient shell hygiene.
+
+See `OPERATOR_GUIDE.md` for the full operator-facing limits.
+
+## Licensing and usage
+
+- `LICENSE` in this release is the authoritative release-facing licensing statement.
+- HASP is source-available. The preferred licensing direction is documented in `docs/adr/0005-licensing-direction.md` in the repo.
+- Evaluate, run, and extend HASP locally under the terms of the `LICENSE` file.
+- Licensing language will not add entitlement checks that change V1 runtime behavior or weaken the local-first agent-safe path.
 EOF
 
 cat >"$artifact_dir/OPERATOR_GUIDE.md" <<'EOF'

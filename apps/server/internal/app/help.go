@@ -220,15 +220,24 @@ Examples
 
 const importHelpText = `hasp import
 
-Import secrets from a .env file or a JSON credential file.
+Import secrets from a .env file or a JSON credential file. You can also rescue
+pasted values or shell-style ` + "`export FOO=bar`" + ` snippets by piping them on
+stdin with ` + "`hasp import --format env -`" + `; HASP strips the ` + "`export `" + `
+prefix so pasted shell-export lines land in the vault without creating a repo-
+visible env file. Add ` + "`--preview`" + ` first to see what the import would
+change before it commits.
 
-Use import when you already have secrets on disk and want to move them into the
-vault. Use secret add when you want to enter values directly.
+Use import when you already have secrets on disk, in the clipboard, or in an
+ambient shell session and want to move them into the vault without leaving them
+in ` + "`.env`" + ` or shell profiles. Use secret add when you want to enter values
+directly.
 
 Examples
   hasp import .env
   hasp import service-account.json
   hasp import --project-root . --bind .env
+  printf 'export API_TOKEN=abc123\n' | hasp import --preview --format env -
+  printf 'export API_TOKEN=abc123\n' | hasp import --format env -
 `
 
 const setHelpText = `hasp set
