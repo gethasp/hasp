@@ -502,6 +502,7 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	origMkdir := setupMkdirAllFn
 	origSetEnv := setupSetEnvFn
 	origServe := agentServeMCPFn
+	origBuildEnv := agentBuildExecutionEnvFn
 	defer func() {
 		agentNewStarterFn = origStarter
 		appResolvePathsFn = origPaths
@@ -510,6 +511,7 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 		setupMkdirAllFn = origMkdir
 		setupSetEnvFn = origSetEnv
 		agentServeMCPFn = origServe
+		agentBuildExecutionEnvFn = origBuildEnv
 	}()
 
 	agentNewStarterFn = func() (starter, error) { return &fakeStarter{err: io.EOF}, nil }
@@ -525,10 +527,14 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	appResolvePathsFn = origPaths
 
 	setupSetEnvFn = func(string, string) (func(), error) { return nil, errors.New("setenv fail") }
+	agentBuildExecutionEnvFn = func(context.Context, *store.Handle, store.AgentConsumer, starter, string) ([]string, error) {
+		return []string{envAgentSafeMode + "=1", envAgentConsumer + "=claude-code"}, nil
+	}
 	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "setenv fail" {
 		t.Fatalf("expected agentMCPCommand setenv failure, got %v", err)
 	}
 	setupSetEnvFn = origSetEnv
+	agentBuildExecutionEnvFn = origBuildEnv
 
 	if _, err := setupInstallAgentWrapper(filepath.Join(homeDir, ".hasp"), "/bin/hasp", ""); err == nil {
 		t.Fatal("expected setupInstallAgentWrapper missing agent failure")
