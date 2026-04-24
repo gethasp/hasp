@@ -45,6 +45,12 @@ func TestGenericCompatibleFirstProof(t *testing.T) {
 		t.Fatalf("write import env: %v", err)
 	}
 
+	// Augment PATH so the brokered proof command (which begins with a bare
+	// "hasp" invocation) can find the built binary inside sh -c. This must
+	// happen before commandEnv snapshots os.Environ() into cmdEnv.
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", filepath.Dir(env.binary)+":"+origPath)
+
 	cmdEnv := env.commandEnv(map[string]string{
 		"HOME":                      userHome,
 		"HASP_HOME":                 haspHome,
@@ -52,8 +58,6 @@ func TestGenericCompatibleFirstProof(t *testing.T) {
 		"HASP_EVAL_MASTER_PASSWORD": env.masterPassword,
 		"HASP_MASTER_PASSWORD":      env.masterPassword,
 	})
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", filepath.Dir(env.binary)+":"+origPath)
 
 	// PART 1: Run setup with --agent codex-cli so that the vault is initialized,
 	// the repo is bound, and imports are bound.  This is the codex-cli path (a):

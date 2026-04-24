@@ -35,15 +35,19 @@ func TestOnboardingEval(t *testing.T) {
 		t.Fatalf("write import env: %v", err)
 	}
 
-	cmdEnv := env.commandEnv(map[string]string{
-		"HOME":                        userHome,
-		"HASP_HOME":                   haspHome,
-		"XDG_CONFIG_HOME":             filepath.Join(userHome, ".config"),
-		"HASP_EVAL_MASTER_PASSWORD":   env.masterPassword,
-		"HASP_MASTER_PASSWORD":        env.masterPassword,
-	})
+	// Augment PATH so the brokered proof command (which begins with a bare
+	// "hasp" invocation) can find the built binary inside sh -c. This must
+	// happen before commandEnv snapshots os.Environ() into cmdEnv.
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", filepath.Dir(env.binary)+":"+origPath)
+
+	cmdEnv := env.commandEnv(map[string]string{
+		"HOME":                      userHome,
+		"HASP_HOME":                 haspHome,
+		"XDG_CONFIG_HOME":           filepath.Join(userHome, ".config"),
+		"HASP_EVAL_MASTER_PASSWORD": env.masterPassword,
+		"HASP_MASTER_PASSWORD":      env.masterPassword,
+	})
 
 	// Run setup with --json so we can decode the structured output.
 	stdout, stderr, err := runCmdWithInput(
