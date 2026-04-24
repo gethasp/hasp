@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   merge-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
