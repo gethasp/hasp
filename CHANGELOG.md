@@ -4,6 +4,21 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.31]
+
+- Finish V1 local-first parity: complete the onboarding eval so `hasp setup --non-interactive --json --bind-imports` reliably yields a ready brokered proof, and expose the generic-compatible first-proof surface through `hasp agent list-supported`, `hasp bootstrap print-config`, and the printed proof command.
+- Restore `100.0%` statement coverage across the Go modules and prune internal app drift, keeping the verification bar and maintenance boundaries intact as the product surface grows.
+
+## [v0.1.30]
+
+- Close the remaining V1 competitive gaps without widening the product: refresh the competitive baseline and matrix, restate the real V1 gaps, and add a single-page visual competition matrix to the private docs.
+- Reduce internal app drift by splitting the setup workflow into smaller maintenance boundaries.
+
+## [v0.1.29]
+
+- Close V1 conformance ahead of the release: finish scoped conformance work, retire completed roadmap review beads, and mark shipped versus future documentation status.
+- Harden the agent-safe broker spec after adversarial review so the brokered-grant semantics stay enforced end-to-end under automated tests and production operator flows.
+
 ## [v0.1.28]
 
 - Harden the agent-safe path by switching generated agent configs to managed wrapper scripts, registering protected process trees with the runtime daemon, and resolving agent-safe state from process ancestry before weaker env/repo fallbacks.
