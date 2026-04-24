@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +52,7 @@ func TestProjectAdoptPreviewAndAdopt(t *testing.T) {
 	}
 
 	var previewOut bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "adopt", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &previewOut, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "adopt", "--json", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &previewOut, io.Discard); err != nil {
 		t.Fatalf("project adopt preview: %v", err)
 	}
 	var preview projectAdoptResult
@@ -75,7 +75,7 @@ func TestProjectAdoptPreviewAndAdopt(t *testing.T) {
 	}
 
 	var adoptOut bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "adopt", "--under", baseDir}, bytes.NewBuffer(nil), &adoptOut, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "adopt", "--json", "--under", baseDir}, bytes.NewBuffer(nil), &adoptOut, io.Discard); err != nil {
 		t.Fatalf("project adopt: %v", err)
 	}
 	var adopted projectAdoptResult
@@ -92,7 +92,7 @@ func TestProjectAdoptPreviewAndAdopt(t *testing.T) {
 	}
 
 	var secondOut bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "adopt", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &secondOut, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "adopt", "--json", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &secondOut, io.Discard); err != nil {
 		t.Fatalf("project adopt second preview: %v", err)
 	}
 	var second projectAdoptResult
@@ -134,7 +134,7 @@ func TestProjectAdoptSkipsNonProjectDirectories(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "adopt", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "adopt", "--json", "--under", baseDir, "--preview"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
 		t.Fatalf("project adopt preview: %v", err)
 	}
 	var payload projectAdoptResult

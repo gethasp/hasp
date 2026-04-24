@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +19,11 @@ func NewDefaultKeyring() Keyring {
 }
 
 func (DarwinKeyring) Set(ctx context.Context, service string, account string, value string) error {
-	if err := ensureUsableDefaultKeychain(ctx); err != nil {
+	keychainPath, err := defaultKeychainPath(ctx)
+	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, securityBinaryPath(), "add-generic-password", "-U", "-a", account, "-s", service, "-w", value)
+	cmd := exec.CommandContext(ctx, securityBinaryPath(), "add-generic-password", "-U", "-a", account, "-s", service, "-w", value, keychainPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.New(strings.TrimSpace(string(out)))
 	}
@@ -29,7 +31,11 @@ func (DarwinKeyring) Set(ctx context.Context, service string, account string, va
 }
 
 func (DarwinKeyring) Get(service string, account string) (string, error) {
-	cmd := exec.Command(securityBinaryPath(), "find-generic-password", "-w", "-a", account, "-s", service)
+	keychainPath, err := defaultKeychainPath(context.Background())
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(securityBinaryPath(), "find-generic-password", "-w", "-a", account, "-s", service, keychainPath)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", errors.New(strings.TrimSpace(string(out)))
@@ -38,7 +44,11 @@ func (DarwinKeyring) Get(service string, account string) (string, error) {
 }
 
 func (DarwinKeyring) Delete(service string, account string) error {
-	cmd := exec.Command(securityBinaryPath(), "delete-generic-password", "-a", account, "-s", service)
+	keychainPath, err := defaultKeychainPath(context.Background())
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(securityBinaryPath(), "delete-generic-password", "-a", account, "-s", service, keychainPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.New(strings.TrimSpace(string(out)))
 	}
@@ -53,17 +63,23 @@ func securityBinaryPath() string {
 }
 
 func ensureUsableDefaultKeychain(ctx context.Context) error {
+	_, err := defaultKeychainPath(ctx)
+	return err
+}
+
+func defaultKeychainPath(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, securityBinaryPath(), "default-keychain")
 	out, err := cmd.Output()
 	if err != nil {
-		return ErrKeyringUnavailable
+		return "", fmt.Errorf("%w: macOS could not resolve the default keychain", ErrKeyringUnavailable)
 	}
 	path := strings.Trim(strings.TrimSpace(string(out)), "\"")
 	if path == "" {
-		return ErrKeyringUnavailable
+		return "", fmt.Errorf("%w: macOS returned an empty default keychain path", ErrKeyringUnavailable)
 	}
-	if _, err := os.Stat(filepath.Clean(path)); err != nil {
-		return ErrKeyringUnavailable
+	cleanPath := filepath.Clean(path)
+	if _, err := os.Stat(cleanPath); err != nil {
+		return "", fmt.Errorf("%w: default keychain path %s is not readable", ErrKeyringUnavailable, cleanPath)
 	}
-	return nil
+	return cleanPath, nil
 }

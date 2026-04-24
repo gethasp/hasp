@@ -150,6 +150,31 @@ func (l *Log) Verify() error {
 	return nil
 }
 
+func (l *Log) Events() ([]Event, error) {
+	file, err := os.Open(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open audit log: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	events := []Event{}
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return nil, fmt.Errorf("decode audit event: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan audit log: %w", err)
+	}
+	return events, nil
+}
+
 func (l *Log) Checkpoint() (int64, string, error) {
 	last, sequence, err := l.readLast()
 	if err != nil {

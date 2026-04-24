@@ -60,6 +60,9 @@ func TestDarwinKeyringCommands(t *testing.T) {
 	if !strings.Contains(string(data), "default-keychain") || !strings.Contains(string(data), "add-generic-password") || !strings.Contains(string(data), "find-generic-password") || !strings.Contains(string(data), "delete-generic-password") {
 		t.Fatalf("unexpected command log: %s", string(data))
 	}
+	if !strings.Contains(string(data), keychainPath) {
+		t.Fatalf("expected explicit keychain path in command log, got %s", string(data))
+	}
 	if _, ok := NewDefaultKeyring().(DarwinKeyring); !ok {
 		t.Fatal("expected darwin default keyring")
 	}
@@ -90,7 +93,11 @@ func TestDarwinKeyringSetSkipsWhenDefaultKeychainMissing(t *testing.T) {
 func TestDarwinKeyringErrorPaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "security")
-	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\necho boom\nexit 1\n"), 0o755); err != nil {
+	keychainPath := filepath.Join(tmpDir, "login.keychain-db")
+	if err := os.WriteFile(keychainPath, []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write fake keychain: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\ncase \"$1\" in\ndefault-keychain) printf '\""+keychainPath+"\"\\n' ;;\n*) echo boom ; exit 1 ;;\nesac\n"), 0o755); err != nil {
 		t.Fatalf("write fake security: %v", err)
 	}
 	t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
@@ -104,6 +111,81 @@ func TestDarwinKeyringErrorPaths(t *testing.T) {
 	if err := keyring.Delete("svc", "acct"); err == nil {
 		t.Fatal("expected delete failure")
 	}
+}
+
+func TestDarwinKeyringGetAndDeleteFailWhenDefaultKeychainMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "security")
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nif [[ \"$1\" == \"default-keychain\" ]]; then\n  exit 1\nfi\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake security: %v", err)
+	}
+	t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+
+	keyring := DarwinKeyring{}
+	if _, err := keyring.Get("svc", "acct"); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("expected keyring unavailable from Get, got %v", err)
+	}
+	if err := keyring.Delete("svc", "acct"); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("expected keyring unavailable from Delete, got %v", err)
+	}
+}
+
+func TestDarwinKeyringSetFailsAfterUsableKeychain(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "security")
+	keychainPath := filepath.Join(tmpDir, "login.keychain-db")
+	if err := os.WriteFile(keychainPath, []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write fake keychain: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\ncase \"$1\" in\ndefault-keychain) printf '\""+keychainPath+"\"\\n' ;;\nadd-generic-password) echo 'set failed' ; exit 1 ;;\nesac\n"), 0o755); err != nil {
+		t.Fatalf("write fake security: %v", err)
+	}
+	t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+
+	keyring := DarwinKeyring{}
+	if err := keyring.Set(context.Background(), "svc", "acct", "value"); err == nil || !strings.Contains(err.Error(), "set failed") {
+		t.Fatalf("expected set failure after keychain check, got %v", err)
+	}
+}
+
+func TestEnsureUsableDefaultKeychainBranches(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "security")
+
+	t.Run("empty path", func(t *testing.T) {
+		if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nprintf '\\n'\n"), 0o755); err != nil {
+			t.Fatalf("write fake security: %v", err)
+		}
+		t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+		if err := ensureUsableDefaultKeychain(context.Background()); !errors.Is(err, ErrKeyringUnavailable) {
+			t.Fatalf("expected unavailable on empty keychain path, got %v", err)
+		}
+	})
+
+	t.Run("stat failure", func(t *testing.T) {
+		if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nprintf '\""+filepath.Join(tmpDir, "missing.keychain")+"\"\\n'\n"), 0o755); err != nil {
+			t.Fatalf("write fake security: %v", err)
+		}
+		t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+		if err := ensureUsableDefaultKeychain(context.Background()); !errors.Is(err, ErrKeyringUnavailable) {
+			t.Fatalf("expected unavailable on missing keychain path, got %v", err)
+		}
+	})
+}
+
+func TestDefaultKeychainPathBranches(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "security")
+
+	t.Run("default keychain command failure", func(t *testing.T) {
+		if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
+			t.Fatalf("write fake security: %v", err)
+		}
+		t.Setenv("HASP_TEST_SECURITY_BIN", scriptPath)
+		if _, err := defaultKeychainPath(context.Background()); !errors.Is(err, ErrKeyringUnavailable) {
+			t.Fatalf("expected unavailable default keychain error, got %v", err)
+		}
+	})
 }
 
 func TestSecurityBinaryPathUsesOverrideAndDefault(t *testing.T) {

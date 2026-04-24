@@ -81,11 +81,8 @@ func TestSetupCommandConfiguresAgentsAndMCPHarness(t *testing.T) {
 		if strings.Contains(text, "correct horse battery staple") {
 			t.Fatalf("config leaked master password: %s", text)
 		}
-		if !strings.Contains(text, "\"command\": \"hasp\"") {
+		if !strings.Contains(text, "\"command\": ") || !strings.Contains(text, "hasp-agent-") {
 			t.Fatalf("config missing hasp MCP command: %s", text)
-		}
-		if !strings.Contains(text, "\"HASP_HOME\": "+`"`+haspHome+`"`) {
-			t.Fatalf("config missing custom HASP_HOME: %s", text)
 		}
 	}
 

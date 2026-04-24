@@ -123,7 +123,7 @@ release_create_ephemeral_key() {
   GNUPGHOME="$release_ephemeral_gnupghome" gpg --batch --pinentry-mode loopback --passphrase '' \
     --quick-generate-key "HASP Local Release Test Key <hasp@example.invalid>" ed25519 sign 1d >/dev/null 2>&1
   export GNUPGHOME="$release_ephemeral_gnupghome"
-  release_list_secret_keys | head -n 1
+  release_gpg --list-secret-keys --with-colons --fingerprint 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}'
 }
 
 release_gpg() {

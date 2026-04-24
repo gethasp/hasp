@@ -9,20 +9,36 @@ You can test:
 - local install on macOS or Linux
 - local vault initialization
 - import from `.env` and JSON credential files
+- interactive `hasp secret add`
+- connected app consumers through `hasp app connect`, `run`, `install`, `shell`, `disconnect`, and `list`
+- connected agent consumers through `hasp agent connect`, `disconnect`, and `list`
 - brokered `run` and safe `inject`
 - explicit convenience `write-env`
 - repo guardrails, audit, and backup/restore
-- first-class profile bootstrap for the shipped agent set
+- first-class profile bootstrap for the shipped first-class agent set
 - generic broker compatibility for other CLI- or MCP-capable agents
 
 This guide is for one developer machine and one real repo. It is not a cloud rollout guide.
+
+## Surface Today
+
+The current build supports both:
+
+- consumer-first setup through `hasp secret add`, `hasp app ...`, and `hasp agent ...`
+- lower-level broker primitives such as `run`, `inject`, and `write-env`
+
+`hasp setup` no longer assumes you are here for an agent. You can use it for
+machine-only setup, skip agent config for now, or continue into adding a vault
+secret and connecting one app in the same interactive flow.
 
 ## Installation path
 
 Use either:
 
 - `make build`
-- a published packaged release from `https://downloads.gethasp.com/hasp/releases/<tag>/`
+- a published packaged release from GitHub Releases
+- the optional `https://downloads.gethasp.com/hasp/releases/<tag>/` mirror when
+  that mirror is configured for the same release bytes
 
 ## Pilot checklist
 
@@ -43,4 +59,5 @@ Use either:
 - V1 is local-first. There is no hosted control plane.
 - V1 does not give you strong same-user local isolation.
 - V1 does not manage your PATH for you.
+- app launchers still require explicit consent. In interactive `hasp app connect`, HASP asks before it creates one and, when needed, asks before it patches shell PATH. In scripts, use `--install=true|false` and `--add-to-path=true|false`. Launchers are written under `HASP_HOME/bin`.
 - V1 treats pasted values and shell exports as operator hygiene unless you route them through explicit import or capture paths.

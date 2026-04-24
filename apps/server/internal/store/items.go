@@ -68,6 +68,7 @@ func (h *Handle) DeleteItem(name string) error {
 			item.DeletedAt = &now
 			item.UpdatedAt = now
 			h.state.Items[id] = item
+			h.removeItemFromBindings(item.Name)
 			err := persistEnvelope(h)
 			if err == nil {
 				h.store.appendAuditBestEffort("item.delete", "user", map[string]any{"name": item.Name})
@@ -76,6 +77,28 @@ func (h *Handle) DeleteItem(name string) error {
 		}
 	}
 	return ErrItemNotFound
+}
+
+func (h *Handle) removeItemFromBindings(itemName string) int {
+	removed := 0
+	for root, binding := range h.state.Bindings {
+		if len(binding.Aliases) == 0 {
+			continue
+		}
+		changed := false
+		for alias, existing := range binding.Aliases {
+			if existing != itemName {
+				continue
+			}
+			delete(binding.Aliases, alias)
+			removed++
+			changed = true
+		}
+		if changed {
+			h.state.Bindings[root] = binding
+		}
+	}
+	return removed
 }
 
 func (h *Handle) ListItems() []Item {

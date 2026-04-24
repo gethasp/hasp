@@ -95,22 +95,15 @@ func TestDefaultSetupHomeAndExpandHome(t *testing.T) {
 
 func TestSetupResolveHomeAndProjectRoot(t *testing.T) {
 	lockAppSeams(t)
-	configHome := t.TempDir()
-	userHome := t.TempDir()
+	harness := newSetupHarness(t)
 	repo := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("HOME", userHome)
-
-	origHome := setupUserHomeDirFn
-	defer func() { setupUserHomeDirFn = origHome }()
-	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
 
 	prompt := newSetupPrompter(bytes.NewBufferString("\n"), io.Discard)
 	resolved, configPath, err := setupResolveHome(setupOptions{}, prompt)
 	if err != nil {
 		t.Fatalf("resolve home: %v", err)
 	}
-	if resolved != filepath.Join(userHome, ".hasp") {
+	if resolved != filepath.Join(harness.userHome, ".hasp") {
 		t.Fatalf("resolved home = %q", resolved)
 	}
 	if configPath == "" {
@@ -178,6 +171,15 @@ func TestSetupResolveAgentsAndDetection(t *testing.T) {
 	}
 	if len(resolved) != 2 {
 		t.Fatalf("expected two resolved agents, got %+v", resolved)
+	}
+
+	prompt = newSetupPrompter(bytes.NewBufferString("\n"), io.Discard)
+	resolved, err = setupResolveAgents(setupOptions{}, prompt)
+	if err != nil {
+		t.Fatalf("resolve interactive agents skip: %v", err)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("expected zero resolved agents when skipping, got %+v", resolved)
 	}
 }
 
@@ -493,9 +495,35 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		t.Fatal("expected retry prompt read failure")
 	}
 
-	prompt = newSetupPrompter(bytes.NewBufferString("\n"), io.Discard)
-	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil || !strings.Contains(err.Error(), "master password is required") {
-		t.Fatalf("expected empty retry password failure, got %v", err)
+	var emptyRetryOut bytes.Buffer
+	origCanHide := setupCanHideInputFn
+	defer func() { setupCanHideInputFn = origCanHide }()
+	setupCanHideInputFn = func(*os.File) bool { return true }
+	retryFile, err := os.CreateTemp(t.TempDir(), "retry-password")
+	if err != nil {
+		t.Fatalf("create retry password file: %v", err)
+	}
+	defer retryFile.Close()
+	if _, err := retryFile.WriteString("\ncorrect-password\n"); err != nil {
+		t.Fatalf("seed retry password file: %v", err)
+	}
+	if _, err := retryFile.Seek(0, 0); err != nil {
+		t.Fatalf("rewind retry password file: %v", err)
+	}
+	prompt = newSetupPrompter(retryFile, &emptyRetryOut)
+	attempts = 0
+	openStoreWithPasswordFn = func(context.Context, *store.Store, string) (*store.Handle, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, store.ErrInvalidPassword
+		}
+		return &store.Handle{}, nil
+	}
+	if _, _, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err != nil || password != "correct-password" {
+		t.Fatalf("expected empty retry password success, got %q err=%v", password, err)
+	}
+	if !strings.Contains(emptyRetryOut.String(), "Master password is required. Try again.") {
+		t.Fatalf("expected empty retry password message, got %q", emptyRetryOut.String())
 	}
 
 	specs := []setupAgentSpec{{
@@ -552,7 +580,7 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		t.Fatal("expected backup write failure")
 	}
 
-	if _, err := upsertJSONMCPServerConfig([]byte(`{"mcpServers":"bad"}`), "", "/bin/hasp"); err == nil {
+	if _, err := upsertJSONMCPServerConfig([]byte(`{"mcpServers":"bad"}`), "", "/bin/hasp", "claude-code"); err == nil {
 		t.Fatal("expected invalid existing mcpServers object error")
 	}
 }

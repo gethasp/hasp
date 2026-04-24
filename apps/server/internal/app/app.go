@@ -2,10 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 
-	"github.com/gethasp/hasp/apps/server/internal/mcp"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
@@ -51,72 +52,39 @@ func runWithStarter(ctx context.Context, args []string, stdin io.Reader, stdout 
 	}
 
 	switch args[0] {
-	case "version":
-		_, err := fmt.Fprintln(stdout, runtime.Version())
-		return err
-	case "init":
-		return initCommand(ctx, stdout)
-	case "setup":
-		return setupCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "help":
+		return printHelpTopic(stdout, args[1:])
+	case "--help", "-h":
+		return printHelpTopic(stdout, nil)
 	case "bootstrap":
+		if len(args) > 1 && isHelpArg(args[1]) {
+			return printHelpTopic(stdout, []string{"bootstrap"})
+		}
 		return bootstrapCommandWithInput(ctx, args[1:], stdin, stdout, bootstrapVerification)
-	case "import":
-		return importCommandWithInput(ctx, args[1:], stdin, stdout)
-	case "project":
-		return projectCommand(ctx, args[1:], stdout)
-	case "set":
-		return setCommand(ctx, args[1:], stdout)
-	case "capture":
-		return captureCommand(ctx, args[1:], stdout, s)
 	case "redact":
 		return redactCommand(ctx, stdin, stdout)
-	case "audit":
-		return auditCommand(stdout)
-	case "daemon":
-		return daemonCommand(ctx, args[1:], stdout, s)
-	case "ping":
-		return pingCommand(ctx, stdout, s)
-	case "status":
-		return statusCommand(ctx, stdout, s)
-	case "session":
-		return sessionCommand(ctx, args[1:], stdout, s)
-	case "run":
-		return runCommand(ctx, args[1:], stdout, stderr, s)
-	case "inject":
-		return injectCommand(ctx, args[1:], stdout, stderr, s)
-	case "write-env":
-		return writeEnvCommand(ctx, args[1:], stdout, stderr, s)
-	case "check-repo":
-		return checkRepoCommand(ctx, args[1:], stdout)
-	case "export-backup":
-		return exportBackupCommand(ctx, args[1:], stdout)
-	case "restore-backup":
-		return restoreBackupCommand(ctx, args[1:], stdout)
-	case "mcp":
-		return mcp.Serve(ctx, stdin, stdout)
-	case "tui":
-		return tuiCommand(ctx, args[1:], stdout)
-	case "help", "--help", "-h":
-		printHelp(stdout)
-		return nil
-	default:
+	}
+	spec, ok := lookupRootCommand(args[0])
+	if !ok {
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+	return dispatchRootCommand(ctx, spec, args[1:], stdin, stdout, stderr, s)
 }
 
-func printHelp(w io.Writer) {
-	fmt.Fprintln(w, "hasp commands:")
-	fmt.Fprintln(w, "  version")
-	fmt.Fprintln(w, "  init")
-	fmt.Fprintln(w, "  setup [--non-interactive ...]")
-	fmt.Fprintln(w, "  bootstrap --profile <id> [--import <path|->] [--bind-imports] | bootstrap generic | bootstrap profiles | bootstrap doctor --profile <id>|generic")
-	fmt.Fprintln(w, "  import [--project-root <path>] [--bind] [--name <name>] [--preview] [--format auto|env|json] <path|->")
-	fmt.Fprintln(w, "  project adopt|bind|status|unbind")
-	fmt.Fprintln(w, "  daemon serve|start|stop|status")
-	fmt.Fprintln(w, "  ping")
-	fmt.Fprintln(w, "  status")
-	fmt.Fprintln(w, "  session open --host-label <label> --project-root <path>")
-	fmt.Fprintln(w, "  session resolve --token <token>")
-	fmt.Fprintln(w, "  session revoke --token <token>")
-	fmt.Fprintln(w, "  setup | bootstrap | init | import | set | run | inject | write-env | audit | check-repo | export-backup | restore-backup | mcp | tui")
+func versionCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp version [--json]")
+	}
+	version := runtime.Version()
+	payload := map[string]any{"version": version}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		_, err := fmt.Fprintln(w, version)
+		return err
+	})
 }

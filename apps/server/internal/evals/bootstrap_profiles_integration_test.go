@@ -11,7 +11,7 @@ import (
 
 func TestBootstrapProfileSummaryEval(t *testing.T) {
 	env := newEvalEnv(t)
-	stdout, _, err := runHasp(t, env, "", "bootstrap", "profiles")
+	stdout, _, err := runHasp(t, env, "", "bootstrap", "profiles", "--json")
 	if err != nil {
 		t.Fatalf("bootstrap profiles failed: %v", err)
 	}

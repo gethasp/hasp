@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -133,6 +134,74 @@ func (h *Handle) ConsumeConvenienceGrant(bindingID string, destinationPath strin
 	return err
 }
 
+func (h *Handle) GrantPlaintextUse(sessionToken string, itemName string, action PlaintextAction, grantedBy string, scope GrantScope, ttl time.Duration) (PlaintextGrant, error) {
+	if sessionToken == "" {
+		return PlaintextGrant{}, fmt.Errorf("session token is required")
+	}
+	itemName = strings.TrimSpace(itemName)
+	if itemName == "" {
+		return PlaintextGrant{}, fmt.Errorf("item name is required")
+	}
+	if action != PlaintextReveal && action != PlaintextCopy {
+		return PlaintextGrant{}, fmt.Errorf("unsupported plaintext action %q", action)
+	}
+	if scope != GrantOnce {
+		return PlaintextGrant{}, fmt.Errorf("plaintext grants must use scope %q", GrantOnce)
+	}
+	if ttl <= 0 {
+		ttl = DefaultPlaintextGrantTTL
+	}
+	if ttl > MaxPlaintextGrantTTL {
+		return PlaintextGrant{}, fmt.Errorf("plaintext grants may not exceed %s", MaxPlaintextGrantTTL)
+	}
+	expiresAt := h.store.now().Add(ttl)
+	grant := PlaintextGrant{
+		ID:           randomHex(10),
+		SessionToken: sessionToken,
+		ItemName:     itemName,
+		Action:       action,
+		GrantedBy:    grantedBy,
+		Scope:        GrantOnce,
+		ExpiresAt:    &expiresAt,
+	}
+	h.state.PlaintextGrants[plaintextGrantKey(sessionToken, itemName, action)] = grant
+	err := h.persist()
+	if err == nil {
+		h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{
+			"action":           "grant.plaintext",
+			"item":             itemName,
+			"plaintext_action": action,
+			"scope":            grant.Scope,
+			"ttl_seconds":      int(ttl.Seconds()),
+		})
+	}
+	return grant, err
+}
+
+func (h *Handle) ConsumePlaintextGrant(sessionToken string, itemName string, action PlaintextAction) error {
+	key := plaintextGrantKey(sessionToken, itemName, action)
+	grant, ok := h.state.PlaintextGrants[key]
+	if !ok {
+		return nil
+	}
+	if grant.Scope != GrantOnce {
+		return nil
+	}
+	now := h.store.now()
+	grant.UsedAt = &now
+	h.state.PlaintextGrants[key] = grant
+	err := h.persist()
+	if err == nil {
+		h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{"action": "consume.plaintext", "item": itemName, "plaintext_action": action})
+	}
+	return err
+}
+
+func (h *Handle) PlaintextGrantActive(sessionToken string, itemName string, action PlaintextAction) bool {
+	grant, ok := h.state.PlaintextGrants[plaintextGrantKey(sessionToken, itemName, action)]
+	return ok && grantIsActive(grant.Scope, grant.ExpiresAt, grant.RevokedAt, grant.UsedAt, h.store.now())
+}
+
 func (h *Handle) RevokeProjectLease(bindingID string, sessionToken string) error {
 	key := leaseKey(bindingID, sessionToken)
 	lease, ok := h.state.ProjectLeases[key]
@@ -153,4 +222,72 @@ func (h *Handle) RevokeProjectLease(bindingID string, sessionToken string) error
 		h.store.appendAuditBestEffort(audit.EventDeny, "user", map[string]any{"action": "grant.project.revoke", "binding_id": bindingID})
 	}
 	return err
+}
+
+func (h *Handle) RevokeGrantsForItem(itemName string) (int, error) {
+	now := h.store.now()
+	revoked := 0
+	for key, grant := range h.state.SecretGrants {
+		if grant.ItemName == itemName && grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.SecretGrants[key] = grant
+			revoked++
+		}
+	}
+	for key, grant := range h.state.PlaintextGrants {
+		if grant.ItemName == itemName && grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.PlaintextGrants[key] = grant
+			revoked++
+		}
+	}
+	if revoked == 0 {
+		return 0, nil
+	}
+	err := h.persist()
+	if err == nil {
+		h.store.appendAuditBestEffort(audit.EventDeny, "user", map[string]any{"action": "grant.item.revoke", "item": itemName, "revoked_count": revoked})
+	}
+	return revoked, err
+}
+
+func (h *Handle) RevokeAllGrants() (int, error) {
+	now := h.store.now()
+	revoked := 0
+	for key, lease := range h.state.ProjectLeases {
+		if lease.RevokedAt == nil {
+			lease.RevokedAt = &now
+			h.state.ProjectLeases[key] = lease
+			revoked++
+		}
+	}
+	for key, grant := range h.state.SecretGrants {
+		if grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.SecretGrants[key] = grant
+			revoked++
+		}
+	}
+	for key, grant := range h.state.ConvenienceGrants {
+		if grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.ConvenienceGrants[key] = grant
+			revoked++
+		}
+	}
+	for key, grant := range h.state.PlaintextGrants {
+		if grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.PlaintextGrants[key] = grant
+			revoked++
+		}
+	}
+	if revoked == 0 {
+		return 0, nil
+	}
+	err := h.persist()
+	if err == nil {
+		h.store.appendAuditBestEffort(audit.EventDeny, "user", map[string]any{"action": "grant.revoke_all", "revoked_count": revoked})
+	}
+	return revoked, err
 }

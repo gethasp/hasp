@@ -45,7 +45,7 @@ func TestStringListFlagsHelpers(t *testing.T) {
 
 func TestBootstrapProfilesCommandListsReleaseGates(t *testing.T) {
 	var out bytes.Buffer
-	if err := bootstrapCommand(context.Background(), []string{"profiles"}, &out); err != nil {
+	if err := bootstrapCommand(context.Background(), []string{"profiles", "--json"}, &out); err != nil {
 		t.Fatalf("bootstrap profiles: %v", err)
 	}
 	var result map[string]any
@@ -71,7 +71,7 @@ func TestBootstrapProfilesCommandListsReleaseGates(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := Run(context.Background(), []string{"bootstrap", "profiles"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"bootstrap", "profiles", "--json"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
 		t.Fatalf("run bootstrap profiles: %v", err)
 	}
 	if out.Len() == 0 {
@@ -89,7 +89,7 @@ func TestBootstrapCommandInitializesBindsAndVerifies(t *testing.T) {
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
 	var out bytes.Buffer
-	if err := bootstrapCommand(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--hooks=false"}, &out); err != nil {
+	if err := bootstrapCommand(context.Background(), []string{"--json", "--profile", "claude-code", "--project-root", projectRoot, "--hooks=false"}, &out); err != nil {
 		t.Fatalf("bootstrap command: %v", err)
 	}
 	var result map[string]any
@@ -140,7 +140,7 @@ func TestBootstrapCommandImportsAndGenericPath(t *testing.T) {
 
 	stdinImport := bytes.NewBufferString("export API_TOKEN='abc123'\n")
 	var out bytes.Buffer
-	if err := bootstrapCommandWithInput(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--hooks=false", "--import", "-", "--bind-imports"}, stdinImport, &out, bootstrapVerification); err != nil {
+	if err := bootstrapCommandWithInput(context.Background(), []string{"--json", "--profile", "claude-code", "--project-root", projectRoot, "--hooks=false", "--import", "-", "--bind-imports"}, stdinImport, &out, bootstrapVerification); err != nil {
 		t.Fatalf("bootstrap import stdin: %v", err)
 	}
 	var payload map[string]any
@@ -164,7 +164,7 @@ func TestBootstrapCommandImportsAndGenericPath(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := bootstrapCommand(context.Background(), []string{"generic", "--project-root", projectRoot, "--hooks=false"}, &out); err != nil {
+	if err := bootstrapCommand(context.Background(), []string{"generic", "--json", "--project-root", projectRoot, "--hooks=false"}, &out); err != nil {
 		t.Fatalf("generic bootstrap: %v", err)
 	}
 	payload = map[string]any{}
@@ -192,7 +192,7 @@ func TestBootstrapDoctorReportsPreviewWithoutOverclaiming(t *testing.T) {
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
 	var out bytes.Buffer
-	if err := bootstrapCommandWithInput(context.Background(), []string{"doctor", "--profile", "claude-code", "--project-root", projectRoot, "--hooks=false", "--import", "-", "--bind-imports"}, bytes.NewBufferString("API_TOKEN=abc123\n"), &out, bootstrapVerification); err != nil {
+	if err := bootstrapCommandWithInput(context.Background(), []string{"doctor", "--json", "--profile", "claude-code", "--project-root", projectRoot, "--hooks=false", "--import", "-", "--bind-imports"}, bytes.NewBufferString("API_TOKEN=abc123\n"), &out, bootstrapVerification); err != nil {
 		t.Fatalf("bootstrap doctor: %v", err)
 	}
 	var payload map[string]any
@@ -240,7 +240,7 @@ func TestBootstrapCommandErrors(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	var fixtureOut bytes.Buffer
-	if err := bootstrapCommand(context.Background(), []string{"--profile", "codex-cli", "--project-root", projectRoot, "--hooks=false", "--verify=false"}, &fixtureOut); err != nil {
+	if err := bootstrapCommand(context.Background(), []string{"--json", "--profile", "codex-cli", "--project-root", projectRoot, "--hooks=false", "--verify=false"}, &fixtureOut); err != nil {
 		t.Fatalf("bootstrap verify false: %v", err)
 	}
 	var payload map[string]any
@@ -447,7 +447,7 @@ func TestImportCommandPreviewFromStdin(t *testing.T) {
 	var out bytes.Buffer
 	if err := importCommandWithInput(
 		context.Background(),
-		[]string{"--preview", "--format", "env", "-"},
+		[]string{"--json", "--preview", "--format", "env", "-"},
 		bytes.NewBufferString("export API_TOKEN=abc123\n"),
 		&out,
 	); err != nil {
@@ -487,7 +487,7 @@ func TestBootstrapDoctorSeparatesChecksAndSanitizesImportSummary(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := bootstrapDoctorCommand(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--import", importPath}, bytes.NewBuffer(nil), &out); err != nil {
+	if err := bootstrapDoctorCommand(context.Background(), []string{"--json", "--profile", "claude-code", "--project-root", projectRoot, "--import", importPath}, bytes.NewBuffer(nil), &out); err != nil {
 		t.Fatalf("bootstrap doctor: %v", err)
 	}
 	raw := out.String()

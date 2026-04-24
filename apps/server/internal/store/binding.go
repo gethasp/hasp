@@ -36,16 +36,18 @@ type ManifestReference struct {
 }
 
 type VisibleReference struct {
-	Alias       string       `json:"alias"`
-	Kind        ItemKind     `json:"kind"`
-	PolicyLevel SecretPolicy `json:"policy_level"`
-	LeaseStatus string       `json:"lease_status"`
+	Alias          string       `json:"alias"`
+	ItemName       string       `json:"item_name"`
+	NamedReference string       `json:"named_reference,omitempty"`
+	Kind           ItemKind     `json:"kind"`
+	PolicyLevel    SecretPolicy `json:"policy_level"`
+	LeaseStatus    string       `json:"lease_status"`
 }
 
 var ErrBindingConflict = errors.New("binding alias conflict")
 
 func (h *Handle) UpsertBinding(ctx context.Context, projectPath string, aliases map[string]string, defaultPolicy SecretPolicy, hookInstalled bool) (Binding, error) {
-	root, err := CanonicalProjectRoot(ctx, projectPath)
+	root, err := CanonicalProjectPath(projectPath)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -74,7 +76,7 @@ func (h *Handle) UpsertBinding(ctx context.Context, projectPath string, aliases 
 }
 
 func (h *Handle) BindItemAlias(ctx context.Context, projectPath string, itemName string) (string, error) {
-	root, err := CanonicalProjectRoot(ctx, projectPath)
+	root, err := h.bindingRoot(ctx, projectPath)
 	if err != nil {
 		return "", err
 	}
@@ -122,10 +124,12 @@ func (h *Handle) ResolveBindingView(ctx context.Context, projectPath string) (Bi
 			return Binding{}, nil, err
 		}
 		visible = append(visible, VisibleReference{
-			Alias:       alias,
-			Kind:        item.Kind,
-			PolicyLevel: normalizePolicy(item.Metadata.Policy),
-			LeaseStatus: "inactive",
+			Alias:          alias,
+			ItemName:       item.Name,
+			NamedReference: NamedReference(item.Name),
+			Kind:           item.Kind,
+			PolicyLevel:    normalizePolicy(item.Metadata.Policy),
+			LeaseStatus:    "inactive",
 		})
 	}
 	sortVisibleReferences(visible)
@@ -133,7 +137,7 @@ func (h *Handle) ResolveBindingView(ctx context.Context, projectPath string) (Bi
 }
 
 func (h *Handle) resolvedBinding(ctx context.Context, projectPath string) (Binding, error) {
-	root, err := CanonicalProjectRoot(ctx, projectPath)
+	root, err := h.bindingRoot(ctx, projectPath)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -170,7 +174,7 @@ func (h *Handle) resolvedBinding(ctx context.Context, projectPath string) (Bindi
 }
 
 func (h *Handle) DeleteBinding(ctx context.Context, projectPath string) error {
-	root, err := CanonicalProjectRoot(ctx, projectPath)
+	root, err := h.bindingRoot(ctx, projectPath)
 	if err != nil {
 		return err
 	}
@@ -180,6 +184,21 @@ func (h *Handle) DeleteBinding(ctx context.Context, projectPath string) error {
 		h.store.appendAuditBestEffort("binding.delete", "user", map[string]any{"root": root})
 	}
 	return err
+}
+
+func (h *Handle) bindingRoot(ctx context.Context, projectPath string) (string, error) {
+	exact, exactErr := CanonicalProjectPath(projectPath)
+	if exactErr != nil {
+		return "", exactErr
+	}
+	if _, ok := h.state.Bindings[exact]; ok {
+		return exact, nil
+	}
+	root, err := CanonicalProjectRoot(ctx, projectPath)
+	if err != nil {
+		return exact, nil
+	}
+	return root, nil
 }
 
 func CanonicalProjectRoot(ctx context.Context, projectPath string) (string, error) {
@@ -194,6 +213,17 @@ func CanonicalProjectRoot(ctx context.Context, projectPath string) (string, erro
 	out, err := cmd.Output()
 	if err == nil {
 		return normalizeRoot(strings.TrimSpace(string(out))), nil
+	}
+	return normalizeRoot(abs), nil
+}
+
+func CanonicalProjectPath(projectPath string) (string, error) {
+	if projectPath == "" {
+		projectPath = "."
+	}
+	abs, err := filepathAbsFn(projectPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve project path: %w", err)
 	}
 	return normalizeRoot(abs), nil
 }

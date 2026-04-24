@@ -22,34 +22,46 @@ var (
 )
 
 type Session struct {
-	ID          string
-	Token       string
-	LocalUser   string
-	HostLabel   string
-	ProjectRoot string
-	ExpiresAt   time.Time
-	LastSeenAt  time.Time
+	ID           string
+	Token        string
+	LocalUser    string
+	HostLabel    string
+	ProjectRoot  string
+	AgentSafe    bool
+	ConsumerName string
+	ExpiresAt    time.Time
+	LastSeenAt   time.Time
 }
 
 type SessionView struct {
-	ID          string    `json:"id"`
-	LocalUser   string    `json:"local_user"`
-	HostLabel   string    `json:"host_label"`
-	ProjectRoot string    `json:"project_root"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	LastSeenAt  time.Time `json:"last_seen_at"`
+	ID           string    `json:"id"`
+	LocalUser    string    `json:"local_user"`
+	HostLabel    string    `json:"host_label"`
+	ProjectRoot  string    `json:"project_root"`
+	AgentSafe    bool      `json:"agent_safe,omitempty"`
+	ConsumerName string    `json:"consumer_name,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	LastSeenAt   time.Time `json:"last_seen_at"`
 }
 
 type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]Session
+	mu        sync.RWMutex
+	sessions  map[string]Session
+	processes map[int]string
+	now       func() time.Time
+	idleTTL   time.Duration
 }
 
 func NewSessionStore() *SessionStore {
-	return &SessionStore{sessions: make(map[string]Session)}
+	return &SessionStore{
+		sessions:  make(map[string]Session),
+		processes: make(map[int]string),
+		now:       func() time.Time { return time.Now().UTC() },
+		idleTTL:   DefaultVaultIdleTimeout,
+	}
 }
 
-func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration) (Session, error) {
+func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration, agentSafe bool, consumerName string) (Session, error) {
 	if ttl <= 0 {
 		return Session{}, errors.New("ttl must be positive")
 	}
@@ -57,15 +69,17 @@ func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration) (S
 	if err != nil {
 		return Session{}, err
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	session := Session{
-		ID:          mustRandomHex(16),
-		Token:       mustRandomHex(32),
-		LocalUser:   localUser,
-		HostLabel:   hostLabel,
-		ProjectRoot: CanonicalProjectRoot(projectRoot),
-		ExpiresAt:   now.Add(ttl),
-		LastSeenAt:  now,
+		ID:           mustRandomHex(16),
+		Token:        mustRandomHex(32),
+		LocalUser:    localUser,
+		HostLabel:    hostLabel,
+		ProjectRoot:  CanonicalProjectRoot(projectRoot),
+		AgentSafe:    agentSafe,
+		ConsumerName: strings.TrimSpace(consumerName),
+		ExpiresAt:    now.Add(ttl),
+		LastSeenAt:   now,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,7 +88,7 @@ func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration) (S
 }
 
 func (s *SessionStore) Resolve(token string) (Session, bool) {
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -82,7 +96,7 @@ func (s *SessionStore) Resolve(token string) (Session, bool) {
 	if !ok {
 		return Session{}, false
 	}
-	if now.After(session.ExpiresAt) {
+	if s.sessionExpired(session, now) {
 		delete(s.sessions, token)
 		return Session{}, false
 	}
@@ -98,7 +112,26 @@ func (s *SessionStore) Revoke(token string) bool {
 		return false
 	}
 	delete(s.sessions, token)
+	for pid, existing := range s.processes {
+		if existing == token {
+			delete(s.processes, pid)
+		}
+	}
 	return true
+}
+
+func (s *SessionStore) RevokeAll() []Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	revoked := make([]Session, 0, len(s.sessions))
+	for token, session := range s.sessions {
+		revoked = append(revoked, session)
+		delete(s.sessions, token)
+	}
+	for pid := range s.processes {
+		delete(s.processes, pid)
+	}
+	return revoked
 }
 
 func (s *SessionStore) ActiveCount() int {
@@ -130,14 +163,71 @@ func (s *SessionStore) ViewSnapshot() []SessionView {
 }
 
 func (s *SessionStore) PruneExpired() {
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for token, session := range s.sessions {
-		if now.After(session.ExpiresAt) {
+		if s.sessionExpired(session, now) {
 			delete(s.sessions, token)
+			for pid, existing := range s.processes {
+				if existing == token {
+					delete(s.processes, pid)
+				}
+			}
 		}
 	}
+}
+
+func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionToken]
+	if !ok || s.sessionExpired(session, now) {
+		delete(s.sessions, sessionToken)
+		return false
+	}
+	s.processes[pid] = sessionToken
+	return true
+}
+
+func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
+	lineage, err := processLineage(pid)
+	if err != nil || len(lineage) == 0 {
+		return Session{}, "", false
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ancestor := range lineage {
+		token, ok := s.processes[ancestor]
+		if !ok {
+			continue
+		}
+		session, ok := s.sessions[token]
+		if !ok || s.sessionExpired(session, now) {
+			delete(s.sessions, token)
+			delete(s.processes, ancestor)
+			continue
+		}
+		session.LastSeenAt = now
+		s.sessions[token] = session
+		return session, token, true
+	}
+	return Session{}, "", false
+}
+
+func (s *SessionStore) sessionExpired(session Session, now time.Time) bool {
+	if now.After(session.ExpiresAt) {
+		return true
+	}
+	if s.idleTTL <= 0 {
+		return false
+	}
+	return now.Sub(session.LastSeenAt) > s.idleTTL
 }
 
 func mustRandomHex(n int) string {
@@ -179,11 +269,13 @@ func currentUser() (string, error) {
 
 func (s Session) View() SessionView {
 	return SessionView{
-		ID:          s.ID,
-		LocalUser:   s.LocalUser,
-		HostLabel:   s.HostLabel,
-		ProjectRoot: s.ProjectRoot,
-		ExpiresAt:   s.ExpiresAt,
-		LastSeenAt:  s.LastSeenAt,
+		ID:           s.ID,
+		LocalUser:    s.LocalUser,
+		HostLabel:    s.HostLabel,
+		ProjectRoot:  s.ProjectRoot,
+		AgentSafe:    s.AgentSafe,
+		ConsumerName: s.ConsumerName,
+		ExpiresAt:    s.ExpiresAt,
+		LastSeenAt:   s.LastSeenAt,
 	}
 }

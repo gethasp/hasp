@@ -318,8 +318,8 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	}
 	filepathAbsFn = origAbs
 
-	if resolved, err := handle.ResolveReference(context.Background(), t.TempDir(), "api_token"); err != nil || resolved.ItemName != "api_token" {
-		t.Fatalf("expected direct item reference resolution, got %+v err=%v", resolved, err)
+	if _, err := handle.ResolveReference(context.Background(), t.TempDir(), "api_token"); !errors.Is(err, ErrReferenceNotFound) {
+		t.Fatalf("expected repo-scoped reference lookup to reject raw item names, got %v", err)
 	}
 	filepathAbsFn = func(string) (string, error) { return "", fmt.Errorf("abs fail") }
 	if _, err := handle.ResolveReference(context.Background(), ".", "api_token"); err == nil {
@@ -384,7 +384,7 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw state: %v", err)
 	}
-	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil {
+	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil || state.PlaintextGrants == nil {
 		t.Fatalf("expected nil maps initialized, got %+v", state)
 	}
 

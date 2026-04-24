@@ -18,7 +18,8 @@ That guided flow now walks through:
 
 - where local encrypted HASP data lives on this machine
 - machine defaults for automatic project protection
-- which coding agents should be configured for MCP
+- which coding agents should be configured for MCP, or whether to skip that for now
+- whether you want to add a vault secret and connect one app before setup ends
 - a final review step before HASP writes local changes
 
 You do not have to manually onboard every repo up front anymore.
@@ -29,6 +30,26 @@ are created for you from machine defaults instead of requiring manual setup
 first.
 
 The rest of this page is the manual flow and the troubleshooting fallback.
+
+## Design Direction
+
+The current Homebrew guide still shows the existing broker runtime and
+bootstrap flow.
+
+The target model is simpler:
+
+- one personal vault
+- connect apps once
+- connect agents once
+- run apps and agents normally afterward
+
+In other words, the desired long-term UX is:
+
+- `hasp secret add`
+- `hasp app connect <name>`
+- `hasp agent connect <name>`
+
+not repeated command wrapping or repeated repo/bootstrap thinking.
 
 ## 1. Confirm the install
 
@@ -87,7 +108,14 @@ Example JSON credential file:
 hasp import service-account.json
 ```
 
-If you only have one pasted secret right now, use the explicit import path:
+If you want the direct terminal path, use:
+
+```bash
+hasp secret add
+```
+
+If you already have a secret file or shell snippet, the import path still
+works:
 
 ```bash
 printf 'export OPENAI_API_KEY=your-real-key\n' | hasp import --preview --format env -
@@ -125,8 +153,20 @@ If you are using a different first-class agent, swap the profile:
 - `cursor`
 - `aider`
 - `codex-cli`
+
+Generic-compatible profiles are also available when they match your agent, but
+they are not first-class support claims yet:
+
 - `openclaw`
 - `hermes`
+
+If you just want to save a secret and make it available in the current repo,
+the simpler path is:
+
+```bash
+cd /path/to/your/repo
+hasp secret add
+```
 
 If your agent is not first-class, use:
 
@@ -188,6 +228,9 @@ Use the matching profile doc for your agent:
 - [Claude Code](./agent-profiles/claude-code.md)
 - [Cursor](./agent-profiles/cursor.md)
 - [Aider](./agent-profiles/aider.md)
+
+Generic-compatible profile docs:
+
 - [OpenClaw](./agent-profiles/openclaw.md)
 - [Hermes](./agent-profiles/hermes.md)
 

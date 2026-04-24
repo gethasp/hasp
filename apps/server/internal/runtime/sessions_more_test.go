@@ -17,7 +17,7 @@ func TestSessionStoreOpenReturnsCurrentUserError(t *testing.T) {
 		return nil, errors.New("lookup failed")
 	}
 
-	if _, err := NewSessionStore().Open("agent", "/tmp/project", DefaultSessionTTL); err == nil {
+	if _, err := NewSessionStore().Open("agent", "/tmp/project", DefaultSessionTTL, false, ""); err == nil {
 		t.Fatal("expected current user failure")
 	}
 }

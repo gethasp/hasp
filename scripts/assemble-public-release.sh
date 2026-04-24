@@ -58,6 +58,10 @@ if [[ -z "$signing_key" ]]; then
   signing_key="$(<"$signing_key_file")"
   /bin/rm -f "$signing_key_file"
 fi
+if [[ -z "$signing_key" ]]; then
+  echo "failed to resolve a release signing key" >&2
+  exit 1
+fi
 
 /bin/mkdir -p "$formula_dir"
 release_export_public_key "$signing_key" "$public_key_file"

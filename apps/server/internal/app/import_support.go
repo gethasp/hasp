@@ -3,7 +3,6 @@ package app
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -234,7 +233,7 @@ func projectedNames(items []importPlanItem) []string {
 	return names
 }
 
-func encodeImportCommandResult(stdout io.Writer, preview importPreview, result *store.ImportResult, applied bool) error {
+func encodeImportCommandResultWithMode(stdout io.Writer, preview importPreview, result *store.ImportResult, applied bool, jsonOutput bool) error {
 	payload := map[string]any{
 		"preview": preview,
 		"applied": applied,
@@ -242,5 +241,7 @@ func encodeImportCommandResult(stdout io.Writer, preview importPreview, result *
 	if result != nil {
 		payload["imported"] = result.Imported
 	}
-	return json.NewEncoder(stdout).Encode(payload)
+	return renderJSONOrHuman(stdout, jsonOutput, payload, func(w io.Writer) error {
+		return renderImportCommandResult(w, preview, result, applied)
+	})
 }

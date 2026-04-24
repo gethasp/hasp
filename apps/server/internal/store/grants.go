@@ -10,6 +10,11 @@ const (
 	GrantWindow  GrantScope = "window"
 )
 
+const (
+	DefaultPlaintextGrantTTL = 60 * time.Second
+	MaxPlaintextGrantTTL     = 2 * time.Minute
+)
+
 type Operation string
 
 const (
@@ -18,6 +23,13 @@ const (
 	OperationInject   Operation = "inject"
 	OperationWriteEnv Operation = "write-env"
 	OperationCapture  Operation = "capture"
+)
+
+type PlaintextAction string
+
+const (
+	PlaintextReveal PlaintextAction = "reveal"
+	PlaintextCopy   PlaintextAction = "copy"
 )
 
 type ProjectLease struct {
@@ -53,6 +65,18 @@ type ConvenienceGrant struct {
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
 	UsedAt              *time.Time `json:"used_at,omitempty"`
+}
+
+type PlaintextGrant struct {
+	ID           string          `json:"id"`
+	SessionToken string          `json:"session_token"`
+	ItemName     string          `json:"item_name"`
+	Action       PlaintextAction `json:"action"`
+	GrantedBy    string          `json:"granted_by"`
+	Scope        GrantScope      `json:"scope"`
+	ExpiresAt    *time.Time      `json:"expires_at,omitempty"`
+	RevokedAt    *time.Time      `json:"revoked_at,omitempty"`
+	UsedAt       *time.Time      `json:"used_at,omitempty"`
 }
 
 type AccessRequest struct {

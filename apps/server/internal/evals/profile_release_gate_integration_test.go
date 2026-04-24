@@ -37,7 +37,7 @@ func TestProfileReleaseGateEval(t *testing.T) {
 			t.Fatalf("bind items for %s: %v", profile.ID, err)
 		}
 
-		stdout, _, err := runHasp(t, env, "", "bootstrap", "--profile", profile.ID, "--project-root", env.projectRoot, "--hooks=false", "--verify=true")
+		stdout, _, err := runHasp(t, env, "", "bootstrap", "--json", "--profile", profile.ID, "--project-root", env.projectRoot, "--hooks=false", "--verify=true")
 		if err != nil {
 			t.Fatalf("bootstrap verify %s failed: %v", profile.ID, err)
 		}

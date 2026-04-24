@@ -79,20 +79,38 @@ for path in "${release_files[@]}"; do
     exit 1
   fi
 done
+for supply_chain_file in sbom.spdx.json slsa-provenance.json CODE_SIGNING_STATUS.json REPRODUCIBLE_BUILD.json; do
+  if [[ ! -s "$artifact_dir/$supply_chain_file" ]]; then
+    echo "release supply-chain artifact missing or empty: $supply_chain_file" >&2
+    exit 1
+  fi
+done
 release_verify_detached_signature "$artifact_dir/bin/hasp" "$binary_sig_path" "$public_key_file"
 
 while read -r expected_sum relative_path; do
-  [[ -n "$expected_sum" ]] || continue
-  case "$relative_path" in
-    "$artifact_name".tar.gz)
-      target="$tarball"
-      ;;
-    *)
-      target="$extract_dir/$relative_path"
-      ;;
-  esac
-  if [[ ! -f "$target" ]]; then
-    echo "release checksum target missing: $relative_path" >&2
+	[[ -n "$expected_sum" ]] || continue
+	case "$relative_path" in
+	"$artifact_name".tar.gz)
+		target="$tarball"
+		;;
+	"$artifact_name"/*)
+		target="$extract_dir/$relative_path"
+		;;
+	*.tar.gz)
+		target="$dist_dir/$relative_path"
+		if [[ ! -f "$target" ]]; then
+			continue
+		fi
+		;;
+	hasp_*/bin/hasp)
+		continue
+		;;
+	*)
+		target="$dist_dir/$relative_path"
+		;;
+	esac
+	if [[ ! -f "$target" ]]; then
+		echo "release checksum target missing: $relative_path" >&2
     exit 1
   fi
   actual_sum="$(release_sha256 "$target")"

@@ -19,7 +19,7 @@ func TestBootstrapDoctorEval(t *testing.T) {
 		t.Fatalf("write import file: %v", err)
 	}
 
-	stdout, _, err := runHasp(t, env, "", "bootstrap", "doctor", "--profile", "claude-code", "--project-root", env.projectRoot, "--import", importPath)
+	stdout, _, err := runHasp(t, env, "", "bootstrap", "doctor", "--json", "--profile", "claude-code", "--project-root", env.projectRoot, "--import", importPath)
 	if err != nil {
 		t.Fatalf("bootstrap doctor failed: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestBootstrapImportBindEval(t *testing.T) {
 		t.Fatalf("write import file: %v", err)
 	}
 
-	stdout, _, err := runHasp(t, env, "", "bootstrap", "--profile", "claude-code", "--project-root", env.projectRoot, "--hooks=false", "--import", importPath, "--bind-imports")
+	stdout, _, err := runHasp(t, env, "", "bootstrap", "--json", "--profile", "claude-code", "--project-root", env.projectRoot, "--hooks=false", "--import", importPath, "--bind-imports")
 	if err != nil {
 		t.Fatalf("bootstrap import/bind failed: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestBootstrapImportBindEval(t *testing.T) {
 
 func TestBootstrapGenericPathEval(t *testing.T) {
 	env := newEvalEnv(t)
-	stdout, _, err := runHasp(t, env, "", "bootstrap", "generic", "--project-root", env.projectRoot, "--hooks=false")
+	stdout, _, err := runHasp(t, env, "", "bootstrap", "generic", "--json", "--project-root", env.projectRoot, "--hooks=false")
 	if err != nil {
 		t.Fatalf("generic bootstrap failed: %v", err)
 	}
@@ -117,6 +117,7 @@ func TestImportPreviewFromStdinEval(t *testing.T) {
 		"export API_TOKEN=abc123\n",
 		env.binary,
 		"import",
+		"--json",
 		"--preview",
 		"--format",
 		"env",

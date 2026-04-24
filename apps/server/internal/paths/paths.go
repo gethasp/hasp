@@ -13,6 +13,8 @@ const (
 )
 
 var userConfigDir = os.UserConfigDir
+var userHomeDir = os.UserHomeDir
+var pathStat = os.Stat
 
 type Paths struct {
 	HomeDir     string
@@ -31,6 +33,15 @@ func Resolve() (Paths, error) {
 			return Paths{}, fmt.Errorf("load cli config: %w", err)
 		}
 		home = strings.TrimSpace(cfg.HomeDir)
+	}
+	if home == "" {
+		legacyHome, err := existingLegacyHome()
+		if err != nil {
+			return Paths{}, fmt.Errorf("resolve legacy home: %w", err)
+		}
+		if legacyHome != "" {
+			home = legacyHome
+		}
 	}
 	if home == "" {
 		base, err := userConfigDir()
@@ -54,4 +65,19 @@ func Resolve() (Paths, error) {
 		StatePath:   filepath.Join(home, "vault.json.enc"),
 		AuditPath:   filepath.Join(home, "audit.jsonl"),
 	}, nil
+}
+
+func existingLegacyHome() (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", err
+	}
+	legacyHome := filepath.Join(home, ".hasp")
+	if _, err := pathStat(filepath.Join(legacyHome, "vault.json.enc")); err == nil {
+		return legacyHome, nil
+	} else if os.IsNotExist(err) {
+		return "", nil
+	} else {
+		return "", err
+	}
 }

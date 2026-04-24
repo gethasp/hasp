@@ -45,6 +45,14 @@ func TestResolveReferencesAndResolveReferenceItem(t *testing.T) {
 	if item.Name != "api_token" {
 		t.Fatalf("resolved item name = %q", item.Name)
 	}
+
+	named, err := handle.ResolveReference(context.Background(), projectRoot, "@db_url")
+	if err != nil {
+		t.Fatalf("resolve named reference: %v", err)
+	}
+	if named.Alias != "secret_02" || named.NamedReference != "@db_url" || named.ItemName != "db_url" {
+		t.Fatalf("unexpected named reference resolution %+v", named)
+	}
 }
 
 func TestResolveReferencesFailsForUnknownReference(t *testing.T) {
@@ -144,8 +152,31 @@ func TestResolveReferenceCoversBlankAmbiguousAndMissingTarget(t *testing.T) {
 	if _, err := handle.ResolveReference(context.Background(), projectRoot, ""); !errors.Is(err, ErrReferenceNotFound) {
 		t.Fatalf("expected blank reference not found, got %v", err)
 	}
-	if _, err := handle.ResolveReference(context.Background(), projectRoot, "api_token"); !errors.Is(err, ErrReferenceAmbiguous) {
-		t.Fatalf("expected ambiguous reference error, got %v", err)
+	resolved, err := handle.ResolveReference(context.Background(), projectRoot, "api_token")
+	if err != nil {
+		t.Fatalf("expected alias-style reference to resolve, got %v", err)
+	}
+	if resolved.ItemName != "db_url" || resolved.Alias != "api_token" {
+		t.Fatalf("expected alias reference to resolve to db_url, got %+v", resolved)
+	}
+	named, err := handle.ResolveReference(context.Background(), projectRoot, "@db_url")
+	if err != nil {
+		t.Fatalf("expected named reference to resolve, got %v", err)
+	}
+	if named.Alias != "api_token" || named.NamedReference != "@db_url" {
+		t.Fatalf("expected named reference to reuse alias api_token, got %+v", named)
+	}
+	if _, err := handle.ResolveReference(context.Background(), projectRoot, "@missing_item"); !errors.Is(err, ErrReferenceNotFound) {
+		t.Fatalf("expected missing named reference to fail, got %v", err)
+	}
+	namedMissingRoot := t.TempDir()
+	if _, err := handle.UpsertBinding(context.Background(), namedMissingRoot, map[string]string{
+		"secret_01": "ghost_item",
+	}, PolicySession, false); err != nil {
+		t.Fatalf("upsert named-missing binding: %v", err)
+	}
+	if _, err := handle.ResolveReference(context.Background(), namedMissingRoot, "@ghost_item"); !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("expected missing item via named reference, got %v", err)
 	}
 	missingRoot := t.TempDir()
 	if _, err := handle.UpsertBinding(context.Background(), missingRoot, map[string]string{

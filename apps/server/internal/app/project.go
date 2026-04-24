@@ -43,8 +43,8 @@ func (a *aliasFlags) Set(value string) error {
 }
 
 func projectCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: hasp project <adopt|bind|status|unbind>")
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return printHelpTopic(stdout, []string{"project"})
 	}
 	switch args[0] {
 	case "adopt":
@@ -70,17 +70,18 @@ type projectAdoptCandidate struct {
 }
 
 type projectAdoptResult struct {
-	Under        string                 `json:"under"`
-	Preview      bool                   `json:"preview"`
-	Defaults     projectDefaults        `json:"defaults"`
+	Under        string                  `json:"under"`
+	Preview      bool                    `json:"preview"`
+	Defaults     projectDefaults         `json:"defaults"`
 	Candidates   []projectAdoptCandidate `json:"candidates"`
-	ScannedRoots int                    `json:"scanned_roots"`
-	AdoptedCount int                    `json:"adopted_count"`
+	ScannedRoots int                     `json:"scanned_roots"`
+	AdoptedCount int                     `json:"adopted_count"`
 }
 
 func projectAdoptCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("project adopt", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	under := fs.String("under", ".", "")
 	preview := fs.Bool("preview", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -138,12 +139,15 @@ func projectAdoptCommand(ctx context.Context, args []string, stdout io.Writer) e
 		result.Candidates = append(result.Candidates, candidate)
 	}
 
-	return json.NewEncoder(stdout).Encode(result)
+	return renderJSONOrHuman(stdout, *jsonOutput, result, func(w io.Writer) error {
+		return renderProjectAdoptResult(w, result)
+	})
 }
 
 func projectBindCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("project bind", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	defaultPolicy := fs.String("default-policy", string(store.PolicySession), "")
 	installHooks := fs.Bool("hooks", true, "")
@@ -161,7 +165,9 @@ func projectBindCommand(ctx context.Context, args []string, stdout io.Writer) er
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(binding)
+	return renderJSONOrHuman(stdout, *jsonOutput, binding, func(w io.Writer) error {
+		return renderProjectBinding(w, "Project bound", "Bound the repository to HASP.", binding)
+	})
 }
 
 func discoverProjectRoots(ctx context.Context, under string) ([]string, error) {
@@ -202,6 +208,7 @@ func discoverProjectRoots(ctx context.Context, under string) ([]string, error) {
 func projectStatusCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("project status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -215,15 +222,19 @@ func projectStatusCommand(ctx context.Context, args []string, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{
+	payload := map[string]any{
 		"binding": binding,
 		"visible": visible,
+	}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderProjectStatus(w, binding, visible)
 	})
 }
 
 func projectUnbindCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("project unbind", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -236,8 +247,17 @@ func projectUnbindCommand(ctx context.Context, args []string, stdout io.Writer) 
 	if err := handle.DeleteBinding(ctx, *projectRoot); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, "unbound")
-	return err
+	root, rootErr := projectCanonicalRootFn(ctx, *projectRoot)
+	if rootErr != nil {
+		root = *projectRoot
+	}
+	payload := map[string]any{"project_root": root, "outcome": "unbound"}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(w, "Project unbound", "Removed the HASP binding for the repository.",
+			cliPair("Project root", cliDisplayPath(root)),
+			cliPair("Outcome", "unbound"),
+		)
+	})
 }
 
 func bindProject(ctx context.Context, handle *store.Handle, projectRoot string, aliases map[string]string, defaultPolicy store.SecretPolicy, installHooks bool) (store.Binding, error) {

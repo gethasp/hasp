@@ -63,9 +63,38 @@ func (c *Client) RevokeSession(ctx context.Context, token string) error {
 	return nil
 }
 
+func (c *Client) RevokeAllSessions(ctx context.Context) (RevokeAllSessionsResponse, error) {
+	var reply RevokeAllSessionsResponse
+	err := c.call(ctx, "HASP.RevokeAllSessions", RevokeAllSessionsRequest{}, &reply)
+	return reply, err
+}
+
+func (c *Client) LockVault(ctx context.Context) (LockVaultResponse, error) {
+	var reply LockVaultResponse
+	err := c.call(ctx, "HASP.LockVault", LockVaultRequest{}, &reply)
+	return reply, err
+}
+
 func (c *Client) ResolveSession(ctx context.Context, token string) (ResolveSessionResponse, error) {
 	var reply ResolveSessionResponse
 	err := c.call(ctx, "HASP.ResolveSession", ResolveSessionRequest{SessionToken: token}, &reply)
+	return reply, err
+}
+
+func (c *Client) RegisterProcess(ctx context.Context, token string, pid int) error {
+	var reply RegisterProcessResponse
+	if err := c.call(ctx, "HASP.RegisterProcess", RegisterProcessRequest{SessionToken: token, PID: pid}, &reply); err != nil {
+		return err
+	}
+	if !reply.Registered {
+		return fmt.Errorf("process registration failed")
+	}
+	return nil
+}
+
+func (c *Client) ResolveProcess(ctx context.Context, pid int) (ResolveProcessResponse, error) {
+	var reply ResolveProcessResponse
+	err := c.call(ctx, "HASP.ResolveProcess", ResolveProcessRequest{PID: pid}, &reply)
 	return reply, err
 }
 

@@ -75,6 +75,9 @@ func ensureProjectBinding(ctx context.Context, handle *store.Handle, projectRoot
 	if err != nil {
 		return store.Binding{}, nil, false, err
 	}
+	if !pathLooksLikeGitRepo(root) {
+		return binding, visible, false, nil
+	}
 	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepo(root)
 	if _, err := bindProject(ctx, handle, root, cloneAliasSet(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
 		return store.Binding{}, nil, false, err

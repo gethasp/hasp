@@ -63,7 +63,7 @@ unset HASP_RELEASE_GPG_KEY_ID
 	}
 
 	bootstrapOut, _ := runCmd(t, projectRoot, cmdEnv, filepath.Join(artifactRoot, "bin", "hasp"), "bootstrap", "--profile", "claude-code", "--project-root", projectRoot, "--hooks=false")
-	if !strings.Contains(bootstrapOut, "\"claude-code\"") {
+	if !strings.Contains(bootstrapOut, "Bootstrap complete") || !strings.Contains(bootstrapOut, "Claude Code") {
 		t.Fatalf("artifact bootstrap missing profile output: %s", bootstrapOut)
 	}
 	runCmd(t, projectRoot, cmdEnv, filepath.Join(artifactRoot, "bin", "hasp"), "set", "--name", "api_token", "--value", "abc123")

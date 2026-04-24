@@ -17,6 +17,20 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("HASP_TEST_HELPER_DAEMON") == "1" && len(os.Args) >= 3 && os.Args[1] == "daemon" && os.Args[2] == "serve" {
+		manager, err := runtime.NewManager()
+		if err != nil {
+			os.Exit(2)
+		}
+		if err := manager.RunDaemon(context.Background()); err != nil {
+			os.Exit(3)
+		}
+		return
+	}
+	os.Exit(m.Run())
+}
+
 type fakeStarter struct {
 	ensureCalls int
 	client      *runtime.Client
@@ -67,6 +81,66 @@ func TestRunUnknownCommandAndHelpAlias(t *testing.T) {
 	}
 }
 
+func TestHelpTopics(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{"--help"}, bytes.NewBuffer(nil), &stdout, &stdout); err != nil {
+		t.Fatalf("run root help: %v", err)
+	}
+	rootHelp := stdout.String()
+	if !strings.Contains(rootHelp, "Core concepts") || !strings.Contains(rootHelp, "hasp help app connect") {
+		t.Fatalf("unexpected root help output: %q", rootHelp)
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"help", "app", "connect"}, bytes.NewBuffer(nil), &stdout, &stdout); err != nil {
+		t.Fatalf("run app connect help: %v", err)
+	}
+	appConnectHelp := stdout.String()
+	if !strings.Contains(appConnectHelp, "Launcher creation is never silent") || !strings.Contains(appConnectHelp, "--install=true") {
+		t.Fatalf("unexpected app connect help output: %q", appConnectHelp)
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"secret", "--help"}, bytes.NewBuffer(nil), &stdout, &stdout); err != nil {
+		t.Fatalf("run secret help: %v", err)
+	}
+	secretHelp := stdout.String()
+	if !strings.Contains(secretHelp, "Work with the one local vault") || !strings.Contains(secretHelp, "hasp help secret add") {
+		t.Fatalf("unexpected secret help output: %q", secretHelp)
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"app", "connect", "--help"}, bytes.NewBuffer(nil), &stdout, &stdout); err != nil {
+		t.Fatalf("run app connect subcommand help: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Save an app profile") {
+		t.Fatalf("unexpected app connect subcommand help output: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := printHelpTopic(&stdout, []string{"secret", "retrieve"}); err != nil {
+		t.Fatalf("print secret retrieve help: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Retrieve a secret value") {
+		t.Fatalf("unexpected retrieve help output: %q", stdout.String())
+	}
+
+	if err := printHelpTopic(io.Discard, []string{"unknown-topic"}); err == nil {
+		t.Fatal("expected unknown help topic error")
+	}
+	normalized := normalizeHelpArgs([]string{"HELP", "app", "--help", "connect"})
+	if strings.Join(normalized, " ") != "app connect" {
+		t.Fatalf("unexpected normalized help args: %+v", normalized)
+	}
+	normalized = normalizeHelpArgs([]string{"", "  ", "-h", "app", "", "connect"})
+	if strings.Join(normalized, " ") != "app connect" {
+		t.Fatalf("unexpected normalized help args with blanks: %+v", normalized)
+	}
+	if !isHelpArg("HELP") || isHelpArg("app") {
+		t.Fatal("unexpected help arg detection")
+	}
+}
+
 func TestRunPropagatesStarterConstructionFailure(t *testing.T) {
 	lockAppSeams(t)
 	orig := newRuntimeStarterFn
@@ -81,6 +155,9 @@ func TestInitAndImportCommands(t *testing.T) {
 	homeDir := t.TempDir()
 	envPath := filepath.Join(t.TempDir(), ".env")
 	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
 	if err := os.WriteFile(envPath, []byte("API_TOKEN=abc123\n"), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
 	}
@@ -95,7 +172,7 @@ func TestInitAndImportCommands(t *testing.T) {
 	}
 
 	var importOut bytes.Buffer
-	if err := Run(context.Background(), []string{"import", envPath}, bytes.NewBuffer(nil), &importOut, &importOut); err != nil {
+	if err := Run(context.Background(), []string{"import", "--json", envPath}, bytes.NewBuffer(nil), &importOut, &importOut); err != nil {
 		t.Fatalf("run import: %v", err)
 	}
 
@@ -159,7 +236,7 @@ func TestProjectBindStatusAndUnbindCommands(t *testing.T) {
 	}
 
 	var statusOut bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "status", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
+	if err := Run(context.Background(), []string{"project", "status", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
 		t.Fatalf("run project status: %v", err)
 	}
 	var statusPayload map[string]any
@@ -173,7 +250,7 @@ func TestProjectBindStatusAndUnbindCommands(t *testing.T) {
 	}
 
 	statusOut.Reset()
-	if err := Run(context.Background(), []string{"project", "status", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
+	if err := Run(context.Background(), []string{"project", "status", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
 		t.Fatalf("run project status after unbind: %v", err)
 	}
 	statusPayload = map[string]any{}
@@ -186,9 +263,15 @@ func TestProjectBindStatusAndUnbindCommands(t *testing.T) {
 }
 
 func TestExportAndRestoreBackupCommands(t *testing.T) {
+	lockAppSeams(t)
 	homeDir := t.TempDir()
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+
+	keyring := &memorySetupKeyring{}
+	origNewStore := newVaultStoreFn
+	defer func() { newVaultStoreFn = origNewStore }()
+	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
 
 	var initOut bytes.Buffer
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), &initOut, &initOut); err != nil {
@@ -215,7 +298,7 @@ func TestExportAndRestoreBackupCommands(t *testing.T) {
 		t.Fatalf("run restore-backup: %v", err)
 	}
 
-	restoreStore, err := store.New(store.NewDefaultKeyring())
+	restoreStore, err := store.New(keyring)
 	if err != nil {
 		t.Fatalf("new restored store: %v", err)
 	}
@@ -296,6 +379,9 @@ func TestRunWriteEnvCheckRepoAndTUICommands(t *testing.T) {
 func TestCaptureRequiresExplicitWriteGrant(t *testing.T) {
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 	starter := newDaemonTestStarter(t)
@@ -356,10 +442,36 @@ func TestInjectCommandWrapper(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := injectCommand(context.Background(), []string{"--project-root", projectRoot, "--file", "CERT_PATH=file_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "cat \"$CERT_PATH\""}, &stdout, &stdout, starter); err != nil {
+	if err := injectCommand(context.Background(), []string{"--project-root", projectRoot, "--file", "CERT_PATH=@cert_file", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "cat \"$CERT_PATH\""}, &stdout, &stdout, starter); err != nil {
 		t.Fatalf("inject command: %v", err)
 	}
 	if strings.Contains(stdout.String(), "certificate-data") {
+		t.Fatalf("expected redacted output, got %s", stdout.String())
+	}
+}
+
+func TestRunCommandAcceptsNamedReference(t *testing.T) {
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	starter := newDaemonTestStarter(t)
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run set api_token: %v", err)
+	}
+	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot, "--alias", "secret_01=api_token"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("project bind: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := runCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=@api_token", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, &stdout, &stdout, starter); err != nil {
+		t.Fatalf("run command with named reference: %v", err)
+	}
+	if strings.Contains(stdout.String(), "abc123") {
 		t.Fatalf("expected redacted output, got %s", stdout.String())
 	}
 }
@@ -414,7 +526,7 @@ func TestRunUsesRealRuntimeStarterForPingStatusAndSessions(t *testing.T) {
 	}
 
 	var openOut bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"session", "open", "--host-label", "app-test", "--project-root", projectRoot}, bytes.NewBuffer(nil), &openOut, &openOut, starter); err != nil {
+	if err := runWithStarter(context.Background(), []string{"session", "open", "--json", "--host-label", "app-test", "--project-root", projectRoot}, bytes.NewBuffer(nil), &openOut, &openOut, starter); err != nil {
 		t.Fatalf("session open: %v", err)
 	}
 	var payload map[string]any
@@ -468,9 +580,6 @@ func TestRunUsesRealRuntimeStarterForPingStatusAndSessions(t *testing.T) {
 		t.Fatalf("unexpected daemon status output: %s", daemonOut.String())
 	}
 
-	if err := daemonCommand(context.Background(), []string{"start"}, io.Discard, starter); err != nil {
-		t.Fatalf("daemon start: %v", err)
-	}
 	if err := daemonCommand(context.Background(), []string{"unknown"}, io.Discard, starter); err == nil {
 		t.Fatal("expected daemon unknown subcommand error")
 	}

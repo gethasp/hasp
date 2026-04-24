@@ -29,6 +29,7 @@ var (
 	listenUnix          = net.Listen
 	writeFile           = os.WriteFile
 	chmodFile           = os.Chmod
+	newRuntimeAuditLog  = audit.New
 )
 
 func NewManager() (*Manager, error) {
@@ -149,31 +150,39 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 }
 
 type rpcServer struct {
-	startedAt time.Time
-	paths     paths.Paths
-	server    *rpc.Server
-	sessions  *SessionStore
-	audit     *audit.Log
-	stopOnce  sync.Once
+	startedAt  time.Time
+	paths      paths.Paths
+	server     *rpc.Server
+	sessions   *SessionStore
+	audit      *audit.Log
+	auditState *AuditState
+	stopOnce   sync.Once
 }
 
 func newRPCServer(runtimePaths paths.Paths) *rpcServer {
-	log, _ := audit.New()
+	startedAt := time.Now().UTC()
+	log, logErr := newRuntimeAuditLog()
+	auditState := newAuditState(nil)
+	if logErr != nil {
+		auditState.MarkDegradedAt(startedAt)
+	}
 	return &rpcServer{
-		startedAt: time.Now().UTC(),
-		paths:     runtimePaths,
-		server:    rpc.NewServer(),
-		sessions:  NewSessionStore(),
-		audit:     log,
+		startedAt:  startedAt,
+		paths:      runtimePaths,
+		server:     rpc.NewServer(),
+		sessions:   NewSessionStore(),
+		audit:      log,
+		auditState: auditState,
 	}
 }
 
 func (s *rpcServer) register() error {
 	return registerServerName(s.server, "HASP", &brokerRPC{
-		paths:     s.paths,
-		startedAt: s.startedAt,
-		sessions:  s.sessions,
-		audit:     s.audit,
+		paths:      s.paths,
+		startedAt:  s.startedAt,
+		sessions:   s.sessions,
+		audit:      s.audit,
+		auditState: s.auditState,
 	})
 }
 
@@ -199,10 +208,11 @@ func (s *rpcServer) stop() {
 }
 
 type brokerRPC struct {
-	paths     paths.Paths
-	startedAt time.Time
-	sessions  *SessionStore
-	audit     *audit.Log
+	paths      paths.Paths
+	startedAt  time.Time
+	sessions   *SessionStore
+	audit      *audit.Log
+	auditState *AuditState
 }
 
 func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
@@ -215,12 +225,15 @@ func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
 }
 
 func (b *brokerRPC) Status(_ StatusRequest, reply *StatusResponse) error {
+	auditDegraded, degradedAt := b.auditState.Snapshot()
 	*reply = StatusResponse{
-		SocketPath:     b.paths.SocketPath,
-		PID:            os.Getpid(),
-		StartedAt:      b.startedAt,
-		ActiveSessions: b.sessions.ActiveCount(),
-		Sessions:       b.sessions.ViewSnapshot(),
+		SocketPath:      b.paths.SocketPath,
+		PID:             os.Getpid(),
+		StartedAt:       b.startedAt,
+		ActiveSessions:  b.sessions.ActiveCount(),
+		Sessions:        b.sessions.ViewSnapshot(),
+		AuditDegraded:   auditDegraded,
+		AuditDegradedAt: degradedAt,
 	}
 	return nil
 }
@@ -233,7 +246,7 @@ func (b *brokerRPC) OpenSession(req OpenSessionRequest, reply *OpenSessionRespon
 	if ttl <= 0 || ttl > DefaultSessionTTL {
 		ttl = DefaultSessionTTL
 	}
-	session, err := b.sessions.Open(req.HostLabel, req.ProjectRoot, ttl)
+	session, err := b.sessions.Open(req.HostLabel, req.ProjectRoot, ttl, req.AgentSafe, req.ConsumerName)
 	if err != nil {
 		return err
 	}
@@ -243,12 +256,18 @@ func (b *brokerRPC) OpenSession(req OpenSessionRequest, reply *OpenSessionRespon
 		LocalUser:    session.LocalUser,
 		HostLabel:    session.HostLabel,
 		ProjectRoot:  session.ProjectRoot,
+		AgentSafe:    session.AgentSafe,
+		ConsumerName: session.ConsumerName,
 		LastSeenAt:   session.LastSeenAt,
 		ExpiresAt:    session.ExpiresAt,
 	}
-	if b.audit != nil {
-		_, _ = b.audit.Append(audit.EventApprove, "daemon", map[string]any{"action": "session.open", "host_label": session.HostLabel, "project_root": session.ProjectRoot})
-	}
+	b.appendAudit(audit.EventApprove, "daemon", map[string]any{
+		"action":        "session.open",
+		"host_label":    session.HostLabel,
+		"project_root":  session.ProjectRoot,
+		"agent_safe":    session.AgentSafe,
+		"consumer_name": session.ConsumerName,
+	})
 	return nil
 }
 
@@ -272,9 +291,63 @@ func (b *brokerRPC) RevokeSession(req RevokeSessionRequest, reply *RevokeSession
 	revoked := b.sessions.Revoke(req.SessionToken)
 	*reply = RevokeSessionResponse{Revoked: revoked}
 	if revoked {
-		if b.audit != nil {
-			_, _ = b.audit.Append(audit.EventDeny, "daemon", map[string]any{"action": "session.revoke", "session_id": session.ID})
-		}
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{"action": "session.revoke", "session_id": session.ID})
+	}
+	return nil
+}
+
+func (b *brokerRPC) RevokeAllSessions(_ RevokeAllSessionsRequest, reply *RevokeAllSessionsResponse) error {
+	revoked := b.sessions.RevokeAll()
+	*reply = RevokeAllSessionsResponse{RevokedCount: len(revoked)}
+	b.appendAudit(audit.EventDeny, "daemon", map[string]any{"action": "session.revoke_all", "revoked_count": len(revoked)})
+	return nil
+}
+
+func (b *brokerRPC) LockVault(_ LockVaultRequest, reply *LockVaultResponse) error {
+	revoked := b.sessions.RevokeAll()
+	*reply = LockVaultResponse{RevokedCount: len(revoked), Locked: true}
+	b.appendAudit(audit.EventDeny, "daemon", map[string]any{"action": "vault.lock", "revoked_count": len(revoked)})
+	return nil
+}
+
+func (b *brokerRPC) RegisterProcess(req RegisterProcessRequest, reply *RegisterProcessResponse) error {
+	if req.SessionToken == "" {
+		return errors.New("session_token is required")
+	}
+	if req.PID <= 0 {
+		return errors.New("pid is required")
+	}
+	registered := b.sessions.RegisterProcess(req.SessionToken, req.PID)
+	*reply = RegisterProcessResponse{Registered: registered}
+	if !registered {
+		return errors.New("session not found")
+	}
+	b.appendAudit(audit.EventApprove, "daemon", map[string]any{"action": "session.process.register", "pid": req.PID})
+	return nil
+}
+
+func (b *brokerRPC) appendAudit(eventType string, actor string, details map[string]any) {
+	if b.audit == nil {
+		b.auditState.RecordAppendResult(errors.New("audit logger unavailable"))
+		return
+	}
+	_, err := b.audit.Append(eventType, actor, details)
+	b.auditState.RecordAppendResult(err)
+}
+
+func (b *brokerRPC) ResolveProcess(req ResolveProcessRequest, reply *ResolveProcessResponse) error {
+	if req.PID <= 0 {
+		return errors.New("pid is required")
+	}
+	session, token, ok := b.sessions.ResolveProcess(req.PID)
+	if !ok {
+		*reply = ResolveProcessResponse{Found: false}
+		return nil
+	}
+	*reply = ResolveProcessResponse{
+		Found:        true,
+		SessionToken: token,
+		Session:      session.View(),
 	}
 	return nil
 }

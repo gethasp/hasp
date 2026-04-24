@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,6 +127,9 @@ func TestEnsureProjectBindingMCP(t *testing.T) {
 	}
 
 	projectRoot := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("mkdir project root: %v", err)
+	}
 	loadCLIConfigMCPFn = func() (paths.CLIConfig, error) {
 		return paths.CLIConfig{DefaultCapturePolicy: string(store.PolicyAccess)}, nil
 	}
@@ -133,18 +137,36 @@ func TestEnsureProjectBindingMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auto adopt binding: %v", err)
 	}
-	if binding.ID == "" || len(visible) != 0 {
-		t.Fatalf("unexpected binding view: %+v visible=%+v", binding, visible)
+	if binding.ID != "" || len(visible) != 0 {
+		t.Fatalf("expected non-git path to stay unmanaged, got %+v visible=%+v", binding, visible)
 	}
-	if binding.DefaultCapturePolicy != store.PolicyAccess || binding.HookInstalled {
-		t.Fatalf("unexpected adopted binding properties: %+v", binding)
+	if binding.DefaultCapturePolicy != "" || binding.HookInstalled {
+		t.Fatalf("unexpected unmanaged binding properties: %+v", binding)
 	}
 	again, visibleAgain, err := ensureProjectBindingMCP(context.Background(), handle, projectRoot)
 	if err != nil {
 		t.Fatalf("re-resolve adopted binding: %v", err)
 	}
-	if again.ID != binding.ID || len(visibleAgain) != 0 {
-		t.Fatalf("expected stable binding on second resolve, got %+v visible=%+v", again, visibleAgain)
+	if again.ID != "" || len(visibleAgain) != 0 {
+		t.Fatalf("expected stable unmanaged binding on second resolve, got %+v visible=%+v", again, visibleAgain)
+	}
+
+	gitRoot := filepath.Join(t.TempDir(), "git-project")
+	if err := os.MkdirAll(gitRoot, 0o755); err != nil {
+		t.Fatalf("mkdir git root: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", gitRoot, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	binding, visible, err = ensureProjectBindingMCP(context.Background(), handle, gitRoot)
+	if err != nil {
+		t.Fatalf("auto adopt git binding: %v", err)
+	}
+	if binding.ID == "" || len(visible) != 0 {
+		t.Fatalf("unexpected git binding view: %+v visible=%+v", binding, visible)
+	}
+	if binding.DefaultCapturePolicy != store.PolicyAccess || !binding.HookInstalled {
+		t.Fatalf("unexpected adopted git binding properties: %+v", binding)
 	}
 
 	disabled := false
@@ -197,7 +219,14 @@ func TestEnsureProjectBindingMCP(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(blockedHome, 0o700) })
 	loadCLIConfigMCPFn = func() (paths.CLIConfig, error) { return paths.CLIConfig{}, nil }
-	if _, _, err := ensureProjectBindingMCP(context.Background(), blockedHandle, filepath.Join(t.TempDir(), "persist-fail")); err == nil {
+	persistRoot := filepath.Join(t.TempDir(), "persist-fail")
+	if err := os.MkdirAll(persistRoot, 0o755); err != nil {
+		t.Fatalf("mkdir persist root: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", persistRoot, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init persist root: %v: %s", err, out)
+	}
+	if _, _, err := ensureProjectBindingMCP(context.Background(), blockedHandle, persistRoot); err == nil {
 		t.Fatal("expected upsert binding persist failure")
 	}
 }

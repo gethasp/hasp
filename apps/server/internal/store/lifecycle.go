@@ -79,6 +79,7 @@ func (s *Store) Init(_ context.Context, masterPassword string) error {
 		ProjectLeases:     map[string]ProjectLease{},
 		SecretGrants:      map[string]SecretGrant{},
 		ConvenienceGrants: map[string]ConvenienceGrant{},
+		PlaintextGrants:   map[string]PlaintextGrant{},
 	}
 	if err := s.writeEnvelope(vaultKey, state, envelopeHeader{
 		Version:      formatVersion,
@@ -119,19 +120,19 @@ func (s *Store) OpenWithConvenienceUnlock(_ context.Context) (*Handle, error) {
 		return nil, err
 	}
 	if envelope.Header.ConvenienceWrap == nil {
-		return nil, ErrKeyringUnavailable
+		return nil, fmt.Errorf("%w: no saved convenience key is configured for this vault", ErrKeyringUnavailable)
 	}
 	deviceKey, err := s.keyring.Get(keyringService, s.keyringAccount())
 	if err != nil {
-		return nil, ErrKeyringUnavailable
+		return nil, fmt.Errorf("%w: keychain read failed: %v", ErrKeyringUnavailable, err)
 	}
 	decodedKey, err := decodeConvenienceKey(deviceKey)
 	if err != nil {
-		return nil, ErrKeyringUnavailable
+		return nil, fmt.Errorf("%w: stored convenience key is invalid", ErrKeyringUnavailable)
 	}
 	vaultKey, err := openBytesFn(decodedKey, *envelope.Header.ConvenienceWrap)
 	if err != nil {
-		return nil, ErrKeyringUnavailable
+		return nil, fmt.Errorf("%w: stored convenience key no longer matches this vault", ErrKeyringUnavailable)
 	}
 	state, err := readStateFn(vaultKey, envelope.Data)
 	if err != nil {
@@ -154,7 +155,7 @@ func (h *Handle) EnableConvenienceUnlock(ctx context.Context) error {
 		return err
 	}
 	if err := h.store.keyring.Set(ctx, keyringService, h.store.keyringAccount(), encodeConvenienceKey(deviceKey)); err != nil {
-		return ErrKeyringUnavailable
+		return fmt.Errorf("%w: keychain write failed: %v", ErrKeyringUnavailable, err)
 	}
 	envelope.Header.ConvenienceWrap = &wrap
 	envelope.Header.UpdatedAt = h.store.now()

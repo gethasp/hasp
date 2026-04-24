@@ -72,6 +72,47 @@ type Item struct {
 	DeletedAt *time.Time   `json:"deleted_at,omitempty"`
 }
 
+type ConsumerKind string
+
+const (
+	ConsumerKindApp   ConsumerKind = "app"
+	ConsumerKindAgent ConsumerKind = "agent"
+)
+
+type AppDeliveryMode string
+
+const (
+	AppDeliveryEnv        AppDeliveryMode = "env"
+	AppDeliveryTempFile   AppDeliveryMode = "temp_file"
+	AppDeliveryTempDotenv AppDeliveryMode = "temp_dotenv"
+)
+
+type AppBinding struct {
+	SecretName string          `json:"secret_name"`
+	Delivery   AppDeliveryMode `json:"delivery"`
+	Target     string          `json:"target"`
+}
+
+type AppConsumer struct {
+	Name         string       `json:"name"`
+	ProjectRoot  string       `json:"project_root"`
+	Command      []string     `json:"command"`
+	Bindings     []AppBinding `json:"bindings"`
+	DotenvEnv    string       `json:"dotenv_env,omitempty"`
+	LauncherPath string       `json:"launcher_path,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+}
+
+type AgentConsumer struct {
+	Name        string    `json:"name"`
+	AgentID     string    `json:"agent_id"`
+	ProjectRoot string    `json:"project_root,omitempty"`
+	ConfigPath  string    `json:"config_path"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Store struct {
 	paths   paths.Paths
 	keyring Keyring
@@ -91,6 +132,9 @@ type persistedState struct {
 	ProjectLeases     map[string]ProjectLease     `json:"project_leases"`
 	SecretGrants      map[string]SecretGrant      `json:"secret_grants"`
 	ConvenienceGrants map[string]ConvenienceGrant `json:"convenience_grants"`
+	PlaintextGrants   map[string]PlaintextGrant   `json:"plaintext_grants"`
+	AppConsumers      map[string]AppConsumer      `json:"app_consumers"`
+	AgentConsumers    map[string]AgentConsumer    `json:"agent_consumers"`
 }
 
 type fileEnvelope struct {

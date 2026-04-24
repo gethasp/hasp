@@ -86,7 +86,7 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 		t.Fatalf("write secret file: %v", err)
 	}
 	var overrideOut bytes.Buffer
-	if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot, "--allow-managed-secrets"}, &overrideOut); err != nil {
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot, "--allow-managed-secrets"}, &overrideOut); err != nil {
 		t.Fatalf("check repo override: %v", err)
 	}
 	if !strings.Contains(overrideOut.String(), "\"override\":true") {
@@ -101,7 +101,7 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 		t.Fatalf("write clean file: %v", err)
 	}
 	var cleanOut bytes.Buffer
-	if err := checkRepoCommand(context.Background(), []string{"--project-root", cleanRoot}, &cleanOut); err != nil {
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", cleanRoot}, &cleanOut); err != nil {
 		t.Fatalf("check repo clean: %v", err)
 	}
 	if !strings.Contains(cleanOut.String(), "\"matches\":null") {
@@ -129,8 +129,12 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 	if err := runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--", "/definitely-missing-binary"}, bytes.NewBuffer(nil), io.Discard, io.Discard, testStarter); err == nil {
 		t.Fatal("expected runner execution error")
 	}
-	if err := runWithStarter(context.Background(), []string{"daemon"}, bytes.NewBuffer(nil), io.Discard, io.Discard, testStarter); err == nil {
-		t.Fatal("expected daemon dispatch usage error")
+	var daemonHelp bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"daemon"}, bytes.NewBuffer(nil), &daemonHelp, io.Discard, testStarter); err != nil {
+		t.Fatalf("expected daemon help, got %v", err)
+	}
+	if !strings.Contains(daemonHelp.String(), "Manage the local runtime daemon") {
+		t.Fatalf("expected daemon help output, got %q", daemonHelp.String())
 	}
 	if err := runWithStarter(context.Background(), []string{"inject"}, bytes.NewBuffer(nil), io.Discard, io.Discard, testStarter); err == nil {
 		t.Fatal("expected inject dispatch usage error")

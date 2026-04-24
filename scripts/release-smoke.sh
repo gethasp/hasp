@@ -6,6 +6,51 @@ cd "$repo_root"
 # shellcheck source=./hasp-release-common.sh
 source "$repo_root/scripts/hasp-release-common.sh"
 
+stop_scoped_daemon() {
+  local bin_path="$1"
+  local hasp_home="$2"
+  local socket_path="${3:-}"
+  [[ -n "$hasp_home" ]] || return 0
+
+  local pid_file="$hasp_home/runtime/daemon.pid"
+  local effective_socket="$socket_path"
+  local pid=""
+  local verified_pid=""
+  if [[ -z "$effective_socket" ]]; then
+    effective_socket="$hasp_home/runtime/daemon.sock"
+  fi
+  if [[ -f "$pid_file" ]]; then
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+    if pid_matches_scoped_daemon "$pid" "$effective_socket"; then
+      verified_pid="$pid"
+    fi
+  fi
+
+  if [[ -n "$verified_pid" && -x "$bin_path" ]]; then
+    env HASP_HOME="$hasp_home" HASP_SOCKET="$effective_socket" "$bin_path" daemon stop >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$verified_pid" ]]; then
+    kill "$verified_pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -9 "$verified_pid" >/dev/null 2>&1 || true
+  fi
+
+  /bin/rm -f "$pid_file" "$effective_socket"
+}
+
+pid_matches_scoped_daemon() {
+  local pid="$1"
+  local socket_path="$2"
+  [[ -n "$pid" && -n "$socket_path" ]] || return 1
+
+  local command=""
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *" daemon serve"* ]] || return 1
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -a -p "$pid" -U -Fn 2>/dev/null | grep -F "n$socket_path" >/dev/null 2>&1
+}
+
 version="$(< VERSION)"
 smoke_gpg_home="$(mktemp -d)"
 chmod 700 "$smoke_gpg_home"
@@ -27,8 +72,15 @@ protected_release_dir="$(mktemp -d)"
 protected_public_dir="$(mktemp -d)"
 protected_extract="$(mktemp -d)"
 protected_passphrase_file="$(mktemp)"
+installed_bin=""
 chmod 700 "$protected_gpg_home"
-trap '/bin/rm -rf "$smoke_gpg_home" "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo" "$protected_gpg_home" "$protected_release_dir" "$protected_public_dir" "$protected_extract"; /bin/rm -f "$protected_passphrase_file"' EXIT
+cleanup_release_smoke() {
+  stop_scoped_daemon "${installed_bin:-}" "$temp_home"
+  stop_scoped_daemon "${installed_bin:-}" "$restore_home"
+  /bin/rm -rf "$smoke_gpg_home" "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo" "$protected_gpg_home" "$protected_release_dir" "$protected_public_dir" "$protected_extract"
+  /bin/rm -f "$protected_passphrase_file"
+}
+trap cleanup_release_smoke EXIT
 
 bash ./scripts/hasp-verify-release.sh "$tarball" >/dev/null
 bash ./scripts/hasp-install-release.sh --verify "$tarball" "$install_root" >/dev/null
@@ -45,6 +97,10 @@ test -f "$release_dir/$(basename "$tarball").asc"
 test -f "$release_dir/$(basename "${tarball%.tar.gz}")_bin.asc"
 test -f "$release_dir/Formula/hasp.rb"
 test -f "$install_root/RELEASE_MANIFEST"
+test -f "$install_root/sbom.spdx.json"
+test -f "$install_root/slsa-provenance.json"
+test -f "$install_root/CODE_SIGNING_STATUS.json"
+test -f "$install_root/REPRODUCIBLE_BUILD.json"
 test -f "$install_root/INSTALL_RECEIPT"
 test -x "$install_root/scripts/hasp-install-release.sh"
 test -x "$install_root/scripts/hasp-upgrade-release.sh"

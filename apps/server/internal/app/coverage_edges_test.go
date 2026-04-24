@@ -84,8 +84,12 @@ func TestUsageAndMissingPasswordBranches(t *testing.T) {
 	t.Setenv("HASP_HOME", t.TempDir())
 	t.Setenv("HASP_MASTER_PASSWORD", "")
 
-	if err := projectCommand(context.Background(), nil, io.Discard); err == nil {
-		t.Fatal("expected project command usage error")
+	var projectHelp bytes.Buffer
+	if err := projectCommand(context.Background(), nil, &projectHelp); err != nil {
+		t.Fatalf("expected project command help, got %v", err)
+	}
+	if !strings.Contains(projectHelp.String(), "Manage repo boundaries") {
+		t.Fatalf("expected project help output, got %q", projectHelp.String())
 	}
 	if err := importCommand(context.Background(), nil, io.Discard); err == nil {
 		t.Fatal("expected import usage error")

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,7 +63,7 @@ func bootstrapDoctorCommand(ctx context.Context, args []string, stdin io.Reader,
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(report)
+	return renderBootstrapDoctorJSONOrHuman(stdout, opts.JSONOutput, report)
 }
 
 func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts bootstrapOptions, stdin io.Reader) (bootstrapDoctorResult, error) {
@@ -227,10 +226,13 @@ func genericCompatibilitySurface() map[string]any {
 		"first_class":         false,
 		"transport":           "mcp-stdio",
 		"command":             []string{"hasp", "mcp"},
+		"setup_command":       "hasp bootstrap generic --project-root <repo>",
+		"first_proof_command": setupBrokeredProofCommand("<repo>", "@SECRET_NAME"),
 		"doctor_command":      "hasp bootstrap doctor generic --project-root <repo>",
 		"notes": []string{
 			"generic compatibility is intentionally separate from first-class support",
 			"use the generic path when the agent can speak stdio MCP or call the broker CLI directly",
+			"treat the generic path as a first brokered proof path, not as first-class support",
 		},
 	}
 }

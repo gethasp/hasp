@@ -71,6 +71,64 @@ func TestGrantAuthorizationFlow(t *testing.T) {
 	}
 }
 
+func TestRevokeGrantsForItemAndAllGrants(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	item, err := handle.UpsertItem("api_token", ItemKindKV, []byte("secret-value"), ItemMetadata{Policy: PolicySession})
+	if err != nil {
+		t.Fatalf("upsert item: %v", err)
+	}
+	other, err := handle.UpsertItem("other_token", ItemKindKV, []byte("other-value"), ItemMetadata{Policy: PolicySession})
+	if err != nil {
+		t.Fatalf("upsert other item: %v", err)
+	}
+	binding, err := handle.UpsertBinding(context.Background(), t.TempDir(), map[string]string{"secret_01": item.Name}, PolicySession, false)
+	if err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+	if _, err := handle.GrantSecretUse(binding.ID, "session-token", item.Name, GrantSession, 0, false); err != nil {
+		t.Fatalf("grant secret: %v", err)
+	}
+	if _, err := handle.GrantPlaintextUse("session-token", item.Name, PlaintextReveal, "user", GrantOnce, time.Minute); err != nil {
+		t.Fatalf("grant plaintext: %v", err)
+	}
+	revoked, err := handle.RevokeGrantsForItem(item.Name)
+	if err != nil || revoked != 2 {
+		t.Fatalf("revoke item grants = %d err=%v", revoked, err)
+	}
+	if handle.Authorize(AccessRequest{Operation: OperationRun, BindingID: binding.ID, SessionToken: "session-token", ItemName: item.Name, Policy: PolicySession}).Allowed {
+		t.Fatal("expected revoked item grant to deny")
+	}
+	if count, err := handle.RevokeGrantsForItem(item.Name); err != nil || count != 0 {
+		t.Fatalf("second revoke item grants = %d err=%v", count, err)
+	}
+	if _, err := handle.GrantProjectLease(binding.ID, "session-two", GrantSession, 0); err != nil {
+		t.Fatalf("grant project lease: %v", err)
+	}
+	if _, err := handle.GrantSecretUse(binding.ID, "session-two", other.Name, GrantSession, 0, false); err != nil {
+		t.Fatalf("grant other secret: %v", err)
+	}
+	if _, err := handle.GrantConvenience(binding.ID, "session-two", "/tmp/.env", []string{other.Name}, "user", GrantWindow, time.Minute); err != nil {
+		t.Fatalf("grant convenience: %v", err)
+	}
+	if _, err := handle.GrantPlaintextUse("session-two", other.Name, PlaintextCopy, "user", GrantOnce, time.Minute); err != nil {
+		t.Fatalf("grant other plaintext: %v", err)
+	}
+	revoked, err = handle.RevokeAllGrants()
+	if err != nil || revoked != 4 {
+		t.Fatalf("revoke all grants = %d err=%v", revoked, err)
+	}
+	if count, err := handle.RevokeAllGrants(); err != nil || count != 0 {
+		t.Fatalf("second revoke all grants = %d err=%v", count, err)
+	}
+}
+
 func TestConvenienceGrantMatchingAndRevocation(t *testing.T) {
 	store := newTestStore(t)
 	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {

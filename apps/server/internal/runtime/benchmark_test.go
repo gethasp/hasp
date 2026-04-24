@@ -9,7 +9,7 @@ func BenchmarkSessionStoreOpenResolve(b *testing.B) {
 	store := NewSessionStore()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		session, err := store.Open("bench", "/tmp/project", time.Minute)
+		session, err := store.Open("bench", "/tmp/project", time.Minute, false, "")
 		if err != nil {
 			b.Fatalf("open session: %v", err)
 		}

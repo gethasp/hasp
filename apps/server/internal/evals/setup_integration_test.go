@@ -16,6 +16,9 @@ func TestSetupCommandEval(t *testing.T) {
 
 	userHome := t.TempDir()
 	haspHome := filepath.Join(t.TempDir(), "hasp-home")
+	t.Cleanup(func() {
+		stopEvalDaemon(t, env.withScopedHome(haspHome, userHome))
+	})
 	importPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(importPath, []byte("OPENAI_API_KEY=abc123\n"), 0o600); err != nil {
 		t.Fatalf("write import path: %v", err)
@@ -138,6 +141,9 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 
 	userHome := t.TempDir()
 	haspHome := filepath.Join(t.TempDir(), "hasp-home")
+	t.Cleanup(func() {
+		stopEvalDaemon(t, env.withScopedHome(haspHome, userHome))
+	})
 	cmdEnv := env.commandEnv(map[string]string{
 		"HOME":                  userHome,
 		"HASP_HOME":             haspHome,
@@ -206,10 +212,10 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 	}
 
 	noPasswordEnv := env.commandEnv(map[string]string{
-		"HOME":            userHome,
-		"HASP_HOME":       haspHome,
+		"HOME":                 userHome,
+		"HASP_HOME":            haspHome,
 		"HASP_MASTER_PASSWORD": "",
-		"XDG_CONFIG_HOME": filepath.Join(userHome, ".config"),
+		"XDG_CONFIG_HOME":      filepath.Join(userHome, ".config"),
 	})
 	if goruntime.GOOS == "darwin" {
 		for _, entry := range cmdEnv {
@@ -240,6 +246,9 @@ func TestSetupExistingVaultPasswordRetryEval(t *testing.T) {
 
 	userHome := t.TempDir()
 	haspHome := filepath.Join(t.TempDir(), "hasp-home")
+	t.Cleanup(func() {
+		stopEvalDaemon(t, env.withScopedHome(haspHome, userHome))
+	})
 	baseEnv := env.commandEnv(map[string]string{
 		"HOME":                  userHome,
 		"HASP_HOME":             haspHome,

@@ -428,7 +428,7 @@ func TestDirectResidualAppBranches(t *testing.T) {
 	}
 
 	var checkOut bytes.Buffer
-	if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot, "--allow-managed-secrets"}, &checkOut); err != nil {
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot, "--allow-managed-secrets"}, &checkOut); err != nil {
 		t.Fatalf("check-repo allow managed secrets: %v", err)
 	}
 	if !strings.Contains(checkOut.String(), "\"override\":true") {

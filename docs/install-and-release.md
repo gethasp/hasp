@@ -4,7 +4,9 @@ This page covers the public install path and the release trust path together.
 
 ## Hosted release layout
 
-Published release files should live under:
+GitHub Releases are the canonical hosted asset location.
+
+The optional R2 mirror, when configured for the same byte set, uses:
 
 ```text
 https://downloads.gethasp.com/hasp/releases/<tag>/

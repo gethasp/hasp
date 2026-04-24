@@ -2,7 +2,6 @@ package app
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,200 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"slices"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/gethasp/hasp/apps/server/internal/mcp"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
-)
-
-type setupOptionalBool struct {
-	set   bool
-	value bool
-}
-
-func (b *setupOptionalBool) String() string {
-	if b == nil || !b.set {
-		return ""
-	}
-	if b.value {
-		return "true"
-	}
-	return "false"
-}
-
-func (b *setupOptionalBool) Set(value string) error {
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "true", "1", "yes", "y":
-		b.set = true
-		b.value = true
-	case "false", "0", "no", "n":
-		b.set = true
-		b.value = false
-	default:
-		return fmt.Errorf("expected true or false, got %q", value)
-	}
-	return nil
-}
-
-type setupAgentFlags []string
-
-func (s *setupAgentFlags) String() string {
-	if s == nil {
-		return ""
-	}
-	return strings.Join(*s, ",")
-}
-
-func (s *setupAgentFlags) Set(value string) error {
-	for _, raw := range strings.Split(value, ",") {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		*s = append(*s, id)
-	}
-	return nil
-}
-
-type setupOptions struct {
-	NonInteractive          bool
-	JSONOutput              bool
-	HaspHome                string
-	Repo                    string
-	Agents                  setupAgentFlags
-	AutoProtectRepos        setupOptionalBool
-	PasswordEnv             string
-	PasswordStdin           bool
-	ImportPath              string
-	ImportFormat            string
-	BindImports             bool
-	BindItems               stringListFlags
-	Aliases                 aliasFlags
-	DefaultPolicy           store.SecretPolicy
-	InstallHooks            setupOptionalBool
-	EnableConvenienceUnlock setupOptionalBool
-	OverwriteExistingConfig setupOptionalBool
-}
-
-type setupAgentSpec struct {
-	ID         string
-	Label      string
-	Format     string
-	ConfigPath func(home string) string
-}
-
-type setupAgentOutcome struct {
-	ID         string `json:"id"`
-	Label      string `json:"label"`
-	ConfigPath string `json:"config_path"`
-	BackupPath string `json:"backup_path,omitempty"`
-	Changed    bool   `json:"changed"`
-}
-
-type setupPlanPreview struct {
-	HaspHome                string
-	ProjectRoot             string
-	Agents                  []setupAgentSpec
-	AutoProtectRepos        bool
-	ImportPath              string
-	BindImports             bool
-	InstallHooks            bool
-	EnableConvenienceUnlock bool
-	ConfigExists            bool
-}
-
-type setupSummary struct {
-	HaspHome          string                   `json:"hasp_home"`
-	ConfigPath        string                   `json:"config_path"`
-	InitState         string                   `json:"init_state"`
-	ProjectRoot       string                   `json:"project_root"`
-	AutoProtectRepos  bool                     `json:"auto_protect_repos"`
-	AutoInstallHooks  bool                     `json:"auto_install_hooks"`
-	DefaultPolicy     store.SecretPolicy       `json:"default_policy"`
-	Binding           *store.Binding           `json:"binding,omitempty"`
-	Visible           []store.VisibleReference `json:"visible,omitempty"`
-	ImportPreview     *importPreview           `json:"import_preview,omitempty"`
-	Imported          []store.ImportedItem     `json:"imported,omitempty"`
-	Agents            []setupAgentOutcome      `json:"agents,omitempty"`
-	ConvenienceUnlock string                   `json:"convenience_unlock"`
-	Verification      map[string]any           `json:"verification"`
-	Notes             []string                 `json:"notes,omitempty"`
-	NextSteps         []string                 `json:"next_steps,omitempty"`
-}
-
-type setupPrompter struct {
-	reader *bufio.Reader
-	out    io.Writer
-	file   *os.File
-}
-
-var (
-	setupUserHomeDirFn = os.UserHomeDir
-	setupLookPathFn    = exec.LookPath
-	setupReadFileFn    = os.ReadFile
-	setupWriteFileFn   = os.WriteFile
-	setupMkdirAllFn    = os.MkdirAll
-	setupRenameFn      = os.Rename
-	setupCreateTempFn  = os.CreateTemp
-	setupAbsFn         = filepath.Abs
-	setupTempDirFn     = os.TempDir
-	setupTempWriteFn   = func(file *os.File, data []byte) (int, error) { return file.Write(data) }
-	setupTempChmodFn   = func(file *os.File, mode os.FileMode) error { return file.Chmod(mode) }
-	setupTempCloseFn   = func(file *os.File) error { return file.Close() }
-	setupNowFn         = func() time.Time { return time.Now().UTC() }
-	setupSttyFn        = func(file *os.File, args ...string) error {
-		cmd := exec.Command("stty", args...)
-		cmd.Stdin = file
-		cmd.Stdout = io.Discard
-		cmd.Stderr = io.Discard
-		return cmd.Run()
-	}
-	setupCanHideInputFn = func(file *os.File) bool {
-		if file == nil {
-			return false
-		}
-		info, err := file.Stat()
-		if err != nil {
-			return false
-		}
-		return info.Mode()&os.ModeCharDevice != 0
-	}
-	setupSaveConfigFn         = paths.SaveConfig
-	setupConfigPathFn         = paths.ConfigPath
-	setupLoadConfigFn         = paths.LoadConfig
-	setupExecutableFn         = os.Executable
-	setupCanonicalProjectRoot = store.CanonicalProjectRoot
-	setupResolvePasswordFn    = setupResolvePassword
-	setupSetEnvFn             = setupSetEnv
-	setupImportAndBindFn      = setupImportAndBind
-	setupFinalizeBindingFn    = setupFinalizeBinding
-	setupImportPathFn         = func(ctx context.Context, handle *store.Handle, path string, opts store.ImportOptions) (store.ImportResult, error) {
-		return handle.ImportPath(ctx, path, opts)
-	}
-	setupWriteIntroFn          = setupWriteIntro
-	setupWriteSelectedAgentsFn = setupWriteSelectedAgents
-	setupWriteConfirmationFn   = setupWriteConfirmation
-	setupResolveBindingViewFn  = func(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
-		return handle.ResolveBindingView(ctx, projectRoot)
-	}
-	setupEnableConvenienceUnlockFn = func(ctx context.Context, handle *store.Handle) error { return handle.EnableConvenienceUnlock(ctx) }
-	setupVerifyConvenienceUnlockFn = func(ctx context.Context, vaultStore *store.Store) error {
-		_, err := vaultStore.OpenWithConvenienceUnlock(ctx)
-		return err
-	}
-	setupWriteAgentConfigsFn      = setupWriteAgentConfigs
-	setupVerifyHarnessFn          = setupVerifyHarness
-	setupMCPServeFn               = mcp.Serve
-	setupMCPToolNamesFn           = mcp.ToolNames
-	setupConvenienceUnlockTimeout = time.Second
-	setupGOOS                     = runtime.GOOS
 )
 
 func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -311,9 +121,6 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err != nil {
 		return setupSummary{}, err
 	}
-	if len(selectedAgents) == 0 {
-		return setupSummary{}, errors.New("setup requires at least one supported agent")
-	}
 	if !opts.NonInteractive {
 		if err := setupWriteSelectedAgentsFn(prompt.out, selectedAgents); err != nil {
 			return setupSummary{}, err
@@ -410,22 +217,33 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			return setupSummary{}, err
 		}
 	}
+	addedSecrets := []secretMutationView{}
+	apps := []setupAppOutcome{}
+	if !opts.NonInteractive {
+		addedSecrets, apps, err = setupOptionalFirstRunActions(ctx, prompt, handle, projectRoot)
+		if err != nil {
+			return setupSummary{}, err
+		}
+	}
 
 	convenienceState := "disabled"
+	convenienceDetail := ""
 	if opts.EnableConvenienceUnlock.value {
 		if err := setupRunConvenienceUnlockStep(ctx, func(stepCtx context.Context) error {
 			return setupEnableConvenienceUnlockFn(stepCtx, handle)
 		}); err != nil {
 			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
+				convenienceDetail = setupConvenienceUnlockDetail(err)
 			} else {
 				return setupSummary{}, err
 			}
 		} else if err := setupRunConvenienceUnlockStep(ctx, func(stepCtx context.Context) error {
-			return setupVerifyConvenienceUnlockFn(stepCtx, vaultStore)
+			return setupVerifyConvenienceUnlockWithRetry(stepCtx, vaultStore)
 		}); err != nil {
 			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
+				convenienceDetail = setupConvenienceUnlockDetail(err)
 			} else {
 				return setupSummary{}, err
 			}
@@ -443,6 +261,15 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err != nil {
 		return setupSummary{}, err
 	}
+	brokeredProof, err := setupVerifyBrokeredProofFn(ctx, projectRoot, visible)
+	if err != nil {
+		brokeredProof = map[string]any{
+			"performed": false,
+			"ready":     false,
+			"reason":    err.Error(),
+		}
+	}
+	verification["brokered_proof"] = brokeredProof
 
 	summary := setupSummary{
 		HaspHome:          resolvedHome,
@@ -455,11 +282,14 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		Visible:           visible,
 		ImportPreview:     preview,
 		Imported:          imported,
+		AddedSecrets:      addedSecrets,
+		Apps:              apps,
 		Agents:            agentOutcomes,
 		ConvenienceUnlock: convenienceState,
+		ConvenienceDetail: convenienceDetail,
 		Verification:      verification,
-		Notes:             setupNotes(selectedAgents, configExists, opts, convenienceState),
-		NextSteps:         setupNextSteps(projectRoot, binding, resolvedHome, convenienceState, opts.AutoProtectRepos.value, opts.InstallHooks.value),
+		Notes:             setupNotes(selectedAgents, configExists, opts, convenienceState, convenienceDetail),
+		NextSteps:         setupNextSteps(projectRoot, binding, resolvedHome, convenienceState, convenienceDetail, opts.AutoProtectRepos.value, opts.InstallHooks.value),
 	}
 	if projectRoot != "" {
 		summary.Binding = &binding
@@ -480,6 +310,43 @@ func setupConvenienceUnlockUnavailable(err error) bool {
 	return errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, context.DeadlineExceeded)
 }
 
+func setupVerifyConvenienceUnlockWithRetry(ctx context.Context, vaultStore *store.Store) error {
+	attempts := setupConvenienceVerifyRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; ; attempt++ {
+		err := setupVerifyConvenienceUnlockFn(ctx, vaultStore)
+		if err == nil {
+			return nil
+		}
+		if !setupConvenienceUnlockUnavailable(err) || attempt >= attempts-1 {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		setupSleepFn(setupConvenienceRetryDelay)
+	}
+}
+
+func setupConvenienceUnlockDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if text == "" {
+		return ""
+	}
+	if text == store.ErrKeyringUnavailable.Error() || errors.Is(err, context.DeadlineExceeded) {
+		return "macOS keychain access did not complete during setup"
+	}
+	if strings.HasPrefix(text, store.ErrKeyringUnavailable.Error()+":") {
+		return strings.TrimSpace(strings.TrimPrefix(text, store.ErrKeyringUnavailable.Error()+":"))
+	}
+	return text
+}
+
 func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool) (*store.Handle, string, string, error) {
 	for {
 		handle, initState, err := setupEnsureHandle(ctx, vaultStore, password, vaultExists)
@@ -492,12 +359,9 @@ func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultS
 		if _, writeErr := fmt.Fprintln(prompt.out, "invalid master password"); writeErr != nil {
 			return nil, "", password, writeErr
 		}
-		password, err = promptPassword(prompt, "Enter your HASP master password")
+		password, err = setupPromptExistingVaultPassword(prompt)
 		if err != nil {
 			return nil, "", password, err
-		}
-		if strings.TrimSpace(password) == "" {
-			return nil, "", password, errors.New("master password is required")
 		}
 	}
 }
@@ -517,239 +381,6 @@ func newSetupPrompter(stdin io.Reader, out io.Writer) *setupPrompter {
 		prompt.file = file
 	}
 	return prompt
-}
-
-func setupResolveHome(opts setupOptions, prompt *setupPrompter) (string, string, error) {
-	configPath, err := setupConfigPathFn()
-	if err != nil {
-		return "", "", err
-	}
-	if opts.HaspHome != "" {
-		path, err := expandHome(opts.HaspHome)
-		if err != nil {
-			return "", "", err
-		}
-		abs, err := setupAbsFn(path)
-		if err != nil {
-			return "", "", err
-		}
-		return filepath.Clean(abs), configPath, nil
-	}
-	cfg, err := setupLoadConfigFn()
-	if err != nil {
-		return "", "", err
-	}
-	defaultHome := strings.TrimSpace(cfg.HomeDir)
-	if defaultHome != "" {
-		if !setupSavedHomeLooksUsable(defaultHome) {
-			defaultHome = ""
-		}
-	}
-	if defaultHome == "" {
-		defaultHome = defaultSetupHome()
-	}
-	if opts.NonInteractive {
-		return defaultHome, configPath, nil
-	}
-	if err := setupWriteStage(prompt.out, "Machine setup",
-		"Stores the encrypted vault, audit log, and runtime files outside your repo.",
-		"Recommended default: ~/.hasp",
-	); err != nil {
-		return "", "", err
-	}
-	value, err := promptStringWithDisplayDefault(prompt, "Local HASP data directory", defaultHome, setupDisplayPath(defaultHome))
-	if err != nil {
-		return "", "", err
-	}
-	expanded, err := expandHome(value)
-	if err != nil {
-		return "", "", err
-	}
-	abs, err := setupAbsFn(expanded)
-	if err != nil {
-		return "", "", err
-	}
-	return filepath.Clean(abs), configPath, nil
-}
-
-func defaultSetupHome() string {
-	home, err := setupUserHomeDirFn()
-	if err == nil && strings.TrimSpace(home) != "" {
-		return filepath.Join(home, ".hasp")
-	}
-	if home := strings.TrimSpace(os.Getenv(paths.EnvHome)); home != "" {
-		return home
-	}
-	return ".hasp"
-}
-
-func setupResolveProjectRoot(ctx context.Context, opts setupOptions, prompt *setupPrompter) (string, error) {
-	if opts.Repo != "" {
-		return setupCanonicalProjectRoot(ctx, opts.Repo)
-	}
-	defaultRoot, err := setupCanonicalProjectRoot(ctx, ".")
-	if err != nil {
-		return "", err
-	}
-	if opts.NonInteractive {
-		return "", errors.New("non-interactive setup requires --repo")
-	}
-	if err := setupWriteStage(prompt.out, "Repo setup",
-		"HASP will protect this repo with brokered bindings and optional local guardrails.",
-	); err != nil {
-		return "", err
-	}
-	value, err := promptString(prompt, "Repository root to protect", defaultRoot)
-	if err != nil {
-		return "", err
-	}
-	return setupCanonicalProjectRoot(ctx, value)
-}
-
-func setupResolveAgents(opts setupOptions, prompt *setupPrompter) ([]setupAgentSpec, error) {
-	supported := setupSupportedAgents()
-	if len(opts.Agents) > 0 {
-		return selectSetupAgents(supported, []string(opts.Agents))
-	}
-	detected := detectSetupAgents(supported)
-	defaultIDs := setupDefaultAgentIDs(detected)
-	if opts.NonInteractive {
-		return nil, errors.New("non-interactive setup requires at least one --agent")
-	}
-	if err := setupWriteAgentMenu(prompt.out, supported, defaultIDs); err != nil {
-		return nil, err
-	}
-	defaultSelection := setupDefaultAgentSelection(supported, defaultIDs)
-	value, err := promptString(prompt, "Select agents to configure (numbers separated by commas)", defaultSelection)
-	if err != nil {
-		return nil, err
-	}
-	selected, err := parseSetupAgentMenuSelection(supported, value)
-	if err != nil {
-		return nil, err
-	}
-	return selectSetupAgents(supported, selected)
-}
-
-func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents []setupAgentSpec) error {
-	if !opts.AutoProtectRepos.set {
-		if opts.NonInteractive {
-			opts.AutoProtectRepos = setupOptionalBool{set: true, value: true}
-		} else {
-			if err := setupWriteStage(prompt.out, "Repo coverage",
-				"HASP can automatically protect projects the first time you use it in them.",
-				"Repo scope still stays local and project-specific under the hood.",
-			); err != nil {
-				return err
-			}
-			value, err := promptBool(prompt, "Automatically protect projects on first use", true)
-			if err != nil {
-				return err
-			}
-			opts.AutoProtectRepos = setupOptionalBool{set: true, value: value}
-		}
-	}
-	if !opts.InstallHooks.set {
-		if opts.NonInteractive {
-			opts.InstallHooks = setupOptionalBool{set: true, value: true}
-		} else {
-			label := "Install repo guardrails automatically for new repos"
-			if !opts.AutoProtectRepos.value {
-				label = "Install repo guardrails automatically if you later enable auto-protect"
-			}
-			value, err := promptBool(prompt, label, true)
-			if err != nil {
-				return err
-			}
-			opts.InstallHooks = setupOptionalBool{set: true, value: value}
-		}
-	}
-	if !opts.EnableConvenienceUnlock.set {
-		if opts.NonInteractive {
-			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: defaultSetupConvenienceUnlock()}
-		} else {
-			value, err := promptBool(prompt, "Use convenience unlock on this machine when available", defaultSetupConvenienceUnlock())
-			if err != nil {
-				return err
-			}
-			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value}
-		}
-	}
-	if opts.ImportPath == "" && !opts.NonInteractive {
-		if err := setupWriteStage(prompt.out, "Optional import",
-			"You can import a local .env or JSON secret file now, or skip this and use `hasp import` later.",
-		); err != nil {
-			return err
-		}
-		shouldImport, err := promptBool(prompt, "Import a local secret file now", false)
-		if err != nil {
-			return err
-		}
-		if !shouldImport {
-			goto maybeOverwrite
-		}
-		value, err := promptString(prompt, "Path to .env or JSON secret file", "")
-		if err != nil {
-			return err
-		}
-		opts.ImportPath = strings.TrimSpace(value)
-	}
-	if opts.ImportPath != "" && !opts.BindImports && !opts.NonInteractive && strings.TrimSpace(opts.Repo) != "" {
-		value, err := promptBool(prompt, "Bind imported secrets to this repository now", true)
-		if err != nil {
-			return err
-		}
-		opts.BindImports = value
-	}
-maybeOverwrite:
-	if setupAnyExistingAgentConfig(agents) && !opts.OverwriteExistingConfig.set {
-		if opts.NonInteractive {
-			return errors.New("non-interactive setup requires --overwrite-existing-config=true|false when agent config files already exist")
-		}
-		value, err := promptBool(prompt, "Allow HASP to update existing agent config files and create backups", true)
-		if err != nil {
-			return err
-		}
-		opts.OverwriteExistingConfig = setupOptionalBool{set: true, value: value}
-	}
-	return nil
-}
-
-func validateSetupNonInteractive(opts setupOptions) error {
-	if !opts.NonInteractive {
-		return nil
-	}
-	if opts.HaspHome == "" {
-		return errors.New("non-interactive setup requires --hasp-home")
-	}
-	if len(opts.Agents) == 0 {
-		return errors.New("non-interactive setup requires at least one --agent")
-	}
-	if opts.PasswordEnv == "" && !opts.PasswordStdin {
-		return errors.New("non-interactive setup requires --master-password-env or --master-password-stdin")
-	}
-	return nil
-}
-
-func setupValidateHomePath(home string, projectRoot string) error {
-	info, err := os.Lstat(home)
-	if err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("HASP home cannot be a symlink: %s", home)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("HASP home must be a directory path: %s", home)
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("HASP home must not be group or world accessible: %s", home)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if withinPath(home, projectRoot) {
-		return errors.New("HASP home cannot live inside the project directory")
-	}
-	return nil
 }
 
 func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string) (string, bool, error) {
@@ -776,12 +407,9 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 	}
 
 	if vaultExists {
-		password, err := promptPassword(prompt, "Enter your HASP master password")
+		password, err := setupPromptExistingVaultPassword(prompt)
 		if err != nil {
 			return "", vaultExists, err
-		}
-		if strings.TrimSpace(password) == "" {
-			return "", vaultExists, errors.New("master password is required")
 		}
 		return password, vaultExists, nil
 	}
@@ -808,6 +436,24 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 	}
 }
 
+func setupPromptExistingVaultPassword(prompt *setupPrompter) (string, error) {
+	for {
+		password, err := promptPassword(prompt, "Enter your HASP master password")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(password) != "" {
+			return password, nil
+		}
+		if prompt.file == nil || !setupCanHideInputFn(prompt.file) {
+			return "", errors.New("master password is required")
+		}
+		if _, err := fmt.Fprintln(prompt.out, "Master password is required. Try again."); err != nil {
+			return "", err
+		}
+	}
+}
+
 func setupVaultExists(home string) bool {
 	_, err := os.Stat(filepath.Join(home, "vault.json.enc"))
 	return err == nil
@@ -829,976 +475,4 @@ func setupEnsureHandle(ctx context.Context, vaultStore *store.Store, password st
 		return nil, "", err
 	}
 	return handle, "created", nil
-}
-
-func setupImportInput(prompt *setupPrompter, opts setupOptions) io.Reader {
-	if opts.ImportPath == "-" {
-		return prompt.reader
-	}
-	return nil
-}
-
-func setupImportAndBind(ctx context.Context, handle *store.Handle, projectRoot string, opts setupOptions, prompt *setupPrompter) ([]store.ImportedItem, error) {
-	imported := []store.ImportedItem{}
-	if opts.ImportPath != "" {
-		prepared, err := prepareImport(opts.ImportPath, opts.ImportFormat, "", setupImportInput(prompt, opts), opts.BindImports, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer prepared.Cleanup()
-		result, err := setupImportPathFn(ctx, handle, prepared.Path, store.ImportOptions{
-			ProjectRoot:   projectRoot,
-			BindToProject: opts.BindImports,
-		})
-		if err != nil {
-			return nil, err
-		}
-		imported = append(imported, result.Imported...)
-	}
-	for alias, item := range opts.Aliases {
-		if _, err := handle.GetItem(item); err != nil {
-			return nil, err
-		}
-		opts.Aliases[alias] = item
-	}
-	for _, itemName := range opts.BindItems {
-		alias, err := handle.BindItemAlias(ctx, projectRoot, itemName)
-		if err != nil {
-			return nil, err
-		}
-		imported = append(imported, store.ImportedItem{Name: itemName, Alias: alias})
-	}
-	return imported, nil
-}
-
-func setupFinalizeBinding(ctx context.Context, handle *store.Handle, projectRoot string, opts setupOptions) (store.Binding, []store.VisibleReference, error) {
-	aliases := cloneAliasSet(opts.Aliases)
-	current, visible, err := setupResolveBindingViewFn(ctx, handle, projectRoot)
-	if err == nil {
-		for alias, item := range current.Aliases {
-			aliases[alias] = item
-		}
-		_ = visible
-	}
-	if _, err := bindProject(ctx, handle, projectRoot, aliases, opts.DefaultPolicy, opts.InstallHooks.value); err != nil {
-		return store.Binding{}, nil, err
-	}
-	binding, visible, err := setupResolveBindingViewFn(ctx, handle, projectRoot)
-	return binding, visible, err
-}
-
-func setupSupportedAgents() []setupAgentSpec {
-	home, _ := setupUserHomeDirFn()
-	return []setupAgentSpec{
-		{
-			ID:     "codex-cli",
-			Label:  "Codex CLI",
-			Format: "toml",
-			ConfigPath: func(_ string) string {
-				return filepath.Join(home, ".codex", "config.toml")
-			},
-		},
-		{
-			ID:     "claude-code",
-			Label:  "Claude Code",
-			Format: "json",
-			ConfigPath: func(_ string) string {
-				return filepath.Join(home, ".claude.json")
-			},
-		},
-		{
-			ID:     "cursor",
-			Label:  "Cursor",
-			Format: "json",
-			ConfigPath: func(_ string) string {
-				return filepath.Join(home, ".cursor", "mcp.json")
-			},
-		},
-	}
-}
-
-func detectSetupAgents(supported []setupAgentSpec) []setupAgentSpec {
-	detected := []setupAgentSpec{}
-	for _, spec := range supported {
-		if _, err := setupLookPathFn(setupAgentBinary(spec.ID)); err == nil {
-			detected = append(detected, spec)
-			continue
-		}
-		if _, err := os.Stat(spec.ConfigPath("")); err == nil {
-			detected = append(detected, spec)
-		}
-	}
-	return detected
-}
-
-func selectSetupAgents(supported []setupAgentSpec, ids []string) ([]setupAgentSpec, error) {
-	selected := []setupAgentSpec{}
-	seen := map[string]struct{}{}
-	for _, raw := range ids {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		idx := slices.IndexFunc(supported, func(spec setupAgentSpec) bool { return spec.ID == id })
-		if idx < 0 {
-			return nil, fmt.Errorf("unsupported setup agent %q", id)
-		}
-		selected = append(selected, supported[idx])
-		seen[id] = struct{}{}
-	}
-	return selected, nil
-}
-
-func setupAgentBinary(id string) string {
-	switch id {
-	case "codex-cli":
-		return "codex"
-	case "claude-code":
-		return "claude"
-	case "cursor":
-		return "cursor"
-	default:
-		return id
-	}
-}
-
-func setupAnyExistingAgentConfig(agents []setupAgentSpec) bool {
-	for _, agent := range agents {
-		if _, err := os.Lstat(agent.ConfigPath("")); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAgentOutcome, error) {
-	outcomes := make([]setupAgentOutcome, 0, len(agents))
-	for _, agent := range agents {
-		path := agent.ConfigPath("")
-		info, err := os.Lstat(path)
-		if err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("agent config path is a symlink: %s", path)
-		}
-		var existing []byte
-		if err == nil {
-			existing, err = setupReadFileFn(path)
-			if err != nil {
-				return nil, err
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-
-		var updated []byte
-		switch agent.Format {
-		case "toml":
-			updated = []byte(upsertCodexMCPServerConfig(existing, haspHome, setupHaspCommandPath()))
-		case "json":
-			updated, err = upsertJSONMCPServerConfig(existing, haspHome, setupHaspCommandPath())
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, fmt.Errorf("unsupported setup config format %q", agent.Format)
-		}
-
-		backupPath, changed, err := setupAtomicWrite(path, existing, updated)
-		if err != nil {
-			return nil, err
-		}
-		outcomes = append(outcomes, setupAgentOutcome{
-			ID:         agent.ID,
-			Label:      agent.Label,
-			ConfigPath: path,
-			BackupPath: backupPath,
-			Changed:    changed,
-		})
-	}
-	return outcomes, nil
-}
-
-func setupHaspCommandPath() string {
-	if path, err := setupLookPathFn("hasp"); err == nil && strings.TrimSpace(path) != "" {
-		return path
-	}
-	if path, err := setupExecutableFn(); err == nil && strings.TrimSpace(path) != "" && filepath.Base(path) == "hasp" {
-		return path
-	}
-	return "hasp"
-}
-
-func upsertCodexMCPServerConfig(existing []byte, haspHome string, commandPath string) string {
-	blockLines := []string{
-		"[mcp_servers.hasp]",
-		"command = " + strconvQuote(commandPath),
-		"args = [\"mcp\"]",
-	}
-	if strings.TrimSpace(haspHome) != "" {
-		blockLines = append(blockLines,
-			"[mcp_servers.hasp.env]",
-			"HASP_HOME = "+strconvQuote(haspHome),
-		)
-	}
-	block := strings.Join(blockLines, "\n") + "\n"
-	content := strings.TrimRight(string(existing), "\n")
-	if content == "" {
-		return block
-	}
-	lines := strings.Split(content, "\n")
-	out := []string{}
-	skipping := false
-	inserted := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "[mcp_servers.hasp]" || trimmed == "[mcp_servers.hasp.env]" {
-			if !inserted {
-				out = append(out, strings.TrimRight(block, "\n"))
-				inserted = true
-			}
-			skipping = true
-			continue
-		}
-		if skipping && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			skipping = false
-		}
-		if skipping {
-			continue
-		}
-		out = append(out, line)
-	}
-	if !inserted {
-		out = append(out, "", strings.TrimRight(block, "\n"))
-	}
-	return strings.TrimLeft(strings.Join(out, "\n"), "\n") + "\n"
-}
-
-func upsertJSONMCPServerConfig(existing []byte, haspHome string, commandPath string) ([]byte, error) {
-	config := map[string]any{}
-	if len(bytes.TrimSpace(existing)) > 0 {
-		if err := json.Unmarshal(existing, &config); err != nil {
-			return nil, err
-		}
-	}
-	mcpServers := map[string]any{}
-	if existingServers, ok := config["mcpServers"]; ok {
-		typed, ok := existingServers.(map[string]any)
-		if !ok {
-			return nil, errors.New("existing mcpServers value is not an object")
-		}
-		mcpServers = typed
-	}
-	serverConfig := map[string]any{
-		"command": commandPath,
-		"args":    []string{"mcp"},
-	}
-	if strings.TrimSpace(haspHome) != "" {
-		serverConfig["env"] = map[string]string{"HASP_HOME": haspHome}
-	}
-	mcpServers["hasp"] = serverConfig
-	config["mcpServers"] = mcpServers
-	data, _ := json.MarshalIndent(config, "", "  ")
-	return append(data, '\n'), nil
-}
-
-func setupAtomicWrite(path string, existing []byte, updated []byte) (string, bool, error) {
-	if bytes.Equal(existing, updated) {
-		return "", false, nil
-	}
-	if err := setupMkdirAllFn(filepath.Dir(path), 0o700); err != nil {
-		return "", false, err
-	}
-	backupPath := ""
-	if len(existing) > 0 {
-		backupPath = fmt.Sprintf("%s.bak.%s", path, setupNowFn().Format("20060102-150405"))
-		if err := setupWriteFileFn(backupPath, existing, 0o600); err != nil {
-			return "", false, err
-		}
-	}
-	tempFile, err := setupCreateTempFn(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return backupPath, false, err
-	}
-	tempName := tempFile.Name()
-	defer os.Remove(tempName)
-	if _, err := setupTempWriteFn(tempFile, updated); err != nil {
-		_ = setupTempCloseFn(tempFile)
-		return backupPath, false, err
-	}
-	if err := setupTempChmodFn(tempFile, 0o600); err != nil {
-		_ = setupTempCloseFn(tempFile)
-		return backupPath, false, err
-	}
-	if err := setupTempCloseFn(tempFile); err != nil {
-		return backupPath, false, err
-	}
-	if err := setupRenameFn(tempName, path); err != nil {
-		return backupPath, false, err
-	}
-	return backupPath, true, nil
-}
-
-func setupVerifyHarness(ctx context.Context, agents []setupAgentSpec) (map[string]any, error) {
-	request := bytes.NewBufferString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n")
-	var output bytes.Buffer
-	if err := setupMCPServeFn(ctx, request, &output); err != nil {
-		return nil, err
-	}
-	if !strings.Contains(output.String(), "hasp_list") {
-		return nil, errors.New("setup verification failed: hasp_list missing from MCP tools/list")
-	}
-	agentIDs := make([]string, 0, len(agents))
-	for _, agent := range agents {
-		agentIDs = append(agentIDs, agent.ID)
-	}
-	return map[string]any{
-		"mcp": map[string]any{
-			"ready": true,
-			"tools": setupMCPToolNamesFn(),
-		},
-		"agents": agentIDs,
-	}, nil
-}
-
-func setupNotes(agents []setupAgentSpec, configExisted bool, opts setupOptions, convenienceState string) []string {
-	notes := []string{
-		"setup writes only local MCP config stanzas for selected agents",
-		"setup never writes secret values into agent config, repo files, or shell profiles",
-		"convenience materialization remains an explicit separate path via hasp write-env",
-	}
-	if configExisted {
-		notes = append(notes, "existing agent config files were backed up before mutation")
-	}
-	if opts.BindImports {
-		notes = append(notes, "imported items were bound only because bind-imports was explicitly requested")
-	}
-	if convenienceState == "unavailable" {
-		notes = append(notes, "convenience unlock was requested but the keyring was unavailable")
-	}
-	for _, agent := range agents {
-		notes = append(notes, "configured agent target: "+agent.ID)
-	}
-	return notes
-}
-
-func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, convenienceState string, autoProtect bool, autoInstallHooks bool) []string {
-	steps := []string{
-		"verify MCP with: printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\\n' | hasp mcp",
-	}
-	if strings.TrimSpace(projectRoot) != "" {
-		steps = append(steps, "review the repo binding with: hasp project status --project-root \""+projectRoot+"\"")
-	}
-	if strings.TrimSpace(projectRoot) != "" && len(binding.Aliases) > 0 {
-		steps = append(steps, "test one brokered command with: hasp run --project-root \""+projectRoot+"\" --env NAME=<alias> --grant-project window --grant-secret session --grant-window 15m -- your-command")
-	} else {
-		steps = append(steps, "the first time you use HASP in a project, it will adopt that project automatically")
-		steps = append(steps, "inspect an adopted repo with: hasp project status --project-root /path/to/repo")
-	}
-	if convenienceState != "enabled" {
-		steps = append(steps, "future CLI commands still need HASP_MASTER_PASSWORD unless you rerun setup and enable convenience unlock")
-	}
-	steps = append(steps, "saved CLI config keeps HASP_HOME at "+haspHome)
-	return steps
-}
-
-func renderSetupSummary(out io.Writer, summary setupSummary) error {
-	if err := setupWriteStage(out, "Setup complete"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(out, setupSummaryLead(out, "HASP is configured for this machine.")); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(out); err != nil {
-		return err
-	}
-	if err := setupWriteKeyValueBlock(out, "Machine",
-		setupSummaryKeyValue(out, "Local HASP data", summary.HaspHome),
-		setupSummaryKeyValue(out, "Saved CLI config", summary.ConfigPath),
-	); err != nil {
-		return err
-	}
-	defaults := []string{
-		setupSummaryKeyValue(out, "Automatic repo adoption", setupEnabledDisabled(summary.AutoProtectRepos)),
-		setupSummaryKeyValue(out, "Automatic repo guardrails", setupYesNo(summary.AutoInstallHooks)),
-		setupSummaryKeyValue(out, "Vault state", summary.InitState),
-		setupSummaryKeyValue(out, "Convenience unlock", summary.ConvenienceUnlock),
-	}
-	if strings.TrimSpace(summary.ProjectRoot) != "" {
-		defaults = append(defaults, setupSummaryKeyValue(out, "Protected repository", summary.ProjectRoot))
-	}
-	if err := setupWriteKeyValueBlock(out, "Defaults", defaults...); err != nil {
-		return err
-	}
-	if len(summary.Agents) > 0 {
-		if err := setupWriteSummarySection(out, "Configured agents"); err != nil {
-			return err
-		}
-		for _, agent := range summary.Agents {
-			if _, err := fmt.Fprintln(out, setupSummaryAgentLine(out, agent)); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintln(out); err != nil {
-			return err
-		}
-	}
-	if len(summary.NextSteps) > 0 {
-		if err := setupWriteSummarySection(out, "Next steps"); err != nil {
-			return err
-		}
-		for idx, step := range summary.NextSteps {
-			if _, err := fmt.Fprintln(out, setupSummaryStepLine(out, idx+1, step)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func setupWriteIntro(out io.Writer) error {
-	return setupWriteStage(out, "HASP setup",
-		"HASP setup will:",
-		"1. choose where local encrypted HASP data lives on this machine",
-		"2. set defaults for automatically protecting repos on first use",
-		"3. configure selected coding agents to talk to HASP over MCP",
-		"Press Enter to accept the default shown in brackets.",
-	)
-}
-
-func setupWriteStage(out io.Writer, title string, lines ...string) error {
-	if _, err := fmt.Fprintln(out, setupStageHeader(out, title)); err != nil {
-		return err
-	}
-	prevLine := ""
-	for _, line := range lines {
-		if setupShouldSeparateStageLines(prevLine, line) {
-			if _, err := fmt.Fprintln(out); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintln(out, setupStageLine(out, line)); err != nil {
-			return err
-		}
-		if strings.TrimSpace(line) != "" {
-			prevLine = line
-		}
-	}
-	if _, err := fmt.Fprintln(out); err != nil {
-		return err
-	}
-	return nil
-}
-
-func setupStageHeader(out io.Writer, title string) string {
-	text := "== " + title + " =="
-	return setupStyle(out, "1;36", text)
-}
-
-func setupStageLine(out io.Writer, line string) string {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.HasPrefix(line, "   config: ") {
-		return "   " + setupSummaryLabel(out, "config") + ": " + setupSummaryValue(out, strings.TrimPrefix(line, "   config: "))
-	}
-	switch {
-	case strings.HasPrefix(trimmed, "-"),
-		strings.HasPrefix(trimmed, "1."),
-		strings.HasPrefix(trimmed, "2."),
-		strings.HasPrefix(trimmed, "3."),
-		strings.HasPrefix(trimmed, "4."),
-		strings.HasPrefix(trimmed, "5."),
-		strings.HasPrefix(trimmed, "6."),
-		strings.HasPrefix(trimmed, "7."),
-		strings.HasPrefix(trimmed, "8."),
-		strings.HasPrefix(trimmed, "9."),
-		strings.HasPrefix(trimmed, "10."):
-		if prefix, rest, ok := setupSplitNumericPrefix(trimmed); ok {
-			return "  " + setupStyle(out, "1;36", prefix) + " " + rest
-		}
-		return "  " + line
-	case strings.HasPrefix(line, "   "):
-		return line
-	default:
-		return "  " + setupStyle(out, "36", "•") + " " + line
-	}
-}
-
-func setupShouldSeparateStageLines(prev string, current string) bool {
-	prevKind := setupStageLineKind(prev)
-	currentKind := setupStageLineKind(current)
-	switch {
-	case prevKind == "numeric" && currentKind == "text":
-		return true
-	case prevKind == "text" && currentKind == "numeric":
-		return !strings.HasSuffix(strings.TrimSpace(prev), ":")
-	default:
-		return false
-	}
-}
-
-func setupStageLineKind(line string) string {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.HasPrefix(line, "   config: ") {
-		return "config"
-	}
-	if _, _, ok := setupSplitNumericPrefix(trimmed); ok {
-		return "numeric"
-	}
-	if strings.HasPrefix(trimmed, "-") {
-		return "dash"
-	}
-	if strings.HasPrefix(line, "   ") {
-		return "indented"
-	}
-	return "text"
-}
-
-func setupWriterSupportsColor(out io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
-	file, ok := out.(*os.File)
-	if !ok || file == nil {
-		return false
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
-func setupSummaryLead(out io.Writer, text string) string {
-	if !setupWriterSupportsColor(out) {
-		return "✓ " + text
-	}
-	return "\x1b[1;32m✓\x1b[0m " + text
-}
-
-func setupWriteKeyValueBlock(out io.Writer, title string, lines ...string) error {
-	if len(lines) == 0 {
-		return nil
-	}
-	if err := setupWriteSummarySection(out, title); err != nil {
-		return err
-	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(out, line); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintln(out); err != nil {
-		return err
-	}
-	return nil
-}
-
-func setupWriteSummarySection(out io.Writer, title string) error {
-	if _, err := fmt.Fprintln(out, setupSummarySectionHeader(out, title)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func setupSummarySectionHeader(out io.Writer, title string) string {
-	return setupStyle(out, "1", title)
-}
-
-func setupSummaryKeyValue(out io.Writer, label string, value string) string {
-	return "  " + setupSummaryLabel(out, fmt.Sprintf("%-24s", label)) + "  " + setupSummaryValue(out, value)
-}
-
-func setupSummaryLabel(out io.Writer, text string) string {
-	return setupStyle(out, "1", text)
-}
-
-func setupSummaryValue(out io.Writer, value string) string {
-	trimmed := strings.TrimSpace(value)
-	lower := strings.ToLower(trimmed)
-	switch lower {
-	case "yes", "enabled", "enabled when available", "updated", "created":
-		return setupStyle(out, "1;32", value)
-	case "no", "disabled", "unavailable", "skip for now":
-		return setupStyle(out, "1;33", value)
-	case "existing", "unchanged":
-		return setupStyle(out, "1;36", value)
-	}
-	if strings.HasPrefix(trimmed, "~") || strings.HasPrefix(trimmed, "/") {
-		return setupStyle(out, "36", value)
-	}
-	return value
-}
-
-func setupSummaryAgentLine(out io.Writer, agent setupAgentOutcome) string {
-	status := "updated"
-	if !agent.Changed {
-		status = "unchanged"
-	}
-	icon := "✓"
-	if !agent.Changed {
-		icon = "•"
-	}
-	return "  " + setupStyle(out, "1;32", icon) + " " +
-		setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label)) + "  " +
-		setupSummaryValue(out, agent.ConfigPath) + "  " +
-		setupStyle(out, "2", "("+status+")")
-}
-
-func setupSummaryStepLine(out io.Writer, index int, step string) string {
-	return "  " + setupStyle(out, "1;36", fmt.Sprintf("%d.", index)) + " " + step
-}
-
-func setupStyle(out io.Writer, code string, text string) string {
-	if !setupWriterSupportsColor(out) {
-		return text
-	}
-	return "\x1b[" + code + "m" + text + "\x1b[0m"
-}
-
-func setupSplitNumericPrefix(line string) (string, string, bool) {
-	for _, prefix := range []string{"10.", "9.", "8.", "7.", "6.", "5.", "4.", "3.", "2.", "1."} {
-		if strings.HasPrefix(line, prefix+" ") {
-			return prefix, strings.TrimPrefix(line, prefix+" "), true
-		}
-	}
-	return "", "", false
-}
-
-func setupWriteSelectedAgents(out io.Writer, agents []setupAgentSpec) error {
-	if len(agents) == 0 {
-		return nil
-	}
-	lines := make([]string, 0, len(agents)+1)
-	lines = append(lines, "Selected agent config targets:")
-	for _, agent := range agents {
-		lines = append(lines, fmt.Sprintf("- %s -> %s", agent.Label, agent.ConfigPath("")))
-	}
-	return setupWriteStage(out, "Agent targets", lines...)
-}
-
-func setupWriteAgentMenu(out io.Writer, supported []setupAgentSpec, defaultIDs []string) error {
-	lines := []string{
-		"Pick which coding agents HASP should configure for MCP.",
-		"Enter numbers like 1 or 1,3. Existing config files are backed up before mutation.",
-	}
-	defaultSet := map[string]struct{}{}
-	for _, id := range defaultIDs {
-		defaultSet[id] = struct{}{}
-	}
-	for idx, agent := range supported {
-		suffix := ""
-		if _, ok := defaultSet[agent.ID]; ok {
-			suffix = " [default]"
-		}
-		lines = append(lines, fmt.Sprintf("%d. %s%s", idx+1, agent.Label, suffix))
-		lines = append(lines, fmt.Sprintf("   config: %s", setupDisplayPath(agent.ConfigPath(""))))
-	}
-	return setupWriteStage(out, "Agent setup", lines...)
-}
-
-func setupDefaultAgentIDs(detected []setupAgentSpec) []string {
-	defaultIDs := make([]string, 0, len(detected))
-	for _, spec := range detected {
-		defaultIDs = append(defaultIDs, spec.ID)
-	}
-	if len(defaultIDs) == 0 {
-		defaultIDs = []string{"codex-cli"}
-	}
-	return defaultIDs
-}
-
-func setupDefaultAgentSelection(supported []setupAgentSpec, defaultIDs []string) string {
-	indexes := make([]string, 0, len(defaultIDs))
-	for _, id := range defaultIDs {
-		for idx, spec := range supported {
-			if spec.ID == id {
-				indexes = append(indexes, strconv.Itoa(idx+1))
-				break
-			}
-		}
-	}
-	if len(indexes) == 0 {
-		return "1"
-	}
-	return strings.Join(indexes, ",")
-}
-
-func parseSetupAgentMenuSelection(supported []setupAgentSpec, value string) ([]string, error) {
-	selected := []string{}
-	seen := map[string]struct{}{}
-	for _, raw := range strings.Split(value, ",") {
-		token := strings.TrimSpace(raw)
-		if token == "" {
-			continue
-		}
-		if index, err := strconv.Atoi(token); err == nil {
-			if index < 1 || index > len(supported) {
-				return nil, fmt.Errorf("unsupported setup agent selection %q", token)
-			}
-			id := supported[index-1].ID
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			selected = append(selected, id)
-			continue
-		}
-		idx := slices.IndexFunc(supported, func(spec setupAgentSpec) bool { return spec.ID == token })
-		if idx < 0 {
-			return nil, fmt.Errorf("unsupported setup agent selection %q", token)
-		}
-		id := supported[idx].ID
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		selected = append(selected, id)
-	}
-	return selected, nil
-}
-
-func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
-	if _, err := fmt.Fprintln(out, setupStageHeader(out, "Review before apply")); err != nil {
-		return err
-	}
-	lines := []string{
-		setupSummaryKeyValue(out, "Local HASP data", setupDisplayPath(plan.HaspHome)),
-		setupSummaryKeyValue(out, "Automatic repo adoption", setupEnabledDisabled(plan.AutoProtectRepos)),
-		setupSummaryKeyValue(out, "Install repo guardrails", setupYesNo(plan.InstallHooks)),
-		setupSummaryKeyValue(out, "Convenience unlock", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
-	}
-	if strings.TrimSpace(plan.ProjectRoot) != "" {
-		lines = append(lines, setupSummaryKeyValue(out, "Protect this repo now", plan.ProjectRoot))
-	}
-	if strings.TrimSpace(plan.ImportPath) == "" {
-		lines = append(lines, setupSummaryKeyValue(out, "Import during setup", "skip for now"))
-	} else {
-		lines = append(lines, setupSummaryKeyValue(out, "Import during setup", plan.ImportPath))
-		lines = append(lines, setupSummaryKeyValue(out, "Bind imported secrets", setupYesNo(plan.BindImports)))
-	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(out, line); err != nil {
-			return err
-		}
-	}
-	if plan.ConfigExists {
-		if _, err := fmt.Fprintln(out, setupStageLine(out, "Existing agent config files will be updated with backups.")); err != nil {
-			return err
-		}
-	}
-	if len(plan.Agents) > 0 {
-		if _, err := fmt.Fprintln(out); err != nil {
-			return err
-		}
-		if err := setupWriteSummarySection(out, "Agent config targets"); err != nil {
-			return err
-		}
-		for _, agent := range plan.Agents {
-			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", "•")+" "+setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label))+"  "+setupSummaryValue(out, setupDisplayPath(agent.ConfigPath("")))); err != nil {
-				return err
-			}
-		}
-	}
-	if _, err := fmt.Fprintln(out); err != nil {
-		return err
-	}
-	return nil
-}
-
-func setupConfirmPlan(prompt *setupPrompter, plan setupPlanPreview) error {
-	if err := setupWriteConfirmationFn(prompt.out, plan); err != nil {
-		return err
-	}
-	proceed, err := promptBool(prompt, "Apply these changes now", true)
-	if err != nil {
-		return err
-	}
-	if !proceed {
-		return errors.New("setup cancelled before making changes")
-	}
-	return nil
-}
-
-func setupDisplayPath(path string) string {
-	home, err := setupUserHomeDirFn()
-	if err != nil {
-		return path
-	}
-	if path == home {
-		return "~"
-	}
-	prefix := home + string(filepath.Separator)
-	if strings.HasPrefix(path, prefix) {
-		return "~" + string(filepath.Separator) + strings.TrimPrefix(path, prefix)
-	}
-	return path
-}
-
-func setupSavedHomeLooksUsable(path string) bool {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return false
-	}
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return false
-	} else if err != nil {
-		return false
-	}
-	tempRoot := strings.TrimSpace(setupTempDirFn())
-	if tempRoot == "" {
-		return true
-	}
-	absPath, err := setupAbsFn(path)
-	if err != nil {
-		return false
-	}
-	absTemp, err := setupAbsFn(tempRoot)
-	if err != nil {
-		return false
-	}
-	if absPath == absTemp || strings.HasPrefix(absPath, absTemp+string(filepath.Separator)) {
-		return false
-	}
-	return true
-}
-
-func defaultSetupConvenienceUnlock() bool {
-	return setupGOOS == "darwin"
-}
-
-func setupBoolPointer(value bool) *bool {
-	v := value
-	return &v
-}
-
-func setupYesNo(value bool) string {
-	if value {
-		return "yes"
-	}
-	return "no"
-}
-
-func setupEnabledDisabled(value bool) string {
-	if value {
-		return "enabled when available"
-	}
-	return "disabled"
-}
-
-func promptString(prompt *setupPrompter, label string, defaultValue string) (string, error) {
-	return promptStringWithDisplayDefault(prompt, label, defaultValue, defaultValue)
-}
-
-func promptStringWithDisplayDefault(prompt *setupPrompter, label string, defaultValue string, displayDefault string) (string, error) {
-	if defaultValue != "" {
-		if _, err := fmt.Fprintf(prompt.out, "%s [%s]: ", label, displayDefault); err != nil {
-			return "", err
-		}
-	} else {
-		if _, err := fmt.Fprintf(prompt.out, "%s: ", label); err != nil {
-			return "", err
-		}
-	}
-	line, err := prompt.reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	if _, err := fmt.Fprintln(prompt.out); err != nil {
-		return "", err
-	}
-	value := strings.TrimSpace(line)
-	if value == "" {
-		return defaultValue, nil
-	}
-	return value, nil
-}
-
-func promptBool(prompt *setupPrompter, label string, defaultValue bool) (bool, error) {
-	defaultLabel := "y/N"
-	if defaultValue {
-		defaultLabel = "Y/n"
-	}
-	value, err := promptString(prompt, label, defaultLabel)
-	if err != nil {
-		return false, err
-	}
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "", strings.ToLower(defaultLabel):
-		return defaultValue, nil
-	case "y", "yes", "true", "1":
-		return true, nil
-	case "n", "no", "false", "0":
-		return false, nil
-	default:
-		return defaultValue, nil
-	}
-}
-
-func promptPassword(prompt *setupPrompter, label string) (string, error) {
-	if prompt.file == nil || !setupCanHideInputFn(prompt.file) {
-		return promptString(prompt, label+" (input is visible)", "")
-	}
-	if _, err := fmt.Fprintf(prompt.out, "%s: ", label); err != nil {
-		return "", err
-	}
-	if err := setupSttyFn(prompt.file, "-echo"); err != nil {
-		return promptString(prompt, label+" (input is visible)", "")
-	}
-	defer func() {
-		_ = setupSttyFn(prompt.file, "echo")
-		_, _ = fmt.Fprintln(prompt.out)
-	}()
-	line, err := prompt.reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
-}
-
-func setupSetEnv(name string, value string) (func(), error) {
-	previous, had := os.LookupEnv(name)
-	if err := os.Setenv(name, value); err != nil {
-		return nil, err
-	}
-	return func() {
-		if had {
-			_ = os.Setenv(name, previous)
-			return
-		}
-		_ = os.Unsetenv(name)
-	}, nil
-}
-
-func expandHome(value string) (string, error) {
-	if value == "~" || strings.HasPrefix(value, "~/") {
-		home, err := setupUserHomeDirFn()
-		if err != nil {
-			return "", err
-		}
-		if value == "~" {
-			return home, nil
-		}
-		return filepath.Join(home, strings.TrimPrefix(value, "~/")), nil
-	}
-	return value, nil
-}
-
-func withinPath(path string, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
-
-func strconvQuote(value string) string {
-	data, _ := json.Marshal(value)
-	return string(data)
 }

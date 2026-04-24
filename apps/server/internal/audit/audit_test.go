@@ -2,6 +2,7 @@ package audit
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,6 +29,50 @@ func TestAppendAndVerify(t *testing.T) {
 	}
 	if err := log.Verify(); err != nil {
 		t.Fatalf("verify audit log: %v", err)
+	}
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(events) != 2 || events[0].Type != EventInit || events[1].Type != EventImport {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+}
+
+func TestEventsMissingLogAndMalformedLog(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	events, err := log.Events()
+	if err != nil || len(events) != 0 {
+		t.Fatalf("missing events = %+v err=%v", events, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(log.path), 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	if err := os.WriteFile(log.path, []byte("{bad-json}\n"), 0o600); err != nil {
+		t.Fatalf("write malformed audit log: %v", err)
+	}
+	if _, err := log.Events(); err == nil {
+		t.Fatal("expected malformed audit event error")
+	}
+	blockingFile := filepath.Join(baseDir, "blocking-file")
+	if err := os.WriteFile(blockingFile, []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("write blocking file: %v", err)
+	}
+	log.path = filepath.Join(blockingFile, "audit.jsonl")
+	if _, err := log.Events(); err == nil {
+		t.Fatal("expected open audit log failure")
+	}
+	log.path = filepath.Join(baseDir, "audit-dir")
+	if err := os.MkdirAll(log.path, 0o700); err != nil {
+		t.Fatalf("mkdir audit dir: %v", err)
+	}
+	if _, err := log.Events(); err == nil {
+		t.Fatal("expected scan audit directory failure")
 	}
 }
 

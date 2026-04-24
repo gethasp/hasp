@@ -2,12 +2,11 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 )
 
 var newAuditLogFn = audit.New
+var auditEventsFn = (*audit.Log).Events
 var newVaultStoreFn = func() (*store.Store, error) {
 	return store.New(store.NewDefaultKeyring())
 }
@@ -31,6 +31,19 @@ var getItemAppFn = (*store.Handle).GetItem
 var authorizeCaptureFn = brokerops.AuthorizeCapture
 
 func initCommand(ctx context.Context, stdout io.Writer) error {
+	return initCommandWithArgs(ctx, nil, stdout)
+}
+
+func initCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp init [--json]")
+	}
 	vaultStore, err := newVaultStoreFn()
 	if err != nil {
 		return err
@@ -43,8 +56,12 @@ func initCommand(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 	appendAudit(audit.EventInit, "user", map[string]any{"version": runtime.Version()})
-	_, err = fmt.Fprintln(stdout, "initialized")
-	return err
+	payload := map[string]any{"status": "initialized"}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(w, "Vault initialized", "Initialized the local encrypted vault.",
+			cliPair("Status", "initialized"),
+		)
+	})
 }
 
 func importCommand(ctx context.Context, args []string, stdout io.Writer) error {
@@ -54,6 +71,7 @@ func importCommand(ctx context.Context, args []string, stdout io.Writer) error {
 func importCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", "", "")
 	bind := fs.Bool("bind", false, "")
 	name := fs.String("name", "", "")
@@ -78,7 +96,7 @@ func importCommandWithInput(ctx context.Context, args []string, stdin io.Reader,
 	}
 	defer prepared.Cleanup()
 	if *previewOnly {
-		return encodeImportCommandResult(stdout, prepared.Preview, nil, false)
+		return encodeImportCommandResultWithMode(stdout, prepared.Preview, nil, false, *jsonOutput)
 	}
 
 	vaultStore, err := newVaultStoreFn()
@@ -102,12 +120,13 @@ func importCommandWithInput(ctx context.Context, args []string, stdin io.Reader,
 		return err
 	}
 	appendAudit(audit.EventImport, "user", map[string]any{"path": fs.Arg(0), "count": len(result.Imported)})
-	return encodeImportCommandResult(stdout, prepared.Preview, &result, true)
+	return encodeImportCommandResultWithMode(stdout, prepared.Preview, &result, true, *jsonOutput)
 }
 
 func setCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	name := fs.String("name", "", "")
 	kind := fs.String("kind", string(store.ItemKindKV), "")
 	value := fs.String("value", "", "")
@@ -139,12 +158,19 @@ func setCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	appendAudit(audit.EventCapture, "user", map[string]any{"item_name": item.Name, "kind": item.Kind})
-	return json.NewEncoder(stdout).Encode(map[string]any{"item_name": item.Name, "kind": item.Kind})
+	resultPayload := map[string]any{"item_name": item.Name, "kind": item.Kind}
+	return renderJSONOrHuman(stdout, *jsonOutput, resultPayload, func(w io.Writer) error {
+		return renderSimpleAction(w, "Secret saved", "Saved the secret into the vault.",
+			cliPair("Name", item.Name),
+			cliPair("Kind", string(item.Kind)),
+		)
+	})
 }
 
 func captureCommand(ctx context.Context, args []string, stdout io.Writer, s starter) error {
 	fs := flag.NewFlagSet("capture", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	name := fs.String("name", "", "")
 	kind := fs.String("kind", string(store.ItemKindKV), "")
 	value := fs.String("value", "", "")
@@ -214,7 +240,14 @@ func captureCommand(ctx context.Context, args []string, stdout io.Writer, s star
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(result)
+	return renderJSONOrHuman(stdout, *jsonOutput, result, func(w io.Writer) error {
+		return renderSimpleAction(w, "Secret captured", "Stored the value in the vault.",
+			cliPair("Name", result.ItemName),
+			cliPair("Kind", string(result.ItemKind)),
+			cliPair("Reference", result.Reference),
+			cliPair("Alias", result.Alias),
+		)
+	})
 }
 
 func redactCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
@@ -240,15 +273,121 @@ func redactCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) error
 }
 
 func auditCommand(stdout io.Writer) error {
+	return auditCommandWithArgs(nil, stdout)
+}
+
+func auditCommandWithArgs(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	incidentBundle := fs.Bool("incident-bundle", false, "")
+	filterSecret := fs.String("secret", "", "")
+	filterProjectRoot := fs.String("project-root", "", "")
+	filterAgent := fs.String("agent", "", "")
+	filterAction := fs.String("action", "", "")
+	filterBlocked := fs.Bool("blocked", false, "")
+	filterSince := fs.String("since", "", "")
+	var format string
+	fs.StringVar(&format, "format", "", "output format: timeline, table, or json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp audit [--json] [--incident-bundle]")
+	}
+
+	// Resolve --blocked: only treat as active if the flag was explicitly set.
+	var blockedPtr *bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "blocked" {
+			v := *filterBlocked
+			blockedPtr = &v
+		}
+	})
+
+	// Resolve --since: accept RFC3339 timestamp or Go duration.
+	var sinceTime time.Time
+	if *filterSince != "" {
+		if d, err := time.ParseDuration(*filterSince); err == nil {
+			sinceTime = time.Now().UTC().Add(-d)
+		} else if t, err := time.Parse(time.RFC3339, *filterSince); err == nil {
+			sinceTime = t
+		} else {
+			return errors.New("--since: value must be an RFC3339 timestamp or a Go duration (e.g. 1h)")
+		}
+	}
+
+	filterOpts := auditFilterOptions{
+		Secret:      *filterSecret,
+		ProjectRoot: *filterProjectRoot,
+		Agent:       *filterAgent,
+		Action:      *filterAction,
+		Blocked:     blockedPtr,
+		Since:       sinceTime,
+	}
+	hasFilters := filterOpts.Secret != "" || filterOpts.ProjectRoot != "" ||
+		filterOpts.Agent != "" || filterOpts.Action != "" ||
+		filterOpts.Blocked != nil || !filterOpts.Since.IsZero()
+
 	log, err := newAuditLogFn()
 	if err != nil {
 		return err
 	}
-	if err := log.Verify(); err != nil {
-		return err
+	if log != nil {
+		if err := log.Verify(); err != nil {
+			return err
+		}
 	}
-	_, err = fmt.Fprintln(stdout, "ok")
-	return err
+
+	// Dispatch to human-readable renderers when --format=timeline or --format=table.
+	if format == "timeline" || format == "table" {
+		events, err := auditEventsFn(log)
+		if err != nil {
+			return err
+		}
+		if hasFilters {
+			events = auditFilterEvents(events, filterOpts)
+		}
+		if format == "timeline" {
+			return auditRenderTimeline(events, stdout)
+		}
+		return auditRenderTable(events, stdout)
+	}
+
+	if *incidentBundle || hasFilters {
+		events, err := auditEventsFn(log)
+		if err != nil {
+			return err
+		}
+		if hasFilters {
+			events = auditFilterEvents(events, filterOpts)
+		}
+		redacted := make([]audit.Event, 0, len(events))
+		for _, event := range events {
+			redacted = append(redacted, redactAuditEvent(event))
+		}
+		payload := map[string]any{"status": "ok", "events": redacted}
+		return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+			return renderSimpleAction(w, "Incident bundle", "Exported redacted time-ordered audit evidence.",
+				cliPair("Events", strconv.Itoa(len(redacted))),
+				cliPair("Status", "ok"),
+			)
+		})
+	}
+	payload := map[string]any{"status": "ok"}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(w, "Audit verified", "Verified the local audit log chain.",
+			cliPair("Status", "ok"),
+		)
+	})
+}
+
+func redactAuditEvent(event audit.Event) audit.Event {
+	if event.Details == nil {
+		return event
+	}
+	event.Details = redactDetailsForHuman(event.Details)
+	return event
 }
 
 func loadMasterPassword() (string, error) {

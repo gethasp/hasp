@@ -42,7 +42,7 @@ func TestBindingAliasGenerationAndSafeDiscovery(t *testing.T) {
 	if len(visible) != 1 {
 		t.Fatalf("visible refs = %d, want 1", len(visible))
 	}
-	if visible[0].Alias != "secret_01" || visible[0].PolicyLevel != PolicySession {
+	if visible[0].Alias != "secret_01" || visible[0].PolicyLevel != PolicySession || visible[0].ItemName != "prod_api_token" || visible[0].NamedReference != "@prod_api_token" {
 		t.Fatalf("unexpected visible ref: %+v", visible[0])
 	}
 }
@@ -97,6 +97,34 @@ func TestCanonicalProjectRootUsesGitTopLevel(t *testing.T) {
 	}
 	if resolved != want {
 		t.Fatalf("resolved root = %q, want %q", resolved, want)
+	}
+}
+
+func TestBindingRootFallsBackToExactPathWhenGitRootFails(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	originalAbs := filepathAbsFn
+	t.Cleanup(func() { filepathAbsFn = originalAbs })
+	calls := 0
+	filepathAbsFn = func(path string) (string, error) {
+		calls++
+		if calls == 1 {
+			return filepath.Clean(path), nil
+		}
+		return "", errors.New("git root abs fail")
+	}
+	root, err := handle.bindingRoot(context.Background(), "pkg-a")
+	if err != nil {
+		t.Fatalf("binding root fallback: %v", err)
+	}
+	if root != "pkg-a" {
+		t.Fatalf("expected exact fallback root, got %q", root)
 	}
 }
 

@@ -53,7 +53,7 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 		t.Fatalf("project status missing aliases: %s", statusOut)
 	}
 
-	sessionOut, _, err := runHasp(t, env, "", "session", "open", "--host-label", "integration-cli", "--project-root", env.projectRoot)
+	sessionOut, _, err := runHasp(t, env, "", "session", "open", "--json", "--host-label", "integration-cli", "--project-root", env.projectRoot)
 	if err != nil {
 		t.Fatalf("session open failed: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestCLIProjectAdoptEval(t *testing.T) {
 		t.Fatalf("save config: %v", err)
 	}
 
-	stdout, _, err := runHasp(t, env, "", "project", "adopt", "--under", baseDir, "--preview")
+	stdout, _, err := runHasp(t, env, "", "project", "adopt", "--json", "--under", baseDir, "--preview")
 	if err != nil {
 		t.Fatalf("project adopt preview failed: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestCLIProjectAdoptEval(t *testing.T) {
 		t.Fatalf("expected two repo candidates, got %v", preview)
 	}
 
-	stdout, _, err = runHasp(t, env, "", "project", "adopt", "--under", baseDir)
+	stdout, _, err = runHasp(t, env, "", "project", "adopt", "--json", "--under", baseDir)
 	if err != nil {
 		t.Fatalf("project adopt failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCLIProjectAdoptEval(t *testing.T) {
 		t.Fatalf("expected adopted_count 2, got %v", adopted)
 	}
 
-	statusOut, _, err := runHasp(t, env, "", "project", "status", "--project-root", repoA)
+	statusOut, _, err := runHasp(t, env, "", "project", "status", "--json", "--project-root", repoA)
 	if err != nil {
 		t.Fatalf("project status after adopt failed: %v", err)
 	}

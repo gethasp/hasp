@@ -31,6 +31,7 @@ func TestSetupResolveHomeBranches(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("HOME", userHome)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv(paths.EnvHome, "")
 
 	origHome := setupUserHomeDirFn
 	origTempDir := setupTempDirFn
@@ -211,7 +212,9 @@ func TestSetupWriteAgentConfigsInvalidFormatAndNoop(t *testing.T) {
 	}()
 	setupLookPathFn = func(string) (string, error) { return "/bin/hasp", nil }
 	setupExecutableFn = func() (string, error) { return "/bin/hasp", nil }
-	data, err := upsertJSONMCPServerConfig(nil, "", "/bin/hasp")
+	haspHome := filepath.Join(homeDir, ".hasp")
+	wrapperPath := filepath.Join(haspHome, "bin", "hasp-agent-cursor")
+	data, err := upsertJSONMCPServerConfig(nil, haspHome, wrapperPath, "cursor")
 	if err != nil {
 		t.Fatalf("upsert json config: %v", err)
 	}
@@ -224,7 +227,7 @@ func TestSetupWriteAgentConfigsInvalidFormatAndNoop(t *testing.T) {
 		ConfigPath: func(string) string {
 			return path
 		},
-	}}, "")
+	}}, haspHome)
 	if err != nil {
 		t.Fatalf("write agent configs noop: %v", err)
 	}
@@ -482,7 +485,7 @@ func TestSetupExtraBranchCoverage(t *testing.T) {
 	if _, err := setupSetEnv("bad=name", "value"); err == nil {
 		t.Fatal("expected invalid env name error")
 	}
-	if _, err := upsertJSONMCPServerConfig([]byte(`{bad`), "", "/bin/hasp"); err == nil {
+	if _, err := upsertJSONMCPServerConfig([]byte(`{bad`), "", "/bin/hasp", "cursor"); err == nil {
 		t.Fatal("expected invalid JSON error")
 	}
 }

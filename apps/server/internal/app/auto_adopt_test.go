@@ -103,8 +103,8 @@ func TestEnsureProjectBindingAutoAdopts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure project binding: %v", err)
 	}
-	if !autoAdopted || binding.ID == "" || binding.DefaultCapturePolicy != store.PolicyAccess {
-		t.Fatalf("unexpected adopted binding %+v auto=%v", binding, autoAdopted)
+	if autoAdopted || binding.ID != "" {
+		t.Fatalf("expected non-git path to remain unmanaged, got %+v auto=%v", binding, autoAdopted)
 	}
 	if hooksCalled != 0 {
 		t.Fatalf("expected no hooks on non-git path, got %d", hooksCalled)
@@ -117,8 +117,8 @@ func TestEnsureProjectBindingAutoAdopts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure project binding second pass: %v", err)
 	}
-	if autoAdopted || again.ID != binding.ID {
-		t.Fatalf("expected second ensure to reuse binding, got %+v auto=%v", again, autoAdopted)
+	if autoAdopted || again.ID != "" {
+		t.Fatalf("expected second ensure to keep path unmanaged, got %+v auto=%v", again, autoAdopted)
 	}
 }
 
@@ -230,12 +230,15 @@ func TestEnsureProjectBindingAutoAdoptsGitRepoAndCommandsUseIt(t *testing.T) {
 	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run set: %v", err)
 	}
+	if err := Run(context.Background(), []string{"secret", "expose", "--project-root", projectRoot, "api_token"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret expose: %v", err)
+	}
 
 	starter := newDaemonTestStarter(t)
 	var runOut bytes.Buffer
 	if err := runWithStarter(
 		context.Background(),
-		[]string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=api_token", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""},
+		[]string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""},
 		bytes.NewBuffer(nil),
 		&runOut,
 		io.Discard,
@@ -248,7 +251,7 @@ func TestEnsureProjectBindingAutoAdoptsGitRepoAndCommandsUseIt(t *testing.T) {
 	}
 
 	var statusOut bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "status", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
+	if err := Run(context.Background(), []string{"project", "status", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), &statusOut, &statusOut); err != nil {
 		t.Fatalf("project status: %v", err)
 	}
 	var payload map[string]any

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,8 @@ type evalEnv struct {
 	binary         string
 	home           string
 	socket         string
+	userHome       string
+	configHome     string
 	profilesDir    string
 	projectRoot    string
 	masterPassword string
@@ -81,22 +84,33 @@ func buildBinary(t *testing.T) string {
 func newEvalEnv(t *testing.T) evalEnv {
 	t.Helper()
 	root := repoRoot(t)
+	binary := buildBinary(t)
 	projectParent := t.TempDir()
 	projectRoot := filepath.Join(projectParent, "repo")
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
 	}
 	initGitRepo(t, projectRoot)
-	return evalEnv{
+	userHome := t.TempDir()
+	configHome := filepath.Join(userHome, ".config")
+	t.Setenv("HOME", userHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	env := evalEnv{
 		repoRoot:       root,
-		binary:         buildBinary(t),
+		binary:         binary,
 		home:           t.TempDir(),
 		socket:         filepath.Join("/tmp", fmt.Sprintf("hasp-evals-%d.sock", time.Now().UnixNano())),
+		userHome:       userHome,
+		configHome:     configHome,
 		profilesDir:    filepath.Join(root, "apps", "server", "profiles"),
 		projectRoot:    projectRoot,
 		masterPassword: "integration-master-password",
 		backupPass:     "integration-backup-passphrase",
 	}
+	t.Cleanup(func() {
+		stopEvalDaemon(t, env)
+	})
+	return env
 }
 
 func initGitRepo(t *testing.T, repo string) {
@@ -109,11 +123,13 @@ func initGitRepo(t *testing.T, repo string) {
 func (e evalEnv) commandEnv(extra map[string]string) []string {
 	env := os.Environ()
 	env = append(env,
+		"HOME="+e.userHome,
 		"HASP_HOME="+e.home,
 		"HASP_SOCKET="+e.socket,
 		"HASP_MASTER_PASSWORD="+e.masterPassword,
 		"HASP_BACKUP_PASSPHRASE="+e.backupPass,
 		"HASP_PROFILES_DIR="+e.profilesDir,
+		"XDG_CONFIG_HOME="+e.configHome,
 	)
 	for key, value := range extra {
 		env = append(env, key+"="+value)
@@ -214,4 +230,159 @@ func packageArtifact(t *testing.T) string {
 	root := repoRoot(t)
 	stdout, _ := runCmd(t, root, nil, "bash", "./scripts/package-release.sh")
 	return strings.TrimSpace(stdout)
+}
+
+func stopEvalDaemon(t *testing.T, e evalEnv) {
+	t.Helper()
+	if strings.TrimSpace(e.binary) == "" || strings.TrimSpace(e.home) == "" {
+		return
+	}
+
+	pidPath := filepath.Join(e.home, "runtime", "daemon.pid")
+	socketPath := e.socket
+	if socketPath == "" {
+		socketPath = filepath.Join(e.home, "runtime", "daemon.sock")
+	}
+	pid := ""
+	verified := false
+	if data, err := os.ReadFile(pidPath); err == nil {
+		pid = strings.TrimSpace(string(data))
+		if pidValue, convErr := strconv.Atoi(pid); convErr == nil && pidValue > 0 {
+			verified = verifyScopedEvalDaemon(t, pidValue, socketPath)
+		}
+	}
+
+	if verified {
+		_, _, _ = runCmdWithInput(t, e.projectRoot, e.commandEnv(nil), "", e.binary, "daemon", "stop")
+	}
+
+	if verified && pid != "" {
+		if pidValue, convErr := strconv.Atoi(pid); convErr == nil && pidValue > 0 {
+			if proc, findErr := os.FindProcess(pidValue); findErr == nil {
+				_ = proc.Kill()
+			}
+		}
+	}
+
+	_ = os.Remove(pidPath)
+	_ = os.Remove(socketPath)
+}
+
+func verifyScopedEvalDaemon(t *testing.T, pid int, socketPath string) bool {
+	t.Helper()
+	if pid <= 0 || strings.TrimSpace(socketPath) == "" {
+		return false
+	}
+	client, err := runtime.Dial(context.Background(), socketPath)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	reply, err := client.Status(context.Background())
+	if err != nil {
+		return false
+	}
+	return reply.PID == pid && reply.SocketPath == socketPath
+}
+
+func (e evalEnv) withScopedHome(home string, userHome string) evalEnv {
+	scoped := e
+	if strings.TrimSpace(home) != "" {
+		scoped.home = home
+	}
+	if strings.TrimSpace(userHome) != "" {
+		scoped.userHome = userHome
+		scoped.configHome = filepath.Join(userHome, ".config")
+	}
+	return scoped
+}
+
+func TestNewEvalEnvScopesCLIConfig(t *testing.T) {
+	env := newEvalEnv(t)
+
+	if got := os.Getenv("HOME"); got != env.userHome {
+		t.Fatalf("HOME = %q, want %q", got, env.userHome)
+	}
+	if got := os.Getenv("XDG_CONFIG_HOME"); got != env.configHome {
+		t.Fatalf("XDG_CONFIG_HOME = %q, want %q", got, env.configHome)
+	}
+
+	configPath, err := paths.ConfigPath()
+	if err != nil {
+		t.Fatalf("config path: %v", err)
+	}
+	if !strings.HasPrefix(configPath, env.userHome+string(os.PathSeparator)) {
+		t.Fatalf("config path = %q, want prefix %q", configPath, env.userHome)
+	}
+	if filepath.Base(configPath) != "hasp-cli.json" {
+		t.Fatalf("config path = %q, want basename hasp-cli.json", configPath)
+	}
+
+	if err := paths.SaveConfig(paths.CLIConfig{HomeDir: env.home}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("expected scoped config file at %s: %v", configPath, err)
+	}
+}
+
+func TestStopEvalDaemonStopsDetachedDaemon(t *testing.T) {
+	env := newEvalEnv(t)
+
+	if _, _, err := runHasp(t, env, "", "status"); err != nil {
+		t.Fatalf("start daemon via status: %v", err)
+	}
+
+	pidPath := filepath.Join(env.home, "runtime", "daemon.pid")
+	pidData, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatalf("expected pid file before cleanup: %v", err)
+	}
+	pidValue, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil || pidValue <= 0 {
+		t.Fatalf("expected valid daemon pid, got %q err=%v", strings.TrimSpace(string(pidData)), err)
+	}
+
+	stopEvalDaemon(t, env)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, pidErr := os.Stat(pidPath)
+		_, socketErr := os.Stat(env.socket)
+		processErr := exec.Command("ps", "-p", strconv.Itoa(pidValue), "-o", "pid=").Run()
+		if os.IsNotExist(pidErr) && os.IsNotExist(socketErr) && processErr != nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	t.Fatalf("expected daemon cleanup to remove pid file %s, socket %s, and process %d", pidPath, env.socket, pidValue)
+}
+
+func TestStopEvalDaemonSkipsUnverifiedPID(t *testing.T) {
+	env := newEvalEnv(t)
+	runtimeDir := filepath.Join(env.home, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("mkdir runtime dir: %v", err)
+	}
+
+	cmd := exec.Command("sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleeper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	pidPath := filepath.Join(runtimeDir, "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	stopEvalDaemon(t, env)
+
+	if err := exec.Command("ps", "-p", strconv.Itoa(cmd.Process.Pid), "-o", "pid=").Run(); err != nil {
+		t.Fatalf("expected unrelated process %d to survive cleanup: %v", cmd.Process.Pid, err)
+	}
 }

@@ -34,10 +34,42 @@ var (
 )
 
 type ResolvedReference struct {
-	Reference string   `json:"reference"`
-	Alias     string   `json:"alias,omitempty"`
-	ItemName  string   `json:"item_name"`
-	ItemKind  ItemKind `json:"item_kind"`
+	Reference      string   `json:"reference"`
+	Alias          string   `json:"alias,omitempty"`
+	NamedReference string   `json:"named_reference,omitempty"`
+	ItemName       string   `json:"item_name"`
+	ItemKind       ItemKind `json:"item_kind"`
+}
+
+const namedReferencePrefix = "@"
+
+func NamedReference(itemName string) string {
+	trimmed := strings.TrimSpace(itemName)
+	if trimmed == "" {
+		return ""
+	}
+	return namedReferencePrefix + trimmed
+}
+
+func parseNamedReference(reference string) (string, bool) {
+	ref := strings.TrimSpace(reference)
+	if !strings.HasPrefix(ref, namedReferencePrefix) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(ref, namedReferencePrefix)), true
+}
+
+func bindingAliasForItem(binding Binding, itemName string) string {
+	match := ""
+	for alias, existing := range binding.Aliases {
+		if existing != itemName {
+			continue
+		}
+		if match == "" || strings.Compare(alias, match) < 0 {
+			match = alias
+		}
+	}
+	return match
 }
 
 func (h *Handle) ImportPath(ctx context.Context, path string, opts ImportOptions) (ImportResult, error) {
@@ -153,28 +185,37 @@ func (h *Handle) ResolveReference(ctx context.Context, projectPath string, refer
 	}
 
 	aliasItemName, aliasFound := binding.Aliases[ref]
-	item, itemErr := h.GetItem(ref)
-	itemFound := itemErr == nil
-	if aliasFound && itemFound && aliasItemName != item.Name {
-		return ResolvedReference{}, fmt.Errorf("%w: %q", ErrReferenceAmbiguous, ref)
-	}
 	if aliasFound {
-		item, err = h.GetItem(aliasItemName)
+		item, err := h.GetItem(aliasItemName)
 		if err != nil {
 			return ResolvedReference{}, err
 		}
 		return ResolvedReference{
-			Reference: ref,
-			Alias:     ref,
-			ItemName:  item.Name,
-			ItemKind:  item.Kind,
+			Reference:      ref,
+			Alias:          ref,
+			NamedReference: NamedReference(item.Name),
+			ItemName:       item.Name,
+			ItemKind:       item.Kind,
 		}, nil
 	}
-	if itemFound {
+	if itemName, ok := parseNamedReference(ref); ok {
+		if itemName == "" {
+			return ResolvedReference{}, ErrReferenceNotFound
+		}
+		alias := bindingAliasForItem(binding, itemName)
+		if alias == "" {
+			return ResolvedReference{}, fmt.Errorf("%w: %q", ErrReferenceNotFound, ref)
+		}
+		item, err := h.GetItem(itemName)
+		if err != nil {
+			return ResolvedReference{}, err
+		}
 		return ResolvedReference{
-			Reference: ref,
-			ItemName:  item.Name,
-			ItemKind:  item.Kind,
+			Reference:      ref,
+			Alias:          alias,
+			NamedReference: NamedReference(item.Name),
+			ItemName:       item.Name,
+			ItemKind:       item.Kind,
 		}, nil
 	}
 	return ResolvedReference{}, fmt.Errorf("%w: %q", ErrReferenceNotFound, ref)

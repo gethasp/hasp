@@ -32,6 +32,12 @@ var (
 	loadCLIConfigMCPFn        = paths.LoadConfig
 )
 
+const (
+	mcpEnvSessionToken     = "HASP_SESSION_TOKEN"
+	mcpEnvAgentProjectRoot = "HASP_AGENT_PROJECT_ROOT"
+	mcpEnvAgentConsumer    = "HASP_AGENT_CONSUMER"
+)
+
 func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 	handle, err := openHandle(ctx)
 	if err != nil {
@@ -46,6 +52,18 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 		return callExecute(ctx, handle, call)
 	case "hasp_capture":
 		return callCapture(ctx, handle, call)
+	case "hasp_secret_add":
+		return callSecretAdd(ctx, handle, call)
+	case "hasp_secret_update":
+		return callSecretUpdate(ctx, handle, call)
+	case "hasp_secret_delete":
+		return callSecretDelete(ctx, handle, call)
+	case "hasp_secret_get":
+		return callSecretGet(ctx, handle, call)
+	case "hasp_secret_expose":
+		return callSecretExpose(ctx, handle, call)
+	case "hasp_secret_hide":
+		return callSecretHide(ctx, handle, call)
 	case "hasp_redact":
 		text := stringArg(call.Arguments, "text", "")
 		result := redactor.Apply([]byte(text), handle.ListItems())
@@ -56,9 +74,9 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 }
 
 func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
-	projectRoot := stringArg(call.Arguments, "project_root", ".")
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
 	grantProject := stringArg(call.Arguments, "grant_project", "")
-	session, err := ensureSessionFn(ctx, projectRoot, stringArg(call.Arguments, "session_token", ""), stringArg(call.Arguments, "host_label", "mcp-stdio"))
+	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +104,7 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 }
 
 func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
-	projectRoot := stringArg(call.Arguments, "project_root", ".")
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
 	if _, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot); err != nil {
 		return nil, err
 	}
@@ -124,8 +142,8 @@ func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[st
 }
 
 func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
-	projectRoot := stringArg(call.Arguments, "project_root", ".")
-	session, err := ensureSessionFn(ctx, projectRoot, stringArg(call.Arguments, "session_token", ""), stringArg(call.Arguments, "host_label", "mcp-stdio"))
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
 	if err != nil {
 		return nil, err
 	}
@@ -182,8 +200,8 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 }
 
 func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
-	projectRoot := stringArg(call.Arguments, "project_root", ".")
-	session, err := ensureSessionFn(ctx, projectRoot, stringArg(call.Arguments, "session_token", ""), stringArg(call.Arguments, "host_label", "mcp-stdio"))
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +237,13 @@ func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"reference": result.Reference, "alias": result.Alias, "item_name": result.ItemName, "item_kind": result.ItemKind}, nil
+	return map[string]any{
+		"reference":       result.Reference,
+		"alias":           result.Alias,
+		"item_name":       result.ItemName,
+		"item_kind":       result.ItemKind,
+		"named_reference": store.NamedReference(result.ItemName),
+	}, nil
 }
 
 func openHandle(ctx context.Context) (*store.Handle, error) {
@@ -232,6 +256,29 @@ func openHandle(ctx context.Context) (*store.Handle, error) {
 		return vaultStore.OpenWithPassword(ctx, password)
 	}
 	return vaultStore.OpenWithConvenienceUnlock(ctx)
+}
+
+func defaultMCPProjectRoot() string {
+	if value := strings.TrimSpace(os.Getenv(mcpEnvAgentProjectRoot)); value != "" {
+		return value
+	}
+	return "."
+}
+
+func defaultOptionalMCPProjectRoot() string {
+	return strings.TrimSpace(os.Getenv(mcpEnvAgentProjectRoot))
+}
+
+func defaultMCPSessionToken(call toolCall) string {
+	return stringArg(call.Arguments, "session_token", strings.TrimSpace(os.Getenv(mcpEnvSessionToken)))
+}
+
+func defaultMCPHostLabel(call toolCall) string {
+	defaultLabel := "mcp-stdio"
+	if consumer := strings.TrimSpace(os.Getenv(mcpEnvAgentConsumer)); consumer != "" {
+		defaultLabel = "agent:" + consumer
+	}
+	return stringArg(call.Arguments, "host_label", defaultLabel)
 }
 
 func appendAuditApproval(bindingID string, itemName string) {
@@ -260,6 +307,9 @@ func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectR
 	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 	if err != nil {
 		return store.Binding{}, nil, err
+	}
+	if !pathLooksLikeGitRepoMCP(root) {
+		return binding, visible, nil
 	}
 	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepoMCP(root)
 	if _, err := handle.UpsertBinding(ctx, root, cloneAliasSetMCP(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {

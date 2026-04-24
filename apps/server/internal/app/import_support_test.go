@@ -129,7 +129,7 @@ func TestImportSupportHelpers(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := encodeImportCommandResult(&out, stdinPrepared.Preview, &store.ImportResult{Imported: []store.ImportedItem{{Name: "API_TOKEN", Kind: store.ItemKindKV}}}, true); err != nil {
+	if err := encodeImportCommandResultWithMode(&out, stdinPrepared.Preview, &store.ImportResult{Imported: []store.ImportedItem{{Name: "API_TOKEN", Kind: store.ItemKindKV}}}, true, true); err != nil {
 		t.Fatalf("encode import result: %v", err)
 	}
 	var payload map[string]any

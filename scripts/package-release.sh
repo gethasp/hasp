@@ -30,6 +30,7 @@ formula_path="$formula_dir/hasp.rb"
 bash ./scripts/build.sh
 /bin/cp -f "$repo_root/bin/hasp" "$artifact_dir/bin/hasp"
 /bin/cp -f "$repo_root/LICENSE" "$artifact_dir/LICENSE"
+bash ./scripts/generate-supply-chain-artifacts.sh "$artifact_dir" >/dev/null
 
 packaged_scripts=(
   hasp-common.sh
@@ -39,6 +40,7 @@ packaged_scripts=(
   hasp-uninstall-release.sh
   hasp-sign-release.sh
   hasp-verify-release.sh
+  generate-supply-chain-artifacts.sh
   render-homebrew-formula.sh
   hasp-install-hooks.sh
   hasp-pre-commit.sh
@@ -64,6 +66,10 @@ release_files=(
   'OPERATOR_GUIDE.md'
   'PRODUCTION_GUIDE.md'
   'RELEASE_MANIFEST'
+  'CODE_SIGNING_STATUS.json'
+  'REPRODUCIBLE_BUILD.json'
+  'sbom.spdx.json'
+  'slsa-provenance.json'
   'bin/hasp'
   'agent-profiles/README.md'
   'agent-profiles/generic.md'
@@ -78,6 +84,7 @@ release_files=(
   'scripts/hasp-upgrade-release.sh'
   'scripts/hasp-uninstall-release.sh'
   'scripts/hasp-verify-release.sh'
+  'scripts/generate-supply-chain-artifacts.sh'
   'scripts/render-homebrew-formula.sh'
 )
 EOF
@@ -105,6 +112,10 @@ Day-zero release files next to the tarball:
 - `<artifact>.tar.gz.asc`
 - `<artifact>_bin.asc`
 - `Formula/hasp.rb`
+- `sbom.spdx.json`
+- `slsa-provenance.json`
+- `CODE_SIGNING_STATUS.json`
+- `REPRODUCIBLE_BUILD.json`
 
 Start with:
 

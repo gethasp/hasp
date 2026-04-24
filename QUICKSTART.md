@@ -11,7 +11,32 @@ For the simplest first-run path, use:
 hasp setup
 ```
 
+Interactive setup can now stop after machine setup, skip agent setup, or
+continue directly into adding a secret and connecting one app.
+
+To learn the CLI directly from the binary, use:
+
+```bash
+hasp --help
+hasp help secret
+hasp help app connect
+```
+
 The manual steps below remain the fallback path and the troubleshooting reference.
+
+## Current UX
+
+The current build supports both the lower-level broker commands and the newer
+consumer commands:
+
+- `hasp secret add`
+- `hasp app connect`
+- `hasp app run`
+- `hasp app install`
+- `hasp agent connect`
+
+Use the consumer commands for normal vault, app, and agent setup. Keep
+`hasp run`, `hasp inject`, and `hasp write-env` for advanced brokered flows.
 
 ## 1. Build or download a release
 
@@ -51,6 +76,12 @@ bin/hasp import .env
 bin/hasp import service-account.json
 ```
 
+Or add one directly without creating a temp file:
+
+```bash
+bin/hasp secret add
+```
+
 ## 4. Bind a repo and install guardrails
 
 ```bash
@@ -58,6 +89,14 @@ bin/hasp bootstrap \
   --profile codex-cli \
   --project-root /path/to/repo \
   --alias secret_01=API_TOKEN
+```
+
+If you are already inside the repo and just want to save a secret and use it
+there, the human-first path is now:
+
+```bash
+cd /path/to/repo
+bin/hasp secret add
 ```
 
 If you already enabled automatic repo adoption and want to enroll several local

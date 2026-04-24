@@ -4,15 +4,73 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$repo_root"
 
+stop_scoped_daemon() {
+  local bin_path="$1"
+  local hasp_home="$2"
+  local socket_path="${3:-}"
+  [[ -x "$bin_path" && -n "$hasp_home" ]] || return 0
+
+  local pid_file="$hasp_home/runtime/daemon.pid"
+  local effective_socket="$socket_path"
+  local pid=""
+  local verified_pid=""
+  if [[ -z "$effective_socket" ]]; then
+    effective_socket="$hasp_home/runtime/daemon.sock"
+  fi
+  if [[ -f "$pid_file" ]]; then
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+    if pid_matches_scoped_daemon "$pid" "$effective_socket"; then
+      verified_pid="$pid"
+    fi
+  fi
+
+  if [[ -n "$verified_pid" ]]; then
+    env HASP_HOME="$hasp_home" HASP_SOCKET="$effective_socket" "$bin_path" daemon stop >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "$verified_pid" ]]; then
+    kill "$verified_pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -9 "$verified_pid" >/dev/null 2>&1 || true
+  fi
+
+  /bin/rm -f "$pid_file" "$effective_socket"
+}
+
+pid_matches_scoped_daemon() {
+  local pid="$1"
+  local socket_path="$2"
+  [[ -n "$pid" && -n "$socket_path" ]] || return 1
+
+  local command=""
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *" daemon serve"* ]] || return 1
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -a -p "$pid" -U -Fn 2>/dev/null | grep -F "n$socket_path" >/dev/null 2>&1
+}
+
 make verify-ci
 bash ./scripts/release-smoke.sh
 make evals
 make release-smoke
 
 temp_home="$(mktemp -d)"
-trap 'rm -rf "$temp_home"' EXIT
+conformance_gpg_home="$(mktemp -d)"
+artifact_dir=""
+cleanup_conformance() {
+  stop_scoped_daemon "./bin/hasp" "$temp_home"
+  /bin/rm -rf "$temp_home" "$conformance_gpg_home" "${artifact_dir:-}"
+}
+trap cleanup_conformance EXIT
 export HASP_HOME="$temp_home"
 export HASP_MASTER_PASSWORD="conformance-password"
+chmod 700 "$conformance_gpg_home"
+export GNUPGHOME="$conformance_gpg_home"
+unset HASP_RELEASE_GPG_KEY_ID
+unset HASP_RELEASE_GPG_HOMEDIR
+unset HASP_RELEASE_GPG_PASSPHRASE
+unset HASP_RELEASE_GPG_PASSPHRASE_FILE
+export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
 
 bash ./scripts/build.sh
 ./bin/hasp init >/dev/null
@@ -54,7 +112,6 @@ esac
 
 tarball="$(bash ./scripts/package-release.sh)"
 artifact_dir="$(mktemp -d)"
-trap 'rm -rf "$temp_home" "$artifact_dir"' EXIT
 tar -C "$artifact_dir" -xzf "$tarball"
 artifact_root="$(find "$artifact_dir" -maxdepth 1 -type d -name 'hasp_*' | head -n 1)"
 test -x "$artifact_root/bin/hasp"

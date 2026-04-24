@@ -42,12 +42,7 @@ func (m *memorySetupKeyring) Delete(service string, account string) error {
 
 func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *testing.T) {
 	lockAppSeams(t)
-	userHome := t.TempDir()
-	origHome := setupUserHomeDirFn
-	defer func() { setupUserHomeDirFn = origHome }()
-	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
-	t.Setenv("HOME", userHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
+	harness := newSetupHarness(t)
 	t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
 
 	err := runWithStarter(
@@ -55,7 +50,7 @@ func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *te
 		[]string{
 			"setup",
 			"--non-interactive",
-			"--hasp-home", filepath.Join(t.TempDir(), "hasp-home"),
+			"--hasp-home", filepath.Join(harness.userHome, "hasp-home"),
 			"--master-password-env", "SETUP_MASTER_PASSWORD",
 			"--agent", "claude-code",
 			"--bind-imports",
@@ -73,12 +68,13 @@ func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *te
 }
 
 func TestUpsertCodexMCPServerConfigReplacesExistingBlock(t *testing.T) {
-	updated := upsertCodexMCPServerConfig([]byte("model = \"gpt-5.4\"\n"), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
-	if !strings.Contains(updated, "[mcp_servers.hasp]") || !strings.Contains(updated, "command = \"/opt/homebrew/bin/hasp\"") {
+	wrapperPath := "/tmp/hasp-home/bin/hasp-agent-codex-cli"
+	updated := upsertCodexMCPServerConfig([]byte("model = \"gpt-5.4\"\n"), "/tmp/hasp-home", wrapperPath, "codex-cli")
+	if !strings.Contains(updated, "[mcp_servers.hasp]") || !strings.Contains(updated, "command = "+strconvQuote(wrapperPath)) {
 		t.Fatalf("missing hasp mcp block: %s", updated)
 	}
-	if !strings.Contains(updated, "HASP_HOME = \"/tmp/hasp-home\"") {
-		t.Fatalf("missing HASP_HOME env block: %s", updated)
+	if strings.Contains(updated, "args =") || strings.Contains(updated, "HASP_HOME =") {
+		t.Fatalf("expected wrapper-script config without raw args/env block: %s", updated)
 	}
 
 	replaced := upsertCodexMCPServerConfig([]byte(`
@@ -86,14 +82,13 @@ model = "gpt-5.4"
 
 [mcp_servers.hasp]
 command = "old"
-args = ["old"]
 
 [mcp_servers.hasp.env]
 HASP_HOME = "/old"
 
 [notice]
 hide = true
-`), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
+`), "/tmp/hasp-home", wrapperPath, "codex-cli")
 	if strings.Contains(replaced, "command = \"old\"") || strings.Contains(replaced, "/old") {
 		t.Fatalf("old hasp block was not replaced: %s", replaced)
 	}
@@ -103,7 +98,8 @@ hide = true
 }
 
 func TestUpsertJSONMCPServerConfigPreservesExistingContent(t *testing.T) {
-	updated, err := upsertJSONMCPServerConfig([]byte(`{"theme":"dark","mcpServers":{"other":{"command":"foo","args":["bar"]}}}`), "/tmp/hasp-home", "/opt/homebrew/bin/hasp")
+	wrapperPath := "/tmp/hasp-home/bin/hasp-agent-claude-code"
+	updated, err := upsertJSONMCPServerConfig([]byte(`{"theme":"dark","mcpServers":{"other":{"command":"foo","args":["bar"]}}}`), "/tmp/hasp-home", wrapperPath, "claude-code")
 	if err != nil {
 		t.Fatalf("upsert json config: %v", err)
 	}
@@ -125,19 +121,21 @@ func TestUpsertJSONMCPServerConfigPreservesExistingContent(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected hasp entry, got %+v", mcpServers["hasp"])
 	}
-	if haspEntry["command"] != "/opt/homebrew/bin/hasp" {
+	if haspEntry["command"] != wrapperPath {
 		t.Fatalf("expected absolute hasp command path, got %+v", haspEntry)
 	}
-	envMap, ok := haspEntry["env"].(map[string]any)
-	if !ok || envMap["HASP_HOME"] != "/tmp/hasp-home" {
-		t.Fatalf("expected HASP_HOME env in MCP entry, got %+v", haspEntry)
+	if _, ok := haspEntry["args"]; ok {
+		t.Fatalf("expected wrapper-script config without raw args, got %+v", haspEntry["args"])
+	}
+	if _, ok := haspEntry["env"]; ok {
+		t.Fatalf("expected wrapper-script config without raw env, got %+v", haspEntry["env"])
 	}
 }
 
 func TestSetupCommandNonInteractive(t *testing.T) {
 	lockAppSeams(t)
 
-	userHome := t.TempDir()
+	harness := newSetupHarness(t)
 	haspHome := filepath.Join(t.TempDir(), "hasp-home")
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -153,9 +151,6 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 
 	keyring := &memorySetupKeyring{}
 	origNewStore := newVaultStoreFn
-	origHome := setupUserHomeDirFn
-	origLookPath := setupLookPathFn
-	origExecPath := setupExecutableFn
 	origRead := setupReadFileFn
 	origWrite := setupWriteFileFn
 	origMkdir := setupMkdirAllFn
@@ -164,9 +159,6 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 	origNow := setupNowFn
 	defer func() {
 		newVaultStoreFn = origNewStore
-		setupUserHomeDirFn = origHome
-		setupLookPathFn = origLookPath
-		setupExecutableFn = origExecPath
 		setupReadFileFn = origRead
 		setupWriteFileFn = origWrite
 		setupMkdirAllFn = origMkdir
@@ -176,9 +168,7 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 	}()
 
 	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
-	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
-	setupLookPathFn = func(string) (string, error) { return "/opt/homebrew/bin/hasp", nil }
-	setupExecutableFn = func() (string, error) { return "/opt/homebrew/bin/hasp", nil }
+	harness.stubBinary(t, "/opt/homebrew/bin/hasp")
 	setupReadFileFn = os.ReadFile
 	setupWriteFileFn = os.WriteFile
 	setupMkdirAllFn = os.MkdirAll
@@ -186,8 +176,6 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 	setupCreateTempFn = os.CreateTemp
 	setupNowFn = func() time.Time { return time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC) }
 
-	t.Setenv("HOME", userHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
 	t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
 
 	var stdout bytes.Buffer
@@ -253,8 +241,8 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 		t.Fatalf("stat vault state: %v", err)
 	}
 
-	claudeConfig := filepath.Join(userHome, ".claude.json")
-	cursorConfig := filepath.Join(userHome, ".cursor", "mcp.json")
+	claudeConfig := filepath.Join(harness.userHome, ".claude.json")
+	cursorConfig := filepath.Join(harness.userHome, ".cursor", "mcp.json")
 	for _, path := range []string{claudeConfig, cursorConfig} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -264,11 +252,8 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 		if strings.Contains(text, "correct horse battery staple") {
 			t.Fatalf("config leaked master password: %s", text)
 		}
-		if !strings.Contains(text, "\"command\": \"/opt/homebrew/bin/hasp\"") {
+		if !strings.Contains(text, "\"command\": ") || !strings.Contains(text, "hasp-agent-") {
 			t.Fatalf("config missing hasp MCP command: %s", text)
-		}
-		if !strings.Contains(text, "\"HASP_HOME\": "+strconvQuote(haspHome)) {
-			t.Fatalf("config missing custom HASP_HOME: %s", text)
 		}
 	}
 
@@ -319,6 +304,60 @@ func TestSetupCommandNonInteractive(t *testing.T) {
 		if agent.Changed {
 			t.Fatalf("expected idempotent config write, got %+v", summary.Agents)
 		}
+	}
+}
+
+func TestSetupCommandNonInteractiveWithoutAgents(t *testing.T) {
+	lockAppSeams(t)
+
+	userHome := t.TempDir()
+	haspHome := filepath.Join(t.TempDir(), "hasp-home")
+	keyring := &memorySetupKeyring{}
+	origNewStore := newVaultStoreFn
+	origHome := setupUserHomeDirFn
+	defer func() {
+		newVaultStoreFn = origNewStore
+		setupUserHomeDirFn = origHome
+	}()
+
+	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
+	setupUserHomeDirFn = func() (string, error) { return userHome, nil }
+
+	t.Setenv("HOME", userHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(userHome, ".config"))
+	t.Setenv("SETUP_MASTER_PASSWORD", "correct horse battery staple")
+
+	var stdout bytes.Buffer
+	err := runWithStarter(
+		context.Background(),
+		[]string{
+			"setup",
+			"--non-interactive",
+			"--hasp-home", haspHome,
+			"--master-password-env", "SETUP_MASTER_PASSWORD",
+			"--enable-convenience-unlock=false",
+		},
+		bytes.NewBuffer(nil),
+		&stdout,
+		io.Discard,
+		&fakeStarter{},
+	)
+	if err != nil {
+		t.Fatalf("setup command without agents: %v", err)
+	}
+
+	var summary setupSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode setup summary without agents: %v", err)
+	}
+	if summary.InitState != "created" {
+		t.Fatalf("unexpected init state without agents: %+v", summary)
+	}
+	if len(summary.Agents) != 0 {
+		t.Fatalf("expected no agent outcomes, got %+v", summary.Agents)
+	}
+	if summary.Binding != nil {
+		t.Fatalf("expected no binding without repo, got %+v", summary.Binding)
 	}
 }
 

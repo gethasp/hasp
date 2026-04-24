@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -169,6 +168,7 @@ func executeCommand(ctx context.Context, args []string, stdout io.Writer, stderr
 func writeEnvCommand(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, s starter) error {
 	fs := flag.NewFlagSet("write-env", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	sessionToken := fs.String("session-token", "", "")
 	outputPath := fs.String("output", "", "")
@@ -272,12 +272,16 @@ func writeEnvCommand(ctx context.Context, args []string, stdout io.Writer, stder
 		_, _ = fmt.Fprintln(stderr, warning)
 	}
 	appendAudit(audit.EventWriteEnv, "user", map[string]any{"project_root": *projectRoot, "output_path": *outputPath, "entries": len(lines), "warning": warning})
-	return json.NewEncoder(stdout).Encode(map[string]any{"output_path": *outputPath, "entries": len(lines), "warning": warning})
+	payload := map[string]any{"output_path": *outputPath, "entries": len(lines), "warning": warning}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderWriteEnvResult(w, *outputPath, len(lines), warning)
+	})
 }
 
 func checkRepoCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("check-repo", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	allowManagedSecrets := fs.Bool("allow-managed-secrets", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -322,13 +326,19 @@ func checkRepoCommand(ctx context.Context, args []string, stdout io.Writer) erro
 	}
 	if len(matches) > 0 {
 		appendAudit(audit.EventRepoBlock, "user", map[string]any{"project_root": root, "matches": len(matches), "override": *allowManagedSecrets})
-		_ = json.NewEncoder(stdout).Encode(map[string]any{"matches": matches, "override": *allowManagedSecrets})
+		payload := map[string]any{"matches": matches, "override": *allowManagedSecrets}
+		_ = renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets)
+		})
 		if *allowManagedSecrets {
 			return nil
 		}
 		return errors.New("managed secrets detected in repository files")
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"matches": matches, "override": *allowManagedSecrets})
+	payload := map[string]any{"matches": matches, "override": *allowManagedSecrets}
+	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderRepoCheckResult(w, root, matches, *allowManagedSecrets)
+	})
 }
 
 func parseGrantScope(value string) store.GrantScope {

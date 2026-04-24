@@ -128,6 +128,10 @@ func convenienceGrantKey(bindingID string, destinationPath string, resolvedSet [
 	return bindingID + "|" + hashString(destinationPath) + "|" + hashResolvedSet(resolvedSet)
 }
 
+func plaintextGrantKey(sessionToken string, itemName string, action PlaintextAction) string {
+	return sessionToken + "|" + itemName + "|" + string(action)
+}
+
 func hashString(value string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
 	return hex.EncodeToString(sum[:])

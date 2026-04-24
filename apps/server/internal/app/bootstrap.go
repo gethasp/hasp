@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -68,6 +67,7 @@ type bootstrapOptions struct {
 	DefaultPolicy store.SecretPolicy
 	InstallHooks  bool
 	Verify        bool
+	JSONOutput    bool
 	Aliases       aliasFlags
 	BindItems     stringListFlags
 	ImportPaths   stringListFlags
@@ -84,11 +84,13 @@ func bootstrapCommandWithInput(ctx context.Context, args []string, stdin io.Read
 	if len(args) > 0 {
 		switch args[0] {
 		case "profiles":
-			return bootstrapProfilesCommand(stdout)
+			return bootstrapProfilesCommand(args[1:], stdout)
 		case "doctor":
 			return bootstrapDoctorCommand(ctx, args[1:], stdin, stdout)
 		case "generic":
 			return bootstrapGenericCommand(ctx, args[1:], stdin, stdout, verifyFn)
+		case "print-config":
+			return bootstrapPrintConfigCommand(args[1:], stdout)
 		}
 	}
 
@@ -122,6 +124,7 @@ func parseBootstrapOptions(args []string, allowGeneric bool) (bootstrapOptions, 
 	}
 	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
 	profileID := fs.String("profile", "", "")
 	projectRoot := fs.String("project-root", ".", "")
 	defaultPolicy := fs.String("default-policy", string(store.PolicySession), "")
@@ -149,6 +152,7 @@ func parseBootstrapOptions(args []string, allowGeneric bool) (bootstrapOptions, 
 		DefaultPolicy: store.SecretPolicy(*defaultPolicy),
 		InstallHooks:  *installHooks,
 		Verify:        *verify,
+		JSONOutput:    *jsonOutput,
 		Aliases:       aliases,
 		BindItems:     bindItems,
 		ImportPaths:   importPaths,
@@ -201,16 +205,29 @@ func genericBootstrapTarget() bootstrapTarget {
 	}
 }
 
-func bootstrapProfilesCommand(stdout io.Writer) error {
-	return bootstrapProfilesCommandWith(stdout, profiles.LoadCatalog, profiles.LoadReleaseGates)
+func bootstrapProfilesCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("bootstrap profiles", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp bootstrap profiles [--json]")
+	}
+	return bootstrapProfilesCommandWithMode(stdout, *jsonOutput, profiles.LoadCatalog, profiles.LoadReleaseGates)
 }
 
 func bootstrapProfilesCommandWith(stdout io.Writer, loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) error {
+	return bootstrapProfilesCommandWithMode(stdout, false, loadCatalog, loadGates)
+}
+
+func bootstrapProfilesCommandWithMode(stdout io.Writer, jsonOutput bool, loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) error {
 	result, err := bootstrapProfileListing(loadCatalog, loadGates)
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(result)
+	return renderBootstrapProfileListingMaybeHuman(stdout, jsonOutput, result)
 }
 
 func bootstrapProfileListing(loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) (map[string]any, error) {
@@ -317,7 +334,7 @@ func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstra
 		Notes:              bootstrapNotes(target, opts, len(imported) > 0),
 		NextSteps:          bootstrapNextSteps(target.Profile),
 	}
-	return json.NewEncoder(stdout).Encode(result)
+	return renderBootstrapJSONOrHuman(stdout, opts.JSONOutput, result)
 }
 
 func applyBootstrapImports(ctx context.Context, handle *store.Handle, opts bootstrapOptions, binding store.Binding, stdin io.Reader) ([]importPreview, []store.ImportedItem, store.Binding, []store.VisibleReference, error) {

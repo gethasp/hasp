@@ -7,7 +7,8 @@ This page covers the public release path for the curated HASP repository.
 Public releases ship:
 
 - versioned GitHub release assets
-- versioned hosted artifacts backed by Cloudflare R2
+- optionally mirrored hosted artifacts backed by Cloudflare R2 when release
+  mirror credentials are configured
 - `SHA256SUMS`
 - `SHA256SUMS.asc`
 - detached signatures for the tarball and packaged binary
@@ -16,13 +17,15 @@ Public releases ship:
 
 ## Stable download contract
 
-The hosted release layout is:
+GitHub Releases are the canonical public release asset location.
+
+When the R2 mirror is configured, the hosted release layout is:
 
 ```text
 https://downloads.gethasp.com/hasp/releases/<tag>/
 ```
 
-Each release directory should include:
+Each GitHub release and each mirrored release directory should include:
 
 - `hasp_<version>_<os>_<arch>.tar.gz`
 - `SHA256SUMS`
@@ -55,13 +58,16 @@ It does not remove `HASP_HOME` or repo hooks unless the operator asks for that e
 
 The Homebrew formula must consume the published artifact bytes, not rebuild from the repository source tree.
 
-It should point at the hosted artifact URL and the published SHA256.
+It should point at the canonical GitHub release asset URL unless the R2 mirror
+has been verified for the same byte set.
 
 ## Operator note
 
 The local packaged lifecycle and the hosted publication flow are separate concerns:
 
 - local scripts verify, install, upgrade, and uninstall
-- the publication flow uploads the signed bytes and keeps the hosted URLs stable
+- the publication flow uploads the signed bytes and may mirror the same bytes to
+  hosted URLs
 
-That separation is intentional. The local trust path must still work if the hosted publication layer is unavailable.
+That separation is intentional. The local trust path must still work if the R2
+hosted publication layer is unavailable.

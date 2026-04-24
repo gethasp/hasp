@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 
 func TestSessionStoreOpenAndRevoke(t *testing.T) {
 	store := NewSessionStore()
-	session, err := store.Open("test-host", "/tmp/project/../project", time.Minute)
+	session, err := store.Open("test-host", "/tmp/project/../project", time.Minute, false, "")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestSessionStoreOpenAndRevoke(t *testing.T) {
 
 func TestSessionStoreResolveExtendsActivity(t *testing.T) {
 	store := NewSessionStore()
-	session, err := store.Open("test-host", "/tmp/project", time.Minute)
+	session, err := store.Open("test-host", "/tmp/project", time.Minute, false, "")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRPCServerOpenSessionAndStatus(t *testing.T) {
 		t.Fatalf("register rpc server: %v", err)
 	}
 
-	session, err := server.sessions.Open("agent", "/tmp/project", time.Minute)
+	session, err := server.sessions.Open("agent", "/tmp/project", time.Minute, true, "agent")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -111,6 +111,9 @@ func TestRPCServerOpenSessionAndStatus(t *testing.T) {
 	}
 	if status.Sessions[0].ID != session.ID {
 		t.Fatalf("status session id = %q, want %q", status.Sessions[0].ID, session.ID)
+	}
+	if !status.Sessions[0].AgentSafe || status.Sessions[0].ConsumerName != "agent" {
+		t.Fatalf("expected agent-safe session metadata, got %+v", status.Sessions[0])
 	}
 	select {
 	case <-ctx.Done():
@@ -143,6 +146,7 @@ func TestOpenSessionClampsTTL(t *testing.T) {
 }
 
 func TestManagerEnsureDaemonStartsServer(t *testing.T) {
+	lockRuntimeSeams(t)
 	baseDir := t.TempDir()
 	t.Setenv("HASP_HOME", baseDir)
 	socketPath := filepath.Join("/tmp", fmt.Sprintf("hasp-%d.sock", time.Now().UnixNano()))
@@ -157,12 +161,22 @@ func TestManagerEnsureDaemonStartsServer(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	runErr := make(chan error, 1)
+	defer func() {
+		cancel()
+		select {
+		case err := <-runErr:
+			if err != nil {
+				t.Fatalf("daemon shutdown: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for daemon shutdown")
+		}
+	}()
 
 	original := spawnDaemonProcess
 	t.Cleanup(func() { spawnDaemonProcess = original })
 	spawnDaemonProcess = func(context.Context) error {
-		runErr := make(chan error, 1)
 		go func() {
 			daemonCtx, daemonCancel := context.WithCancel(context.Background())
 			defer daemonCancel()
@@ -262,7 +276,7 @@ func TestRemoveStaleSocketRejectsRegularFile(t *testing.T) {
 
 func TestSessionStorePrunesExpiredSessions(t *testing.T) {
 	store := NewSessionStore()
-	session, err := store.Open("test-host", "/tmp/project", time.Millisecond)
+	session, err := store.Open("test-host", "/tmp/project", time.Millisecond, false, "")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -278,7 +292,7 @@ func TestSessionStoreResolveExpiredAndMissing(t *testing.T) {
 	if _, ok := store.Resolve("missing"); ok {
 		t.Fatal("expected missing session resolve to fail")
 	}
-	session, err := store.Open("test-host", "/tmp/project", time.Millisecond)
+	session, err := store.Open("test-host", "/tmp/project", time.Millisecond, false, "")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -342,7 +356,7 @@ func TestBrokerRPCRevokeSessionMethod(t *testing.T) {
 		startedAt: time.Now().UTC(),
 		sessions:  NewSessionStore(),
 	}
-	session, err := broker.sessions.Open("agent", "/tmp/project", time.Minute)
+	session, err := broker.sessions.Open("agent", "/tmp/project", time.Minute, true, "agent")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -407,6 +421,7 @@ func TestEnsureDaemonRemovesUntrustedSocket(t *testing.T) {
 }
 
 func TestEnsureDaemonFailurePaths(t *testing.T) {
+	lockRuntimeSeams(t)
 	baseDir := t.TempDir()
 	socketPath := filepath.Join("/tmp", fmt.Sprintf("hasp-failure-%d.sock", time.Now().UnixNano()))
 	t.Setenv("HASP_HOME", baseDir)
@@ -448,6 +463,7 @@ func TestEnsureDaemonFailurePaths(t *testing.T) {
 }
 
 func TestRunDaemonListenFailure(t *testing.T) {
+	lockRuntimeSeams(t)
 	baseDir := t.TempDir()
 	socketPath := filepath.Join("/tmp", fmt.Sprintf("hasp-listen-fail-%d.sock", time.Now().UnixNano()))
 	t.Setenv("HASP_HOME", baseDir)
@@ -491,6 +507,7 @@ func TestSessionHelpers(t *testing.T) {
 }
 
 func TestCanonicalProjectRootAndCurrentUserFallbacks(t *testing.T) {
+	lockRuntimeSeams(t)
 	origGit := gitTopLevelFn
 	origUser := currentUserFn
 	defer func() {
@@ -520,8 +537,9 @@ func TestCanonicalProjectRootAndCurrentUserFallbacks(t *testing.T) {
 }
 
 func TestSessionStoreOpenValidationAndGitRootResolution(t *testing.T) {
+	lockRuntimeSeams(t)
 	store := NewSessionStore()
-	if _, err := store.Open("test-host", "/tmp/project", 0); err == nil {
+	if _, err := store.Open("test-host", "/tmp/project", 0, false, ""); err == nil {
 		t.Fatal("expected ttl validation error")
 	}
 
@@ -534,6 +552,7 @@ func TestSessionStoreOpenValidationAndGitRootResolution(t *testing.T) {
 }
 
 func TestStartDaemonFailurePath(t *testing.T) {
+	lockRuntimeSeams(t)
 	origSpawn := spawnDaemonProcess
 	defer func() { spawnDaemonProcess = origSpawn }()
 	spawnDaemonProcess = func(context.Context) error { return fmt.Errorf("spawn fail") }
@@ -547,6 +566,7 @@ func TestStartDaemonFailurePath(t *testing.T) {
 }
 
 func TestRunDaemonChmodAndPidWriteFailures(t *testing.T) {
+	lockRuntimeSeams(t)
 	baseDir := t.TempDir()
 	socketPath := filepath.Join("/tmp", fmt.Sprintf("hasp-run-fail-%d.sock", time.Now().UnixNano()))
 	t.Setenv("HASP_HOME", baseDir)

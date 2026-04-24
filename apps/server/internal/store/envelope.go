@@ -86,5 +86,8 @@ func readState(vaultKey []byte, blob sealedBlob) (persistedState, error) {
 	if state.ConvenienceGrants == nil {
 		state.ConvenienceGrants = map[string]ConvenienceGrant{}
 	}
+	if state.PlaintextGrants == nil {
+		state.PlaintextGrants = map[string]PlaintextGrant{}
+	}
 	return state, nil
 }

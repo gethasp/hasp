@@ -4,6 +4,54 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.28]
+
+- Harden the agent-safe path by switching generated agent configs to managed wrapper scripts, registering protected process trees with the runtime daemon, and resolving agent-safe state from process ancestry before weaker env/repo fallbacks.
+- Keep plaintext access inside agent-safe sessions brokered through one-time local approval grants, suppress native approval prompts under automated tests only, and preserve the production operator approval path.
+- Raise and retain the Go verification bar at `100.0%` coverage while splitting the agent setup, secret prompt/plaintext policy, and setup coverage hotspots into smaller maintenance boundaries.
+- Fix single-tarball verification for the public multi-platform release manifest so operators can verify one downloaded tarball without also downloading every sibling platform archive.
+
+## [v0.1.27]
+
+- Stop temp-home eval and release flows from leaving stray `hasp daemon serve` processes behind, and scope eval-side CLI config writes to the test home instead of the real machine config.
+- Harden the cleanup fallback so pidfile-based teardown first verifies that the recorded PID still belongs to the expected scoped HASP daemon before it invokes `daemon stop` or sends kill signals.
+- Raise the repo-wide Go verification bar back to `100.0%` coverage and split setup presentation helpers out of `setup.go` so the setup workflow and terminal rendering are no longer concentrated in one file.
+
+## [v0.1.26]
+
+- Harden macOS convenience unlock by targeting the explicit default keychain path for keychain set, get, and delete operations instead of relying on ambient search-list behavior.
+- Retry the setup-time convenience-unlock verification step before declaring it unavailable, and surface a concrete convenience-unlock detail in setup output when macOS still blocks the keychain path.
+- Keep the repo verification bar at `100.0%` coverage and publish the patch through the signed release, R2 mirror, and Homebrew tap flow.
+
+## [v0.1.25]
+
+- Extend the launcher consent path so HASP can add its launcher directory to shell PATH, but only after the user says yes in interactive flows or passes `--add-to-path=true` in scripts.
+- Keep the new topic-based help surface intact while covering the PATH-edit code and rollback paths back to a deterministic `100.0%` Go coverage gate.
+- Publish the patch through the real HASP signing key, the GitHub release flow, and the configured R2 mirror.
+
+## [v0.1.24]
+
+- Add a real topic-based CLI help surface under `hasp --help`, `hasp help ...`, and command-local `--help` routes so users can learn the vault, app, agent, project, and broker concepts directly from the binary.
+- Make launcher creation explicit in the app flow: interactive `hasp app connect` now asks before it writes a launcher, while scripted runs use `--install=true` or `--install=false`.
+- Keep the repo coverage gate at `100.0%`, keep conformance green, and publish the release with the real HASP signing key plus the configured R2 mirror path.
+
+## [v0.1.23]
+
+- Re-cut the consumer-first app and agent release with the real HASP release signing key so the published checksums, tarballs, and detached signatures no longer rely on ephemeral local signing.
+- Keep the shipped `hasp secret`, `hasp app`, and `hasp agent` surfaces from `v0.1.22` unchanged while publishing a clean signed patch release.
+
+## [v0.1.22]
+
+- Add the consumer-first `hasp app` and `hasp agent` surfaces, including machine-scoped app consumers, repo-scoped agent connections, audited consumer profile storage, and runtime delivery for env vars, temporary files, and temporary dotenv bundles.
+- Harden launcher ergonomics by validating app consumer names, forwarding runtime arguments through `hasp app run`, protecting unmanaged launcher paths from silent overwrite, and preserving rollback coverage for connect, install, and disconnect failure paths.
+- Update the V1 and quickstart docs around the shipped consumer model while keeping the Go verification gate at `100.0%` coverage and the full conformance lane green.
+
+## [v0.1.21]
+
+- Add the human-first `hasp secret` CLI surface for add, update, delete, get, list, expose, and hide, plus matching MCP secret tools so coding agents can store and expose secrets without forcing the user out of chat.
+- Tighten repo-scoped secret enforcement so brokered execution no longer falls back to raw vault item names and automatic repo enablement only occurs for real git repositories.
+- Raise the Go verification bar back to a deterministic `100.0%` coverage gate, add direct branch coverage for the new secret flows, and harden local release signing scripts so ephemeral noninteractive signing works in release smoke and artifact evals.
+
 ## [v0.1.20]
 
 - Negotiate the MCP protocol version during `initialize` so Claude accepts `hasp mcp` instead of rejecting the hard-coded `2026-04-13` handshake.
