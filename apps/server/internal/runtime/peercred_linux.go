@@ -16,7 +16,7 @@ func realPeerUID(conn net.Conn) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	return uint32(cred.Uid), nil
+	return cred.Uid, nil
 }
 
 // realPeerPID returns the PID of the peer connected on conn using
