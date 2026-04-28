@@ -61,7 +61,7 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 		t.Fatalf("session open missing session_id: %s", sessionOut)
 	}
 
-	runOut, _, err := runHasp(t, env, "", "run", "--project-root", env.projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\"")
+	runOut, _, err := runHasp(t, env, "", "run", "--project-root", env.projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-window", "15m", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\"")
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 		t.Fatalf("run leaked managed value: %s", runOut)
 	}
 
-	injectOut, _, err := runHasp(t, env, "", "inject", "--project-root", env.projectRoot, "--file", "CERT_PATH=file_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "cat \"$CERT_PATH\"")
+	injectOut, _, err := runHasp(t, env, "", "inject", "--project-root", env.projectRoot, "--file", "CERT_PATH=file_01", "--grant-project", "window", "--grant-window", "15m", "--grant-secret", "session", "--", "sh", "-c", "cat \"$CERT_PATH\"")
 	if err != nil {
 		t.Fatalf("inject failed: %v", err)
 	}
@@ -77,10 +77,10 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 		t.Fatalf("inject leaked managed file content: %s", injectOut)
 	}
 
-	if _, _, err := runHasp(t, env, "", "capture", "--name", "generated_token", "--value", "xyz789", "--project-root", env.projectRoot, "--grant-project", "window"); err == nil {
+	if _, _, err := runHasp(t, env, "", "capture", "--name", "generated_token", "--value", "xyz789", "--project-root", env.projectRoot, "--grant-project", "window", "--grant-window", "15m"); err == nil {
 		t.Fatal("capture without grant_write unexpectedly succeeded")
 	}
-	captureOut, _, err := runHasp(t, env, "", "capture", "--name", "generated_token", "--value", "xyz789", "--project-root", env.projectRoot, "--grant-project", "window", "--grant-write", "--bind")
+	captureOut, _, err := runHasp(t, env, "", "capture", "--name", "generated_token", "--value", "xyz789", "--project-root", env.projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write", "--bind")
 	if err != nil {
 		t.Fatalf("capture with grant_write failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 	}
 
 	envOutput := filepath.Join(env.projectRoot, ".env.local")
-	writeEnvOut, stderr, err := runHasp(t, env, "", "write-env", "--project-root", env.projectRoot, "--output", envOutput, "--env", "API_TOKEN=secret_01", "--env", "DATABASE_URL=secret_02", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window")
+	writeEnvOut, stderr, err := runHasp(t, env, "", "write-env", "--project-root", env.projectRoot, "--output", envOutput, "--env", "API_TOKEN=secret_01", "--env", "DATABASE_URL=secret_02", "--grant-project", "window", "--grant-window", "15m", "--grant-secret", "session", "--grant-convenience", "window")
 	if err != nil {
 		t.Fatalf("write-env failed: %v", err)
 	}

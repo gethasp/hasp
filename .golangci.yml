@@ -31,6 +31,15 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      # The flag-drift AST scanner tests in package app are intentionally
+      # near-duplicates: each one re-runs the same scan over a sibling
+      # subpackage (agentops, appops, secretops, sessionops). Extracting a
+      # shared helper would obscure the per-package mapping. Suppress dupl
+      # on these files.
+      - path: internal/app/.*drift.*_test\.go
+        linters:
+          - dupl
     paths:
       - vendor
       - third_party$

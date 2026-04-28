@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/appops"
 	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -38,380 +38,65 @@ var (
 	appInstallLauncherFn = installAppLauncher
 )
 
+// ── Dispatch shim ─────────────────────────────────────────────────────────────
+
+// appConsumerCommand is the root dispatcher for `hasp app`. It delegates
+// to appops.AppCommand using the seam-wired Deps from defaultAppDeps(),
+// overriding AppNewStarter with the caller-supplied s so that appRunCommand
+// and appShellCommand receive the correct starter.
 func appConsumerCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
-	if len(args) == 0 || isHelpArg(args[0]) {
-		return printHelpTopic(stdout, []string{"app"})
-	}
-	if len(args) > 1 && isHelpArg(args[1]) {
-		return printHelpTopic(stdout, []string{"app", args[0]})
-	}
-	switch args[0] {
-	case "connect":
-		return appConnectCommandWithInput(ctx, args[1:], stdin, stdout, stderr)
-	case "run":
-		return appRunCommand(ctx, args[1:], stdout, stderr, s)
-	case "install":
-		return appInstallCommandWithInput(ctx, args[1:], stdin, stdout, stderr)
-	case "shell":
-		return appShellCommand(ctx, args[1:], stdout, stderr, s)
-	case "disconnect":
-		return appDisconnectCommand(ctx, args[1:], stdout)
-	case "list":
-		return appListCommand(ctx, args[1:], stdout)
-	default:
-		return fmt.Errorf("unknown app subcommand %q", args[0])
-	}
+	deps := defaultAppDeps()
+	deps.AppNewStarter = func() (appops.Starter, error) { return s, nil }
+	return appops.AppCommand(ctx, deps, args, stdin, stdout, stderr)
 }
 
+// ── Per-subcommand shims ──────────────────────────────────────────────────────
+//
+// These shims keep the package-app function signatures intact so that existing
+// tests (which call them directly by name) continue to compile and pass.
+// Each shim prepends its subcommand name and delegates to appops.AppCommand,
+// which routes through the same seam vars via defaultAppDeps().
+
 func appConnectCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	return appConnectCommandWithInput(ctx, args, nil, stdout, io.Discard)
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"connect"}, args...), nil, stdout, io.Discard)
 }
 
 func appConnectCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	name, remaining := consumerNameAndArgs(args)
-	fs := flag.NewFlagSet("app connect", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOutput := fs.Bool("json", false, "")
-	projectRoot := fs.String("project-root", "", "")
-	command := fs.String("cmd", "", "")
-	dotenvEnv := fs.String("dotenv-env", "", "")
-	var installLauncher setupOptionalBool
-	var addToPath setupOptionalBool
-	var envMappings mappingFlag
-	var fileMappings mappingFlag
-	var dotenvMappings mappingFlag
-	fs.Var(&installLauncher, "install", "always|never|ask")
-	fs.Var(&addToPath, "add-to-path", "always|never|ask")
-	fs.Var(&envMappings, "env", "")
-	fs.Var(&fileMappings, "file", "")
-	fs.Var(&dotenvMappings, "dotenv", "")
-	if err := fs.Parse(normalizeAppConnectArgs(remaining)); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("usage: hasp app connect <name> --cmd <command> [--project-root <path>] [--env APP_ENV=@REF] [--file APP_ENV=@REF] [--dotenv KEY=@REF --dotenv-env APP_ENV] [--install]")
-	}
-	if expandedRoot, expandErr := expandUserPath(strings.TrimSpace(*projectRoot)); expandErr != nil {
-		return fmt.Errorf("--project-root: %w", expandErr)
-	} else {
-		*projectRoot = expandedRoot
-	}
-	if !*jsonOutput && !globalFlagsFromContext(ctx).json {
-		warnBareEnvRefs(ctx, stderr, envMappings, "app connect", "--env")
-		warnBareEnvRefs(ctx, stderr, fileMappings, "app connect", "--file")
-		warnBareEnvRefs(ctx, stderr, dotenvMappings, "app connect", "--dotenv")
-	}
-
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	cfg := appConnectConfig{
-		Name:            strings.TrimSpace(name),
-		Command:         strings.TrimSpace(*command),
-		DotenvEnv:       strings.TrimSpace(*dotenvEnv),
-		InstallLauncher: installLauncher,
-		AddToPath:       addToPath,
-		EnvMappings:     envMappings,
-		FileMappings:    fileMappings,
-		DotenvMappings:  dotenvMappings,
-	}
-	if file, ok := ttyutil.StdinFile(stdin); ok && secretIsCharDeviceFn(file) {
-		if err := appConnectPromptMissing(newSetupPrompter(stdin, stdout), &cfg); err != nil {
-			return err
-		}
-	}
-	if strings.TrimSpace(cfg.Name) == "" {
-		return errors.New("usage: hasp app connect <name> --cmd <command> [--project-root <path>] [--env APP_ENV=SECRET] [--file APP_ENV=SECRET] [--dotenv KEY=SECRET --dotenv-env APP_ENV] [--install]")
-	}
-	if strings.TrimSpace(cfg.Command) == "" {
-		return errors.New("app connect requires --cmd")
-	}
-	if err := validateAppConsumerName(cfg.Name); err != nil {
-		return err
-	}
-	if len(cfg.DotenvMappings) > 0 && strings.TrimSpace(cfg.DotenvEnv) == "" {
-		return errors.New("app connect requires --dotenv-env when --dotenv is used")
-	}
-	root := ""
-	if strings.TrimSpace(*projectRoot) != "" {
-		root, _, err = secretProjectContext(ctx, *projectRoot)
-		if err != nil {
-			return err
-		}
-		if _, _, _, err := ensureProjectBindingExplicit(ctx, handle, root); err != nil {
-			return err
-		}
-	}
-	cfg.ProjectRoot = root
-	consumer, pathUpdate, err := connectAppConsumerWithHandle(ctx, handle, cfg, stdin, stdout, stderr)
-	if err != nil {
-		return err
-	}
-	appendAudit(audit.EventRun, "user", map[string]any{
-		"action":        "consumer.app.connect",
-		"consumer_type": "app",
-		"consumer_name": consumer.Name,
-		"project_root":  consumer.ProjectRoot,
-		"launcher_path": consumer.LauncherPath,
-		"path_updated":  pathUpdate.Changed,
-		"shell_config":  pathUpdate.ConfigPath,
-		"binding_count": len(consumer.Bindings),
-		"outcome":       "connected",
-	})
-	payload := map[string]any{"consumer": consumer, "path_update": pathUpdate}
-	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderAppConsumerSummary(w, "App connected", "Saved the app configuration.", consumer, pathUpdate)
-	})
-}
-
-func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg appConnectConfig, stdin io.Reader, stdout io.Writer, stderr io.Writer) (store.AppConsumer, appPathUpdateResult, error) {
-	bindings, err := appConsumerBindings(handle, cfg.EnvMappings, cfg.FileMappings, cfg.DotenvMappings)
-	if err != nil {
-		return store.AppConsumer{}, appPathUpdateResult{}, err
-	}
-	existingConsumer, existingErr := storeGetAppFn(handle, cfg.Name)
-	hadExisting := existingErr == nil
-	if existingErr != nil && !errors.Is(existingErr, store.ErrConsumerNotFound) {
-		return store.AppConsumer{}, appPathUpdateResult{}, existingErr
-	}
-	consumer := store.AppConsumer{
-		Name:        cfg.Name,
-		ProjectRoot: cfg.ProjectRoot,
-		Command:     []string{"sh", "-lc", appCommandString(cfg.Command), "hasp-app"},
-		Bindings:    bindings,
-		DotenvEnv:   cfg.DotenvEnv,
-	}
-	if hadExisting {
-		consumer.LauncherPath = existingConsumer.LauncherPath
-	}
-	installChoice, err := resolveAppLauncherInstallChoice(ctx, cfg.Name, cfg.InstallLauncher, stdin, stdout, stderr)
-	if err != nil {
-		return store.AppConsumer{}, appPathUpdateResult{}, err
-	}
-	var launcherPlan appLauncherPlan
-	if installChoice {
-		launcherPlan, err = planAppLauncher(consumer.Name)
-		if err != nil {
-			return store.AppConsumer{}, appPathUpdateResult{}, err
-		}
-		consumer.LauncherPath = launcherPlan.Path
-	}
-	consumer, err = storeUpsertAppFn(handle, consumer)
-	if err != nil {
-		return store.AppConsumer{}, appPathUpdateResult{}, err
-	}
-	if installChoice {
-		if err := writePlannedAppLauncher(launcherPlan); err != nil {
-			if rollbackErr := rollbackAppConsumer(handle, hadExisting, existingConsumer, consumer.Name); rollbackErr != nil {
-				return store.AppConsumer{}, appPathUpdateResult{}, fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
-			}
-			return store.AppConsumer{}, appPathUpdateResult{}, err
-		}
-	}
-	pathUpdate := appPathUpdateResult{}
-	if installChoice {
-		pathUpdate, err = ensureLauncherDirOnPathChoice(ctx, cfg.AddToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
-		if err != nil {
-			if rollbackErr := rollbackAppConsumer(handle, hadExisting, existingConsumer, consumer.Name); rollbackErr != nil {
-				return store.AppConsumer{}, appPathUpdateResult{}, fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
-			}
-			return store.AppConsumer{}, appPathUpdateResult{}, err
-		}
-	}
-	return consumer, pathUpdate, nil
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"connect"}, args...), stdin, stdout, stderr)
 }
 
 func appRunCommand(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, s starter) error {
-	name, remaining := consumerNameAndArgs(args)
-	fs := flag.NewFlagSet("app run", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(remaining); err != nil {
-		return err
-	}
-	if strings.TrimSpace(name) == "" {
-		return errors.New("usage: hasp app run <name> [args...]")
-	}
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	consumer, err := storeGetAppFn(handle, name)
-	if err != nil {
-		return err
-	}
-	command := append([]string{}, consumer.Command...)
-	command = append(command, fs.Args()...)
-	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "run", defaultExecDeps())
-	if err != nil {
-		return err
-	}
-	if runResult.ExitCode != 0 {
-		return fmt.Errorf("command exited with code %d", runResult.ExitCode)
-	}
-	return nil
+	deps := defaultAppDeps()
+	deps.AppNewStarter = func() (appops.Starter, error) { return s, nil }
+	return appops.AppCommand(ctx, deps, append([]string{"run"}, args...), nil, stdout, stderr)
 }
 
 func appShellCommand(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, s starter) error {
-	name, remaining := consumerNameAndArgs(args)
-	fs := flag.NewFlagSet("app shell", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(remaining); err != nil {
-		return err
-	}
-	if strings.TrimSpace(name) == "" {
-		return errors.New("usage: hasp app shell <name> [shell args...]")
-	}
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	consumer, err := storeGetAppFn(handle, name)
-	if err != nil {
-		return err
-	}
-	shell := strings.TrimSpace(appUserShellFn())
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	command := []string{shell, "-l"}
-	command = append(command, fs.Args()...)
-	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "shell", defaultExecDeps())
-	if err != nil {
-		return err
-	}
-	if runResult.ExitCode != 0 {
-		return fmt.Errorf("command exited with code %d", runResult.ExitCode)
-	}
-	return nil
+	deps := defaultAppDeps()
+	deps.AppNewStarter = func() (appops.Starter, error) { return s, nil }
+	return appops.AppCommand(ctx, deps, append([]string{"shell"}, args...), nil, stdout, stderr)
 }
 
 func appInstallCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	return appInstallCommandWithInput(ctx, args, nil, stdout, io.Discard)
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"install"}, args...), nil, stdout, io.Discard)
 }
 
 func appInstallCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	name, remaining := consumerNameAndArgs(args)
-	fs := flag.NewFlagSet("app install", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOutput := fs.Bool("json", false, "")
-	var addToPath setupOptionalBool
-	fs.Var(&addToPath, "add-to-path", "always|never|ask")
-	if err := fs.Parse(remaining); err != nil {
-		return err
-	}
-	if strings.TrimSpace(name) == "" || fs.NArg() != 0 {
-		return errors.New("usage: hasp app install <name> [--add-to-path=always|never|ask]")
-	}
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	consumer, err := storeGetAppFn(handle, name)
-	if err != nil {
-		return err
-	}
-	launcherPlan, err := planAppLauncher(consumer.Name)
-	if err != nil {
-		return err
-	}
-	oldConsumer := consumer
-	consumer.LauncherPath = launcherPlan.Path
-	consumer, err = storeUpsertAppFn(handle, consumer)
-	if err != nil {
-		return err
-	}
-	if err := writePlannedAppLauncher(launcherPlan); err != nil {
-		if _, rollbackErr := storeUpsertAppFn(handle, oldConsumer); rollbackErr != nil {
-			return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
-		}
-		return err
-	}
-	pathUpdate, err := ensureLauncherDirOnPathChoice(ctx, addToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
-	if err != nil {
-		if _, rollbackErr := storeUpsertAppFn(handle, oldConsumer); rollbackErr != nil {
-			return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
-		}
-		return err
-	}
-	appendAudit(audit.EventRun, "user", map[string]any{
-		"action":        "consumer.app.install",
-		"consumer_type": "app",
-		"consumer_name": consumer.Name,
-		"launcher_path": launcherPlan.Path,
-		"path_updated":  pathUpdate.Changed,
-		"shell_config":  pathUpdate.ConfigPath,
-		"outcome":       "installed",
-	})
-	payload := map[string]any{"consumer": consumer, "path_update": pathUpdate}
-	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderAppConsumerSummary(w, "App installed", "Installed or refreshed the launcher for the app.", consumer, pathUpdate)
-	})
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"install"}, args...), stdin, stdout, stderr)
 }
 
 func appDisconnectCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	name, remaining := consumerNameAndArgs(args)
-	fs := flag.NewFlagSet("app disconnect", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOutput := fs.Bool("json", false, "")
-	if err := fs.Parse(remaining); err != nil {
-		return err
-	}
-	if strings.TrimSpace(name) == "" || fs.NArg() != 0 {
-		return errors.New("usage: hasp app disconnect <name>")
-	}
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	consumer, err := storeGetAppFn(handle, name)
-	if err != nil {
-		return err
-	}
-	if err := storeDeleteAppFn(handle, consumer.Name); err != nil {
-		return err
-	}
-	if strings.TrimSpace(consumer.LauncherPath) != "" {
-		if err := appRemoveFn(consumer.LauncherPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			if _, rollbackErr := storeUpsertAppFn(handle, consumer); rollbackErr != nil {
-				return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
-			}
-			return err
-		}
-	}
-	appendAudit(audit.EventRun, "user", map[string]any{
-		"action":        "consumer.app.disconnect",
-		"consumer_type": "app",
-		"consumer_name": consumer.Name,
-		"launcher_path": consumer.LauncherPath,
-		"outcome":       "disconnected",
-	})
-	payload := map[string]any{"consumer_name": consumer.Name, "outcome": "disconnected"}
-	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderSimpleAction(ctx, w, "App disconnected", "Removed the saved app.",
-			cliPair("Name", consumer.Name),
-			cliPair("Outcome", "disconnected"),
-		)
-	})
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"disconnect"}, args...), nil, stdout, io.Discard)
 }
 
 func appListCommand(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("app list", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOutput := fs.Bool("json", false, "")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	handle, err := openVaultHandleFn(ctx)
-	if err != nil {
-		return err
-	}
-	consumers := storeListAppsFn(handle)
-	payload := map[string]any{"consumers": consumers}
-	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderAppConsumerList(w, consumers)
-	})
+	return appops.AppCommand(ctx, defaultAppDeps(), append([]string{"list"}, args...), nil, stdout, io.Discard)
 }
+
+// ── Package-app helpers preserved for test compatibility ──────────────────────
+//
+// All functions below are called directly by existing tests in package app.
+// They keep their original implementations.
 
 func consumerNameAndArgs(args []string) (string, []string) {
 	if len(args) == 0 {
@@ -620,6 +305,63 @@ func resolveAppLauncherInstallChoice(ctx context.Context, name string, explicit 
 	}
 	prompt := newSecretPrompt(stdin, stdout, stderr)
 	return prompt.confirm(fmt.Sprintf("Install launcher command %q", name), false)
+}
+
+func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg appConnectConfig, stdin io.Reader, stdout io.Writer, stderr io.Writer) (store.AppConsumer, appPathUpdateResult, error) {
+	bindings, err := appConsumerBindings(handle, cfg.EnvMappings, cfg.FileMappings, cfg.DotenvMappings)
+	if err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
+	}
+	existingConsumer, existingErr := storeGetAppFn(handle, cfg.Name)
+	hadExisting := existingErr == nil
+	if existingErr != nil && !errors.Is(existingErr, store.ErrConsumerNotFound) {
+		return store.AppConsumer{}, appPathUpdateResult{}, existingErr
+	}
+	consumer := store.AppConsumer{
+		Name:        cfg.Name,
+		ProjectRoot: cfg.ProjectRoot,
+		Command:     []string{"sh", "-lc", appCommandString(cfg.Command), "hasp-app"},
+		Bindings:    bindings,
+		DotenvEnv:   cfg.DotenvEnv,
+	}
+	if hadExisting {
+		consumer.LauncherPath = existingConsumer.LauncherPath
+	}
+	installChoice, err := resolveAppLauncherInstallChoice(ctx, cfg.Name, cfg.InstallLauncher, stdin, stdout, stderr)
+	if err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
+	}
+	var launcherPlan appLauncherPlan
+	if installChoice {
+		launcherPlan, err = planAppLauncher(consumer.Name)
+		if err != nil {
+			return store.AppConsumer{}, appPathUpdateResult{}, err
+		}
+		consumer.LauncherPath = launcherPlan.Path
+	}
+	consumer, err = storeUpsertAppFn(handle, consumer)
+	if err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
+	}
+	if installChoice {
+		if err := writePlannedAppLauncher(launcherPlan); err != nil {
+			if rollbackErr := rollbackAppConsumer(handle, hadExisting, existingConsumer, consumer.Name); rollbackErr != nil {
+				return store.AppConsumer{}, appPathUpdateResult{}, fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+			}
+			return store.AppConsumer{}, appPathUpdateResult{}, err
+		}
+	}
+	pathUpdate := appPathUpdateResult{}
+	if installChoice {
+		pathUpdate, err = ensureLauncherDirOnPathChoice(ctx, cfg.AddToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
+		if err != nil {
+			if rollbackErr := rollbackAppConsumer(handle, hadExisting, existingConsumer, consumer.Name); rollbackErr != nil {
+				return store.AppConsumer{}, appPathUpdateResult{}, fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+			}
+			return store.AppConsumer{}, appPathUpdateResult{}, err
+		}
+	}
+	return consumer, pathUpdate, nil
 }
 
 func normalizeAppConnectArgs(args []string) []string {

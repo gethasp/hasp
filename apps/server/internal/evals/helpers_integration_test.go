@@ -171,6 +171,25 @@ func runCmdWithInput(t *testing.T, cwd string, env []string, stdin string, name 
 	return stdout.String(), stderr.String(), err
 }
 
+// waitForEvalSocket polls until socketPath exists or fails the test after a
+// generous deadline. `hasp daemon start` returns as soon as the broker is
+// spawned; the socket bind happens shortly after, so eval helpers must wait
+// before dialing.
+func waitForEvalSocket(t *testing.T, socketPath string) {
+	t.Helper()
+	if strings.TrimSpace(socketPath) == "" {
+		return
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for daemon socket %s", socketPath)
+}
+
 func parseJSONMap(t *testing.T, raw string) map[string]any {
 	t.Helper()
 	var out map[string]any
@@ -193,9 +212,16 @@ func openRuntimeSessionWithDuration(t *testing.T, e evalEnv, projectRoot string,
 	t.Helper()
 	t.Setenv(paths.EnvHome, e.home)
 	t.Setenv(paths.EnvSocket, e.socket)
-	if _, _, err := runHasp(t, e, "", "status"); err != nil {
-		t.Fatalf("start daemon via status: %v", err)
+	// hasp-qe5h made `hasp status` connect-only (it no longer auto-starts the
+	// daemon when the socket is missing); use `daemon start` so the eval
+	// helper actually has a running broker before the dial below.
+	if _, _, err := runHasp(t, e, "", "daemon", "start"); err != nil {
+		t.Fatalf("start daemon: %v", err)
 	}
+	// `daemon start` spawns the broker asynchronously and returns before the
+	// socket has been bound; poll until the socket file appears so the dial
+	// below sees a ready broker instead of ENOENT.
+	waitForEvalSocket(t, e.socket)
 	manager, err := runtime.NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -343,9 +369,14 @@ func TestNewEvalEnvScopesCLIConfig(t *testing.T) {
 func TestStopEvalDaemonStopsDetachedDaemon(t *testing.T) {
 	env := newEvalEnv(t)
 
-	if _, _, err := runHasp(t, env, "", "status"); err != nil {
-		t.Fatalf("start daemon via status: %v", err)
+	// hasp-qe5h made `hasp status` connect-only; use `daemon start` so the
+	// detached daemon actually exists for the cleanup-verification below.
+	if _, _, err := runHasp(t, env, "", "daemon", "start"); err != nil {
+		t.Fatalf("start daemon: %v", err)
 	}
+	// Wait for the daemon to bind its socket before we read pid state and
+	// invoke cleanup; otherwise the verify path can't talk to the broker.
+	waitForEvalSocket(t, env.socket)
 
 	pidPath := filepath.Join(env.home, "runtime", "daemon.pid")
 	pidData, err := os.ReadFile(pidPath)
