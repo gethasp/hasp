@@ -9,9 +9,21 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
+
+// ptyDrainTimeout bounds how long executePTY waits for the master→dst io.Copy
+// to drain after the child exits before force-closing the master. On Linux
+// the slave side closes when the child exits and the master read returns
+// buffered bytes followed by EIO/EOF, so the copy goroutine drains itself —
+// but a detached grandchild that inherited the slave fd can keep it open
+// indefinitely. The timeout caps that case while still letting fast-exit
+// children deliver their final bytes (race window seen on Linux CI: small
+// `printf` writes were lost when ptmx was closed before the goroutine had
+// been scheduled to read them).
+var ptyDrainTimeout = 100 * time.Millisecond
 
 // executePTY runs cmd attached to a freshly allocated pty pair, copies
 // pty.master ↔ input.Stdin/Stdout, and returns when the child exits and the
@@ -55,11 +67,27 @@ func executePTY(ctx context.Context, cmd *exec.Cmd, input Input) ([]byte, int, e
 	}
 
 	waitErr := cmd.Wait()
-	// Closing the master here makes any in-progress io.Copy from input.Stdin
-	// return so the goroutine exits — and forces the master→dst Copy to
-	// return EOF promptly so we don't deadlock waiting on copyDone.
+	// On Linux the slave end of the pty closes when the child exits, so the
+	// master read returns any buffered bytes followed by EIO/EOF and the
+	// master→dst io.Copy goroutine drains naturally. Wait for that drain
+	// before force-closing ptmx; otherwise a fast-exit child like
+	// `printf hello` can lose its final bytes when ptmx.Close() races with
+	// a not-yet-scheduled goroutine read.
+	//
+	// Bound the wait so a detached grandchild that kept the slave fd open
+	// can't stall us forever: after the timeout we close the master, which
+	// breaks the copy goroutine's read so it can finish.
+	drained := make(chan struct{})
+	go func() {
+		copyDone.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(ptyDrainTimeout):
+	}
 	_ = ptmx.Close()
-	copyDone.Wait()
+	<-drained
 
 	if waitErr == nil {
 		return fallback.Bytes(), 0, nil
