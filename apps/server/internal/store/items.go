@@ -34,8 +34,12 @@ func (h *Handle) UpsertItem(name string, kind ItemKind, value []byte, metadata I
 			return existing, err
 		}
 	}
+	id, err := randomHex(16)
+	if err != nil {
+		return Item{}, fmt.Errorf("mint item id: %w", err)
+	}
 	item := Item{
-		ID:        randomHex(16),
+		ID:        id,
 		Name:      name,
 		Kind:      kind,
 		Value:     slices.Clone(value),
@@ -44,7 +48,7 @@ func (h *Handle) UpsertItem(name string, kind ItemKind, value []byte, metadata I
 		UpdatedAt: h.store.now(),
 	}
 	h.state.Items[item.ID] = item
-	err := persistEnvelope(h)
+	err = persistEnvelope(h)
 	if err == nil {
 		h.store.appendAuditBestEffort("item.upsert", "user", map[string]any{"name": item.Name, "kind": item.Kind})
 	}
@@ -117,7 +121,7 @@ func (h *Handle) ListItems() []Item {
 }
 
 func (h *Handle) persist() error {
-	envelope, err := h.store.readEnvelope()
+	envelope, err := h.store.readEnvelopeStrict()
 	if err != nil {
 		return err
 	}

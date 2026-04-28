@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -66,7 +67,7 @@ func TestCLIOutputRenderers(t *testing.T) {
 		{
 			name: "renderSimpleAction",
 			run: func(out *bytes.Buffer) error {
-				return renderSimpleAction(out, "Title", "Lead", cliPair("A", "B"))
+				return renderSimpleAction(context.Background(), out, "Title", "Lead", cliPair("A", "B"))
 			},
 			mustSee: "Lead",
 		},
@@ -221,49 +222,51 @@ func TestCLIOutputRenderers(t *testing.T) {
 
 	t.Run("json wrappers and helper branches", func(t *testing.T) {
 		var out bytes.Buffer
-		if err := renderBootstrapProfileListingMaybeHuman(&out, true, map[string]any{"profiles": []map[string]any{{"id": "claude-code"}}}); err != nil {
+		if err := renderBootstrapProfileListingMaybeHuman(context.Background(), &out, true, map[string]any{"profiles": []map[string]any{{"id": "claude-code"}}}); err != nil {
 			t.Fatalf("renderBootstrapProfileListingMaybeHuman: %v", err)
 		}
 		if !json.Valid(out.Bytes()) {
 			t.Fatalf("expected json output, got %q", out.String())
 		}
 		out.Reset()
-		if err := renderPingJSONOrHuman(&out, true, runtime.PingResponse{Name: "hasp"}); err != nil {
+		if err := renderPingJSONOrHuman(context.Background(), &out, true, runtime.PingResponse{Name: "hasp"}); err != nil {
 			t.Fatalf("renderPingJSONOrHuman: %v", err)
 		}
 		out.Reset()
-		if err := renderPingJSONOrHuman(&out, false, runtime.PingResponse{Name: "hasp"}); err != nil {
+		if err := renderPingJSONOrHuman(context.Background(), &out, false, runtime.PingResponse{Name: "hasp"}); err != nil {
 			t.Fatalf("renderPingJSONOrHuman human: %v", err)
 		}
 		out.Reset()
-		if err := renderBootstrapJSONOrHuman(&out, true, bootstrapResult{}); err != nil {
+		if err := renderBootstrapJSONOrHuman(context.Background(), &out, true, bootstrapResult{}); err != nil {
 			t.Fatalf("renderBootstrapJSONOrHuman: %v", err)
 		}
 		out.Reset()
-		if err := renderBootstrapJSONOrHuman(&out, false, bootstrapResult{Profile: bootstrapProfile, ProjectRoot: "/tmp/project"}); err != nil {
+		if err := renderBootstrapJSONOrHuman(context.Background(), &out, false, bootstrapResult{Profile: bootstrapProfile, ProjectRoot: "/tmp/project"}); err != nil {
 			t.Fatalf("renderBootstrapJSONOrHuman human: %v", err)
 		}
 		out.Reset()
-		if err := renderBootstrapDoctorJSONOrHuman(&out, true, bootstrapDoctorResult{}); err != nil {
+		if err := renderBootstrapDoctorJSONOrHuman(context.Background(), &out, true, bootstrapDoctorResult{}); err != nil {
 			t.Fatalf("renderBootstrapDoctorJSONOrHuman: %v", err)
 		}
 		out.Reset()
-		if err := renderBootstrapDoctorJSONOrHuman(&out, false, bootstrapDoctorResult{}); err != nil {
+		if err := renderBootstrapDoctorJSONOrHuman(context.Background(), &out, false, bootstrapDoctorResult{}); err != nil {
 			t.Fatalf("renderBootstrapDoctorJSONOrHuman human: %v", err)
 		}
 		out.Reset()
-		if err := renderSecretListJSONOrHuman(&out, true, []secretMetadataView{secretMeta}); err != nil {
+		if err := renderSecretListJSONOrHuman(context.Background(), &out, true, []secretMetadataView{secretMeta}); err != nil {
 			t.Fatalf("renderSecretListJSONOrHuman: %v", err)
 		}
 		out.Reset()
-		if err := renderSecretListJSONOrHuman(&out, false, []secretMetadataView{secretMeta}); err != nil {
+		if err := renderSecretListJSONOrHuman(context.Background(), &out, false, []secretMetadataView{secretMeta}); err != nil {
 			t.Fatalf("renderSecretListJSONOrHuman human: %v", err)
 		}
 		payload := secretGetJSONPayload(secretMeta, true, true, []byte{0xff, 0x00})
-		if payload["copied"] != true || payload["value_base64"] != base64.StdEncoding.EncodeToString([]byte{0xff, 0x00}) {
+		// hasp-jx3r: value_base64 is now nested inside "secret", not at the top level.
+		secretObj, _ := payload["secret"].(map[string]any)
+		if payload["copied"] != true || secretObj["value_base64"] != base64.StdEncoding.EncodeToString([]byte{0xff, 0x00}) {
 			t.Fatalf("unexpected secretGetJSONPayload %+v", payload)
 		}
-		if cliLead(errWriter{err: nil}, "1;32", "!", "text") == "" {
+		if cliLead(errWriter{err: nil}, "1;32", "!", "[ok]", "text") == "" {
 			t.Fatal("expected cliLead output")
 		}
 		if cliOutcome(&bytes.Buffer{}, "created") == "" || cliOutcome(&bytes.Buffer{}, "skipped") == "" || cliOutcome(&bytes.Buffer{}, "existing") == "" || cliOutcome(&bytes.Buffer{}, "other") == "" {
@@ -274,7 +277,7 @@ func TestCLIOutputRenderers(t *testing.T) {
 		}
 		if devNull, err := os.Open("/dev/null"); err == nil {
 			defer devNull.Close()
-			if value := cliLead(devNull, "1;32", "!", "text"); value == "" {
+			if value := cliLead(devNull, "1;32", "!", "[ok]", "text"); value == "" {
 				t.Fatal("expected cliLead output with file writer")
 			}
 		}
@@ -287,8 +290,12 @@ func TestCLIOutputRenderers(t *testing.T) {
 		if payload := secretGetJSONPayload(secretMeta, false, false, nil); payload["copied"] != nil || payload["value"] != nil || payload["value_base64"] != nil {
 			t.Fatalf("unexpected secretGetJSONPayload without flags %+v", payload)
 		}
-		if payload := secretGetJSONPayload(secretMeta, false, true, []byte("abc123")); payload["value"] != "abc123" {
-			t.Fatalf("expected utf8 reveal payload, got %+v", payload)
+		// hasp-jx3r: value is now nested inside "secret", not at the top level.
+		if payload := secretGetJSONPayload(secretMeta, false, true, []byte("abc123")); func() bool {
+			sm, ok := payload["secret"].(map[string]any)
+			return !ok || sm["value"] != "abc123"
+		}() {
+			t.Fatalf("expected utf8 reveal payload with secret.value=abc123, got %+v", payload)
 		}
 		if err := renderImportCommandResult(&out, importPreview{Source: "stdin", Format: "env"}, nil, false); err != nil {
 			t.Fatalf("renderImportCommandResult minimal preview: %v", err)
@@ -334,7 +341,7 @@ func TestCLIOutputRenderers(t *testing.T) {
 		if err := renderRepoCheckResult(&out, "/tmp/project", nil, false); err != nil {
 			t.Fatalf("renderRepoCheckResult empty: %v", err)
 		}
-		if err := renderBootstrapDoctorJSONOrHuman(&out, false, bootstrapDoctorResult{}); err != nil {
+		if err := renderBootstrapDoctorJSONOrHuman(context.Background(), &out, false, bootstrapDoctorResult{}); err != nil {
 			t.Fatalf("renderBootstrapDoctorJSONOrHuman human: %v", err)
 		}
 		if err := renderBootstrapProfilesSummary(&out, map[string]any{"profiles": []map[string]any{}}); err != nil {
@@ -361,13 +368,13 @@ func TestCLIOutputRenderers(t *testing.T) {
 		if err := renderBootstrapSummary(&out, bootstrapResult{Profile: bootstrapProfile, ProjectRoot: "/tmp/project", Binding: store.Binding{}}); err != nil {
 			t.Fatalf("renderBootstrapSummary minimal: %v", err)
 		}
-		if err := renderBootstrapProfileListingMaybeHuman(&out, false, map[string]any{"profiles": []any{map[string]any{"id": "claude-code", "support_tier": "first-class-profile", "transport": "mcp-stdio"}}}); err != nil {
+		if err := renderBootstrapProfileListingMaybeHuman(context.Background(), &out, false, map[string]any{"profiles": []any{map[string]any{"id": "claude-code", "support_tier": "first-class-profile", "transport": "mcp-stdio"}}}); err != nil {
 			t.Fatalf("renderBootstrapProfileListingMaybeHuman human: %v", err)
 		}
 	})
 
 	t.Run("writer failures", func(t *testing.T) {
-		if err := renderSimpleAction(errWriter{err: errors.New("write fail")}, "Title", "Lead", cliPair("A", "B")); err == nil {
+		if err := renderSimpleAction(context.Background(), errWriter{err: errors.New("write fail")}, "Title", "Lead", cliPair("A", "B")); err == nil {
 			t.Fatal("expected writer failure")
 		}
 		if err := renderSecretExposures(errWriter{err: errors.New("write fail")}, nil); err == nil {
@@ -457,7 +464,7 @@ func TestCLIOutputRenderers(t *testing.T) {
 		t.Setenv("TERM", "xterm-256color")
 		if devNull, err := os.Open("/dev/null"); err == nil {
 			defer devNull.Close()
-			if value := cliLead(devNull, "1;32", "!", "text"); !strings.Contains(value, "\x1b[") {
+			if value := cliLead(devNull, "1;32", "!", "[ok]", "text"); !strings.Contains(value, "\x1b[") {
 				t.Fatalf("expected colorized cliLead output, got %q", value)
 			}
 		}

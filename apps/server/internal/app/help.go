@@ -26,7 +26,11 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "secret delete", text: secretDeleteHelpText},
 	{key: "secret get", text: secretGetHelpText},
 	{key: "secret retrieve", text: secretGetHelpText},
+	{key: "secret show", text: secretShowHelpText},
+	{key: "secret reveal", text: secretRevealHelpText},
+	{key: "secret copy", text: secretCopyHelpText},
 	{key: "secret list", text: secretListHelpText},
+	{key: "secret diff", text: secretDiffHelpText},
 	{key: "secret expose", text: secretExposeHelpText},
 	{key: "secret hide", text: secretHideHelpText},
 	{key: "app", text: appHelpText},
@@ -49,19 +53,28 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "inject", text: injectHelpText},
 	{key: "write-env", text: writeEnvHelpText},
 	{key: "check-repo", text: checkRepoHelpText},
+	{key: "proof", text: proofHelpText},
 	{key: "daemon", text: daemonHelpText},
 	{key: "session", text: sessionHelpText},
 	{key: "session grant-plaintext", text: sessionGrantPlaintextHelpText},
 	{key: "vault", text: vaultHelpText},
 	{key: "vault lock", text: vaultLockHelpText},
+	{key: "vault forget-device", text: vaultForgetDeviceHelpText},
+	{key: "vault rekey", text: vaultRekeyHelpText},
 	{key: "status", text: statusHelpText},
 	{key: "ping", text: pingHelpText},
 	{key: "audit", text: auditHelpText},
+	{key: "audit tail", text: auditTailHelpText},
 	{key: "export-backup", text: exportBackupHelpText},
 	{key: "restore-backup", text: restoreBackupHelpText},
 	{key: "mcp", text: mcpHelpText},
 	{key: "tui", text: tuiHelpText},
 	{key: "version", text: versionHelpText},
+	{key: "completion", text: completionHelpText},
+	{key: "upgrade", text: upgradeHelpText},
+	{key: "docs", text: docsHelpText},
+	{key: "internals", text: internalsHelpText},
+	{key: "exit-codes", text: exitCodesHelpText},
 }
 
 var helpTopicByKey = func() map[string]string {
@@ -89,6 +102,13 @@ func printHelpTopic(w io.Writer, args []string) error {
 	}
 	text, ok := helpTopicByKey[key]
 	if !ok {
+		candidates := make([]string, 0, len(helpTopicByKey))
+		for k := range helpTopicByKey {
+			candidates = append(candidates, k)
+		}
+		if hint, found := closestMatch(key, candidates); found {
+			return fmt.Errorf("unknown help topic %q; did you mean: %s?", key, hint)
+		}
 		return fmt.Errorf("unknown help topic %q", key)
 	}
 	_, err := io.WriteString(w, text)
@@ -114,21 +134,20 @@ func printHelp(w io.Writer) {
 	_ = printHelpTopic(w, nil)
 }
 
-const rootHelpPrelude = `hasp keeps secrets in one local vault and delivers them to apps, agents, and repo-scoped commands without leaving raw values in source control.
+const rootHelpPrelude = `hasp keeps secrets in one local vault and hands them to your apps, agents, and repo-scoped commands without leaving raw values in source control.
 
 Core concepts
-  vault    encrypted local store under HASP_HOME
-  secret   named item in the vault
-  app      reusable profile for a normal application
-  agent    one-time local integration for a coding agent
-  project  repo-scoped boundary, alias map, and guardrail set
-  broker   runtime that grants short-lived access for repo work
+  vault    encrypted local store of named secrets under HASP_HOME
+  repo     a project root you bind so commands run inside it can pull secrets
+  agent    a connected app or coding agent that gets brokered access
+  grant    short-lived, scoped permission to deliver a secret to one run
 
 Start here
   hasp setup
   hasp help setup
-  hasp help app connect
   hasp help agent connect
+
+For lower-level vocabulary (operator/integrator surface) see: hasp help internals
 `
 
 const rootHelpTopicsSection = `Help topics
@@ -143,9 +162,14 @@ const rootHelpTopicsSection = `Help topics
   hasp help project
   hasp help run
   hasp help setup
+  hasp help internals
 
 Output
-  add --json to structured status and mutation commands for machine-readable output
+  --json    machine-readable output on stdout for status, list, and mutation commands.
+            errors are emitted as a single JSON envelope on stderr with stable
+            error codes (E_USER_INPUT, E_PERMISSION, E_DAEMON_UNREACHABLE, ...).
+            commands that have no JSON form ignore the flag rather than erroring.
+            See: hasp help exit-codes for the bucket table.
 `
 
 func renderRootHelpText() string {
@@ -163,6 +187,9 @@ func writeRootHelpCommandSection(builder *strings.Builder, title string, command
 	builder.WriteString(title)
 	builder.WriteString("\n")
 	for _, command := range commands {
+		if command.hidden {
+			continue
+		}
 		_, _ = fmt.Fprintf(builder, "  %-17s %s\n", command.name, command.summary)
 	}
 }
@@ -173,9 +200,21 @@ Create the local encrypted vault under HASP_HOME.
 
 Use this once per machine or once per HASP_HOME.
 
+Flags
+  --json   emit machine-readable result on stdout
+
 Examples
   hasp init
+  hasp init --json
 `
+
+// hasp-3wfg: a CI-gated drift lint
+// (TestHelpTextMentionsEveryFlagDefinedInPackageFlagSets) AST-walks the
+// package source for every flag.NewFlagSet → fs.Bool/String/Var site and
+// asserts each registered flag name appears in the matching `hasp help`
+// body. Existing drift is captured as documented carve-outs that
+// hasp-flgd is draining. New flags must ship with a help line; the lint
+// fails the build otherwise.
 
 const setupHelpText = `hasp setup
 
@@ -186,18 +225,68 @@ continue into adding secrets or connecting an app.
 Use setup when you want one guided flow. Use the lower-level commands when you
 already know the exact state you want.
 
+Master password policy
+  Newly created vaults require a master password of at least 12 characters
+  with more than one distinct character. Pass --skip-password-policy if your
+  organisation enforces its own policy upstream (corporate password manager,
+  FIDO-derived secret, etc.).
+
+Flags
+  --non-interactive              run without prompts; all required values must
+                                 be supplied via flags or environment variables
+  --json                         emit machine-readable output on stdout
+  --hasp-home <path>             override HASP_HOME for this invocation
+  --project-root <path>          bind a repo at this path during setup
+                                 (alias: --repo, deprecated)
+  --master-password-env <var>    read master password from this env var name
+  --master-password-stdin        read master password from stdin
+  --import <path>                import secrets from this file during setup
+  --import-format <fmt>          format for --import: auto (default), env, json
+  --bind-imports                 bind imported secrets to the repo
+  --default-policy <policy>      default policy to apply to the vault
+  --skip-password-policy         skip the minimum-entropy password check
+  --agent <name>                 agent profile to connect during setup
+  --bind-item <name>             bind a vault item to the repo (repeatable)
+  --alias <name=ref>             add a repo alias mapping (repeatable)
+  --auto-protect-repos <val>     always|never|ask: auto-protect new repos
+  --install-hooks <val>          always|never|ask: install git hooks in repo
+  --enable-convenience-unlock <val>
+                                 always|never|ask: enable keychain unlock
+  --overwrite-existing-config <val>
+                                 always|never|ask: overwrite existing config
+
 Examples
   hasp setup
-  hasp setup --non-interactive --hasp-home ~/.hasp --repo . --agent claude-code
+  hasp setup --non-interactive --hasp-home ~/.hasp --project-root . --agent claude-code
 `
 
 const bootstrapHelpText = `hasp bootstrap
 
 Configure a repo and an agent profile in one operator-focused flow. Bootstrap
-exists for repo-first workflows. The newer consumer-first path is usually:
+exists for repo-first workflows. The newer app- and agent-first path is usually:
 
   hasp secret add
   hasp agent connect claude-code --project-root .
+
+Subcommands
+  generic    write a generic agent profile for the current repo
+  doctor     diagnose a previously bootstrapped repo/profile pair
+
+Master password policy
+  When bootstrap creates a new vault from HASP_MASTER_PASSWORD it enforces a
+  minimum-length and basic-entropy check (at least 12 characters and more
+  than one distinct character). Pass --skip-password-policy when an upstream
+  policy already governs the password.
+
+Flags
+  --json                           emit machine-readable result on stdout
+  --alias <alias=item>             add a repo alias mapping (repeatable)
+  --bind-item <name>               bind a vault item to the repo (repeatable)
+  --bind-imports                   bind imported secrets to the repo binding
+  --default-policy <policy>        default policy: auto|session|access
+  --hooks                          install git hooks in the repo (default: true)
+  --verify                         run a post-bootstrap verification pass
+                                   (default: true)
 
 Examples
   hasp bootstrap --profile claude-code --project-root .
@@ -211,11 +300,27 @@ Diagnose local HASP health without exposing secrets or reconnaissance-heavy
 details in JSON mode.
 
 JSON output is intentionally allowlisted to daemon, vault, binding, hooks,
-audit-degraded, and version-number fields.
+audit-degraded, version-number, and fixes_* fields.
+
+Repair
+  --fix   attempt to repair common breakage:
+            - tighten HASP_HOME perms to 0700
+            - remove stale socket files (regular files ending in .sock; the
+              live daemon's socket is a unix domain socket, not a regular
+              file, so this never touches a working daemon)
+          Each repair is recorded under fixes_attempted / fixes_succeeded /
+          fixes_failed so the operator can see what was touched.
+
+Flags
+  --project-root <path>   repo root to include in the binding health check
+                          (default: current directory)
+  --json                  emit machine-readable result on stdout
+  --fix                   attempt to repair common breakage (see above)
 
 Examples
   hasp doctor
   hasp doctor --json
+  hasp doctor --fix
 `
 
 const importHelpText = `hasp import
@@ -232,6 +337,15 @@ ambient shell session and want to move them into the vault without leaving them
 in ` + "`.env`" + ` or shell profiles. Use secret add when you want to enter values
 directly.
 
+Flags
+  --json               emit machine-readable result on stdout
+  --name <name>        store all imported values under this single name
+                       (only valid when the source has exactly one entry)
+  --project-root <p>   repo root to bind imported secrets to (requires --bind)
+  --bind               expose imported secrets to the specified repo
+  --preview            show what would be imported without committing
+  --format <fmt>       input format: auto (default), env, json
+
 Examples
   hasp import .env
   hasp import service-account.json
@@ -240,23 +354,48 @@ Examples
   printf 'export API_TOKEN=abc123\n' | hasp import --format env -
 `
 
-const setHelpText = `hasp set
+const setHelpText = `hasp set (DEPRECATED)
 
 Add or replace one secret without an interactive prompt.
 
-Use set in scripts and tests. Use secret add when a human is at the terminal.
+DEPRECATED: prefer 'hasp secret add --vault-only' (with --from-stdin for
+non-interactive scripts). 'hasp set' still works for one release.
+
+Prefer --value-stdin over --value: --value places the plaintext on argv where
+ps, shell history, and accounting logs can see it. --value still works but
+emits a warning. --value and --value-stdin are mutually exclusive.
+
+Flags
+  --name <name>        secret name (required)
+  --kind <kv|file>     secret kind (default: kv)
+  --value <val>        plaintext value on argv (UNSAFE — emits a warning)
+  --value-stdin        read plaintext value from stdin
+  --from-file <path>   read value from a file
+  --json               emit machine-readable result on stdout
 
 Examples
-  hasp set --name OPENAI_API_KEY --value sk-123
+  printf 'sk-123' | hasp secret add --vault-only --from-stdin OPENAI_API_KEY
   hasp set --name CERT_FILE --kind file --from-file cert.pem
+  hasp set --name OPENAI_API_KEY --value sk-123   # works, warns about argv
 `
 
-const captureHelpText = `hasp capture
+const captureHelpText = `hasp capture (DEPRECATED)
 
 Save a value into the vault and optionally bind it to a repo while you already
 have a live broker session.
 
-Use capture for repair and recovery paths. It is not the normal first-run path.
+DEPRECATED: prefer 'hasp secret add' with --expose=always (or --vault-only).
+'hasp capture' still works for one release.
+
+Flags
+  --json                          emit machine-readable result on stdout
+  --kind <kv|file>                secret kind (default: kv)
+  --from-file <path>              read secret value from a file instead of argv
+  --session-token <token>         use an existing broker session token
+  --grant-project <scope>         project grant scope: once|session|window|<dur>
+  --grant-secret <scope>          secret grant scope: once|session|window|<dur>
+  --grant-window <duration>       maximum age for a grant (e.g. 15m)
+  --grant-write                   require a write grant for the capture
 
 Examples
   hasp capture --name api_token --value abc123
@@ -273,10 +412,20 @@ Subcommands
   update     replace existing secret values
   rotate     replace a value for incident response and revoke grants
   delete     remove secrets from the vault
-  get        retrieve a secret value
+  show       print secret metadata only (no value)
+  reveal     print the secret value to stdout (opt-in)
+  copy       copy the secret value to the clipboard (opt-in)
+  get        legacy alias for show; --reveal/--copy still work
+  retrieve   alias for secret get
   list       list secret names and metadata
+  search     filter the inventory by a case-insensitive substring on the name
+  diff       compare a candidate .env file against the vault by name only
   expose     bind a secret to a repo boundary and create a reference
   hide       remove one repo exposure for a secret
+
+Common flags
+  --json   emit machine-readable output on stdout (all subcommands that
+           produce structured output honour this flag)
 
 Learn more
   hasp help secret add
@@ -286,19 +435,41 @@ Learn more
 const secretAddHelpText = `hasp secret add
 
 Add one or more secrets to the vault. In a repo, HASP can also expose the new
-secret to that repo boundary unless you say vault-only.
+secret to that repo boundary, but only with explicit operator consent: in
+interactive use HASP asks; in scripts you must pass --vault-only,
+--expose=never, or --expose=always.
 
-Use this as the main human path.
+Use this as the main human path. Pass bare names; values are read from a hidden
+prompt or from stdin via --from-stdin. NAME=VALUE on argv is rejected because
+ps, shell history, and accounting logs can see it.
+
+Flags
+  --json                  emit machine-readable result on stdout
+  --project-root <path>   repo root to use for the expose step
+  --kind <kv|file>        secret kind (default: kv)
+  --from-file <path>      read secret value from a file (kv or file kind)
+  --from-stdin            read secret value from stdin
+  --on-conflict <policy>  collision policy: ask|skip|overwrite (default: ask)
+  --vault-only            skip the bind step (alias for --expose=never)
+  --expose=ask            prompt for the bind decision (default; errors in scripts)
+  --expose=always         bind without prompting (script opt-in)
+  --expose=never          don't bind even if the cwd is a repo
 
 Examples
   hasp secret add
   hasp secret add OPENAI_API_KEY
   hasp secret add --vault-only
+  hasp secret add --expose=always TOKEN
+  printf 'sk-123' | hasp secret add --from-stdin --expose=never OPENAI_API_KEY
+  hasp secret add --kind file --from-file cert.pem CERT_FILE
 `
 
 const secretUpdateHelpText = `hasp secret update
 
 Replace the value for one or more existing secrets.
+
+Flags
+  --json   emit machine-readable result on stdout
 
 Examples
   hasp secret update OPENAI_API_KEY
@@ -311,9 +482,16 @@ Replace a local HASP secret value for incident response and invalidate active
 grants for that local item. Provider-side credential rotation remains the
 operator's responsibility.
 
+The new value comes from a hidden prompt (or piped stdin); NAME=VALUE on argv
+is rejected because ps, shell history, and accounting logs can see it.
+
+Flags
+  --json   emit machine-readable result on stdout
+
 Examples
   hasp secret rotate OPENAI_API_KEY
-  hasp secret rotate OPENAI_API_KEY=new-local-value
+  hasp secret rotate --json OPENAI_API_KEY
+  printf 'new-local-value' | hasp secret rotate OPENAI_API_KEY
 `
 
 const secretDeleteHelpText = `hasp secret delete
@@ -321,9 +499,14 @@ const secretDeleteHelpText = `hasp secret delete
 Delete one or more secrets from the vault. HASP asks for confirmation unless
 you pass --yes.
 
+Flags
+  --json   emit machine-readable result on stdout
+  --yes    skip the confirmation prompt
+
 Examples
   hasp secret delete OPENAI_API_KEY
   hasp secret delete --yes OPENAI_API_KEY
+  hasp secret delete --json OPENAI_API_KEY
 `
 
 const secretGetHelpText = `hasp secret get
@@ -332,6 +515,11 @@ Retrieve a secret value only when you explicitly reveal or copy it. By default
 this command shows secret metadata. Agents should use named refs with the MCP
 broker path instead of raw get or reveal.
 
+This verb stays for back-compat. Prefer the intent-named form:
+  hasp secret show    metadata only
+  hasp secret reveal  value to stdout
+  hasp secret copy    value to the clipboard
+
 When agent-safe mode is active, HASP blocks --reveal and --copy unless the
 operator first grants one-time plaintext access with hasp session
 grant-plaintext.
@@ -339,6 +527,37 @@ grant-plaintext.
 Examples
   hasp secret get OPENAI_API_KEY
   hasp secret retrieve OPENAI_API_KEY
+`
+
+const secretShowHelpText = `hasp secret show
+
+Print metadata for a secret: name, kind, created/updated timestamps, and any
+exposures. The plaintext value is never printed by this command; use
+hasp secret reveal or hasp secret copy when you need the value.
+
+Examples
+  hasp secret show OPENAI_API_KEY
+`
+
+const secretRevealHelpText = `hasp secret reveal
+
+Print the secret value to stdout. Opt-in by name, not by flag — the verb is the
+intent. Subject to the same plaintext policy as the legacy get --reveal: in
+agent-safe mode the operator must first grant one-time plaintext access with
+hasp session grant-plaintext.
+
+Examples
+  hasp secret reveal OPENAI_API_KEY
+`
+
+const secretCopyHelpText = `hasp secret copy
+
+Copy the secret value to the clipboard without printing it. Subject to the same
+plaintext policy as the legacy get --copy: in agent-safe mode the operator must
+first grant one-time plaintext access with hasp session grant-plaintext.
+
+Examples
+  hasp secret copy OPENAI_API_KEY
 `
 
 const secretListHelpText = `hasp secret list
@@ -351,6 +570,19 @@ Examples
   hasp secret list --json
 `
 
+const secretDiffHelpText = `hasp secret diff
+
+Compare a candidate .env file against the vault and report each KV name in one
+of four buckets: same (value matches), changed (value differs), missing (in
+vault but absent from .env), extra (in .env but absent from vault). Values are
+read internally to classify but never written to stdout — only names appear in
+output, so the command is safe to pipe into review tooling.
+
+Examples
+  hasp secret diff .env
+  hasp secret diff config/.env.production --json
+`
+
 const secretExposeHelpText = `hasp secret expose
 
 Expose one vault item to one repo boundary and create the repo-scoped reference
@@ -358,24 +590,34 @@ that brokered commands use.
 
 Use expose when a repo needs a secret by reference, not by raw value.
 
+Flags
+  --project-root <path>   repo root to bind the secret to
+  --json                  emit machine-readable result on stdout
+
 Examples
   hasp secret expose OPENAI_API_KEY --project-root .
+  hasp secret expose OPENAI_API_KEY --project-root . --json
 `
 
 const secretHideHelpText = `hasp secret hide
 
 Remove one repo exposure for a secret. The vault item stays in the vault.
 
+Flags
+  --project-root <path>   repo root to remove the exposure from
+  --json                  emit machine-readable result on stdout
+
 Examples
   hasp secret hide OPENAI_API_KEY --project-root .
+  hasp secret hide OPENAI_API_KEY --project-root . --json
 `
 
 const appHelpText = `hasp app
 
 Connect a normal application to selected vault secrets.
 
-An app consumer is machine-scoped by default. Add --project-root only when the
-app should run inside a specific repo boundary.
+An app is machine-scoped by default. Add --project-root only when the app
+should run inside a specific repo boundary.
 
 Subcommands
   connect     save the app profile and optional launcher
@@ -383,7 +625,7 @@ Subcommands
   install     create or refresh the launcher
   shell       open a shell with the app bindings loaded
   disconnect  remove the app profile and managed launcher
-  list        list saved app consumers
+  list        list saved apps
 
 Learn more
   hasp help app connect
@@ -396,14 +638,26 @@ Save an app profile that maps vault secrets to env vars, temporary files, or a
 temporary dotenv bundle.
 
 Launcher creation is never silent. In interactive use, HASP asks. In scripts,
-set --install=true or --install=false. If you install a launcher and its
+set --install=always or --install=never. If you install a launcher and its
 directory is not on PATH, HASP can also patch your shell config, but only after
-you say yes or pass --add-to-path=true.
+you say yes or pass --add-to-path=always.
+
+Tri-state flags (--install, --add-to-path, --install-hooks,
+--auto-protect-repos, --enable-convenience-unlock, --overwrite-existing-config)
+take always|never|ask. ask is the default and means "prompt when interactive".
+The legacy true/false aliases are still accepted but will be removed.
+
+Use NAME=@REF to reference vault items by name. Bare NAME=REF still resolves
+during the deprecation window but emits a stderr warning.
+
+Flags
+  --file <NAME=@REF>    inject a secret as a temporary file (repeatable)
+  --json                emit machine-readable result on stdout
 
 Examples
-  hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=OPENAI_API_KEY
-  hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=OPENAI_API_KEY --install=true --add-to-path=true
-  hasp app connect web --project-root . --cmd 'npm run dev' --dotenv DATABASE_URL=DATABASE_URL --dotenv-env ENV_FILE
+  hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=@OPENAI_API_KEY
+  hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=@OPENAI_API_KEY --install=always --add-to-path=always
+  hasp app connect web --project-root . --cmd 'npm run dev' --dotenv DATABASE_URL=@DATABASE_URL --dotenv-env ENV_FILE
 `
 
 const appRunHelpText = `hasp app run
@@ -418,14 +672,17 @@ Examples
 
 const appInstallHelpText = `hasp app install
 
-Create or refresh the managed launcher for an app consumer.
+Create or refresh the managed launcher for a saved app.
 
 Use this when you skipped launcher creation during connect or when the launcher
 path changed.
 
+Flags
+  --json   emit machine-readable result on stdout
+
 Examples
   hasp app install myapp
-  hasp app install myapp --add-to-path=true
+  hasp app install myapp --add-to-path=always
 `
 
 const appShellHelpText = `hasp app shell
@@ -442,16 +699,24 @@ const appDisconnectHelpText = `hasp app disconnect
 Remove the saved app profile. If HASP manages the launcher path, it removes the
 launcher too.
 
+Flags
+  --json   emit machine-readable result on stdout
+
 Examples
   hasp app disconnect myapp
+  hasp app disconnect myapp --json
 `
 
 const appListHelpText = `hasp app list
 
-List saved app consumers.
+List saved apps.
+
+Flags
+  --json   emit machine-readable list on stdout
 
 Examples
   hasp app list
+  hasp app list --json
 `
 
 const agentHelpText = `hasp agent
@@ -459,16 +724,16 @@ const agentHelpText = `hasp agent
 Connect a coding agent to HASP once, then let it pull secrets through the MCP
 surface or the local config HASP writes.
 
-Agent consumers are usually repo-scoped. Pass --project-root when you want HASP
-to bind the integration to one repo boundary.
+Agents are usually repo-scoped. Pass --project-root when you want HASP to
+bind the integration to one repo boundary.
 
 Subcommands
-  connect     write the agent config and save the consumer record
+  connect     write the agent config and save the agent record
   mcp         run the agent-specific HASP MCP wrapper
   launch      run a command under an agent-safe HASP session
   shell       open a shell under an agent-safe HASP session
-  disconnect  remove the agent config block and consumer record
-  list        list saved agent consumers
+  disconnect  remove the agent config block and the saved agent
+  list        list saved agents
   list-supported  list shipped/generic profile support proof
 
 Learn more
@@ -480,10 +745,14 @@ Learn more
 
 const agentConnectHelpText = `hasp agent connect
 
-Write the local agent config needed for HASP integration and save that agent as
-a managed consumer. Generated HASP MCP configs now point at a managed local
+Write the local agent config needed for HASP integration and save the agent
+as a managed entry. Generated HASP MCP configs now point at a managed local
 wrapper instead of a raw ` + "`hasp mcp`" + ` command so HASP can bind the
 agent process tree to a protected session automatically.
+
+Flags
+  --project-root <path>   repo root to bind the agent to (optional)
+  --json                  emit machine-readable result on stdout
 
 Examples
   hasp agent connect claude-code --project-root .
@@ -493,8 +762,8 @@ Examples
 const agentMCPHelpText = `hasp agent mcp
 
 Run the agent-specific HASP MCP wrapper. This opens an agent-safe session for
-the saved consumer, registers the parent agent process with the daemon, and
-then serves MCP on stdin/stdout.
+the saved agent, registers the parent agent process with the daemon, and then
+serves MCP on stdin/stdout.
 
 Use this as the generated config path instead of raw ` + "`hasp mcp`" + ` for
 first-class agent profiles.
@@ -529,18 +798,26 @@ Examples
 
 const agentDisconnectHelpText = `hasp agent disconnect
 
-Remove the HASP config block for one agent consumer and delete the saved record.
+Remove the HASP config block for one saved agent and delete the saved record.
+
+Flags
+  --json   emit machine-readable result on stdout
 
 Examples
   hasp agent disconnect claude-code
+  hasp agent disconnect claude-code --json
 `
 
 const agentListHelpText = `hasp agent list
 
-List saved agent consumers.
+List saved agents.
+
+Flags
+  --json   emit machine-readable list on stdout
 
 Examples
   hasp agent list
+  hasp agent list --json
 `
 
 const agentListSupportedHelpText = `hasp agent list-supported
@@ -564,10 +841,26 @@ Subcommands
   status    inspect one bound repo
   unbind    remove one repo binding
 
+Common flags (all subcommands)
+  --json                    emit machine-readable result on stdout
+  --project-root <path>     repo root (default: current directory)
+
+project adopt flags
+  --under <path>            directory tree to scan for git repos
+  --preview                 show what would be adopted without committing
+
+project bind flags
+  --default-policy <p>      default policy: auto|session|access
+  --hooks                   install git hooks in the repo (default: true)
+  --allow-non-git           bind even if the path is not a git working tree
+  --alias <alias=item>      add a repo alias mapping (repeatable)
+
 Examples
   hasp project bind --project-root .
   hasp project status --project-root .
   hasp project adopt --under ~/Work
+  hasp project adopt --under ~/Work --preview
+  hasp project unbind --project-root .
 `
 
 const runHelpText = `hasp run
@@ -575,21 +868,43 @@ const runHelpText = `hasp run
 Run one repo-scoped command through the broker with time-bound secret grants.
 
 Use run when you want the repo boundary, approval model, and audit trail. Use
-app run when you want a saved app consumer.
+app run when you want a saved app.
+
+Flags
+  --project-root <path>          repo root to use for binding and grant checks
+  --session-token <token>        use an existing session token instead of
+                                 opening a new one
+  --grant-project <scope>        project grant scope: window or session
+  --grant-secret <scope>         secret grant scope: window or session
+  --grant-window <duration>      maximum age for a grant (e.g. 15m, 1h)
+  --env <NAME=@REF>              inject a secret as an env var (repeatable)
+  --file <NAME=@REF>             inject a secret as a temp file (repeatable)
+  --explain                      print the resolved decision tree before
+                                 executing (output goes to stderr)
+  --dry-run                      print the decision tree and exit without
+                                 executing (use with --explain)
+  --explain-format <fmt>         text (default) or json
 
 Examples
-  hasp run --project-root . --env OPENAI_API_KEY=@OPENAI_API_KEY -- your-command
+  hasp run --project-root . --env OPENAI_API_KEY=@OPENAI_API_KEY -- npm test
+  hasp run --project-root . --env OPENAI_API_KEY=@OPENAI_API_KEY --explain --dry-run -- pytest tests/
+  hasp run --project-root . --grant-window 15m --grant-secret window -- python script.py
 `
 
 const injectHelpText = `hasp inject
 
 Resolve repo-scoped refs into env vars or temporary files for one command.
 
-Use inject for low-level brokered execution. App consumers are the simpler path
-for repeatable non-repo apps.
+Use inject for low-level brokered execution. Saved apps (hasp app run) are
+the simpler path for repeatable non-repo apps.
+
+Authorization preview
+  --explain           print the resolved decision tree (project lease, secret
+                      grant, grant window, redactor) before executing.
+  --explain --dry-run print the decision tree and exit without executing.
 
 Examples
-  hasp inject --project-root . --file GOOGLE_APPLICATION_CREDENTIALS=@GOOGLE_APPLICATION_CREDENTIALS -- your-command
+  hasp inject --project-root . --file GOOGLE_APPLICATION_CREDENTIALS=@GOOGLE_APPLICATION_CREDENTIALS -- gcloud auth list
 `
 
 const writeEnvHelpText = `hasp write-env
@@ -599,16 +914,66 @@ Write a convenience env file from repo-scoped refs after explicit approval.
 Use this when a tool truly needs a file on disk. Brokered run and inject are
 safer because they avoid leaving values in the repo.
 
+Flags
+  --project-root <path>              repo root to use for grant checks
+                                     (default: current directory)
+  --output <path>                    destination file for the env block
+  --env <NAME=@REF>                  inject a secret as an env var (repeatable)
+  --json                             emit machine-readable result on stdout
+  --session-token <token>            use an existing broker session token
+  --grant-project <scope>            project grant scope: once|session|window|<dur>
+  --grant-secret <scope>             secret grant scope: once|session|window|<dur>
+  --grant-convenience <scope>        convenience grant scope: once|window|<dur>
+  --grant-window <duration>          maximum age for any grant (e.g. 15m)
+  --force                            overwrite an existing file (exclusive with
+                                     --append)
+  --append                           merge values into a delimited hasp block
+                                     inside an existing file idempotently
+
 Examples
   hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY
+  hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY --force
+  hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY --append
 `
 
 const checkRepoHelpText = `hasp check-repo
 
 Scan a repo for managed values that leaked into files.
 
+Flags
+  --project-root <path>      repo root to scan (default: current directory)
+  --json                     emit machine-readable result on stdout
+  --allow-managed-secrets    suppress exit-1 even when managed values are found
+                             (useful in CI scenarios that treat the scan as
+                             advisory only)
+
 Examples
   hasp check-repo --project-root .
+  hasp check-repo --project-root . --json
+`
+
+const proofHelpText = `hasp proof
+
+Run the brokered first-proof check. Verifies that the named secret is bound
+to the project and reachable through the broker's normal run flow, then
+reports PASS / FAIL on stdout (and propagates exit code).
+
+This collapses the long quickstart one-liner
+
+  hasp run --project-root <p> --env HASP_SETUP_PROOF=@SECRET --grant-project window \
+           --grant-secret session --grant-window 15m -- sh -c 'test -n "$HASP_SETUP_PROOF"'
+
+into a single command.
+
+Required
+  --secret <name|alias>   the secret reference to inject under HASP_SETUP_PROOF
+
+Optional
+  --project-root <path>   defaults to the current directory
+
+Examples
+  hasp proof --secret api_token
+  hasp proof --project-root /path/to/repo --secret secret_01
 `
 
 const daemonHelpText = `hasp daemon
@@ -631,12 +996,31 @@ Work with broker sessions directly.
 
 Subcommands
   open      open a session for one repo boundary
+  list      list active broker sessions (--mine restricts to the calling user)
   grant-plaintext  grant one-time plaintext reveal/copy for a protected session
   resolve   inspect an existing token
   revoke    revoke an existing token
 
+Common flags
+  --json              emit machine-readable result on stdout
+
+session open flags
+  --project-root <p>  repo root to open the session for
+  --host-label <lbl>  label to identify this client (default: generic-client)
+
+session list flags
+  --mine              restrict to sessions owned by the calling user
+
+session resolve / revoke flags
+  --token <token>     session token to inspect or revoke
+  --all               revoke all active sessions (revoke only; exclusive with
+                      --token)
+
 Examples
   hasp session open --host-label local-cli --project-root .
+  hasp session list --mine
+  hasp session resolve --token $HASP_SESSION_TOKEN
+  hasp session revoke --token $HASP_SESSION_TOKEN
   hasp session revoke --all
 `
 
@@ -649,6 +1033,14 @@ or ` + "`--copy`" + ` inside a protected agent workflow. Approval is interactive
 and local, and plaintext grants stay one-time, item-scoped, action-scoped, and
 short-lived.
 
+Flags
+  --token <token>          agent-safe session token to grant against
+  --item <name>            vault item name to grant plaintext access for
+  --action <reveal|copy>   the plaintext action to permit
+  --scope <scope>          grant scope (default: once)
+  --grant-window <dur>     maximum lifetime for the grant (default: 60s)
+  --json                   emit machine-readable result on stdout
+
 Examples
   hasp session grant-plaintext --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action reveal --grant-window 60s
   hasp session grant-plaintext --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action copy --grant-window 60s
@@ -659,20 +1051,83 @@ const vaultHelpText = `hasp vault
 Manage local vault/session material.
 
 Subcommands
-  lock  revoke active daemon sessions and grant material
+  lock            revoke active sessions and grants AND forget the saved keychain unlock
+  forget-device   forget only the saved keychain unlock (keeps sessions intact)
+  rekdf           re-derive the password wrap under the binary's current default KDF (e.g. argon2id)
+  rekey           rotate the master password without rotating the underlying vault key
+
+Common flags
+  --json   emit machine-readable result on stdout (lock, forget-device, rekdf)
 
 Examples
   hasp vault lock
+  hasp vault forget-device
+  hasp vault rekdf
+  hasp vault rekdf --json
+  HASP_MASTER_PASSWORD=old HASP_NEW_MASTER_PASSWORD=new hasp vault rekey
 `
 
 const vaultLockHelpText = `hasp vault lock
 
-Revoke active daemon sessions and local grant material. This does not rotate
-provider credentials.
+Revoke active daemon sessions and local grant material, AND forget the saved
+keychain (convenience) unlock — clearing the envelope's ConvenienceWrap and
+deleting the keychain item. This does not rotate provider credentials.
+
+Use this as the "walking-away-from-the-machine" big red button: next time the
+vault opens, a same-uid attacker cannot replay a stored keychain key, and
+every in-flight grant and session is gone.
 
 Examples
   hasp vault lock
   hasp vault lock --json
+`
+
+const vaultForgetDeviceHelpText = `hasp vault forget-device
+
+Forget the saved keychain (convenience) unlock for this vault. Two effects,
+both of which must happen for the operation to count:
+
+  1. Clear the envelope's ConvenienceWrap so OpenWithConvenienceUnlock can no
+     longer revive the vault without the master password.
+  2. Delete the keychain item so a same-uid attacker cannot read the wrapped
+     key off disk and replay it.
+
+This is narrower than ` + "`hasp vault lock`" + ` — it leaves active daemon
+sessions and grant material alone. Use it when you want to revoke the "stay
+unlocked on this device" shortcut without interrupting an in-flight session,
+or when rotating the keychain-held device key as part of an incident response.
+
+The command is idempotent: running it twice is safe and exits 0 both times.
+
+Examples
+  hasp vault forget-device
+  hasp vault forget-device --json
+`
+
+const vaultRekeyHelpText = `hasp vault rekey
+
+Rotate the master password that protects the vault. The underlying vault key
+(and therefore every sealed item) is preserved — only the password wrap is
+re-derived under the new password. Use this when the master password may have
+been observed or simply on a regular cadence.
+
+Both passwords are read from the environment so they never touch shell history
+or argv:
+
+  HASP_MASTER_PASSWORD       current master password
+  HASP_NEW_MASTER_PASSWORD   new master password to install
+
+Side effects (atomic with the password rotation):
+  - Clears the saved convenience-unlock wrap (you must re-enable it after
+    rekey if you still want keychain-backed unlock on this device).
+  - Writes a single audit event of type ` + "`rekey`" + `; password values are
+    never recorded.
+
+The old password no longer unlocks the vault after the call returns.
+
+Examples
+  HASP_MASTER_PASSWORD=$old HASP_NEW_MASTER_PASSWORD=$new hasp vault rekey
+  HASP_MASTER_PASSWORD=$old HASP_NEW_MASTER_PASSWORD=$new hasp vault rekey --json
 `
 
 const statusHelpText = `hasp status
@@ -688,33 +1143,108 @@ const pingHelpText = `hasp ping
 
 Check whether the local daemon can answer requests.
 
+Flags
+  --json   emit machine-readable result on stdout
+
 Examples
   hasp ping
+  hasp ping --json
 `
 
 const auditHelpText = `hasp audit
 
 Print the local audit log.
 
+Subcommands
+  tail      print the most recent events; -f streams new appends
+  verify    verify the local audit chain HMAC and exit
+
+Flags
+  --json                   emit one JSON event per line (NDJSON)
+  --format <fmt>           output format: timeline, table, or json
+  --verify                 verify the audit chain HMAC and exit (alias for
+                           the verify subcommand)
+  --secret <ref>           filter by Details.reference
+  --project-root <path>    filter by Details.project_root
+  --agent <name>           filter by Details.agent
+  --action <name>          filter by Details.action
+  --blocked                only show blocked events
+  --since <time>           only show events after this RFC3339 timestamp or
+                           Go duration (e.g. 1h)
+
 Examples
   hasp audit
   hasp audit --incident-bundle --json
+  hasp audit tail -n 20 -f
+`
+
+const auditTailHelpText = `hasp audit tail
+
+Print the most recent audit events. With --follow, keep streaming new appends
+until interrupted.
+
+Flags
+  --n N, -n N      show the last N events (default: 50)
+  --f, -f          stream new events as they are appended (short for --follow)
+  --follow         stream new events as they are appended
+  --all            show all stored events (mutually exclusive with -n)
+  --since <dur>    only show events newer than this duration ago (e.g. 1h)
+  --json           emit one JSON event per line (NDJSON)
+  --secret REF     filter by Details.reference
+  --project-root P filter by Details.project_root
+  --agent NAME     filter by Details.agent
+  --action NAME    filter by Details.action
+  --blocked        only show blocked events
+
+Examples
+  hasp audit tail
+  hasp audit tail -n 20 -f
+  hasp audit tail --all --since 1h
+  hasp audit tail -f --json --action secret.get.plaintext_blocked
 `
 
 const exportBackupHelpText = `hasp export-backup
 
 Write an encrypted backup for the local vault.
 
+Flags
+  --output <path>              destination file for the encrypted backup
+  --recovery-passphrase <pp>   passphrase protecting the backup (prefer stdin
+                               or fd forms to avoid argv exposure)
+  --recovery-passphrase-stdin  read passphrase from stdin (until EOF or newline)
+  --recovery-passphrase-fd N   read passphrase from file descriptor N
+  --json                       emit machine-readable result on stdout
+
+The passphrase may also be supplied via the HASP_BACKUP_PASSPHRASE environment
+variable. Passing it directly on the command line is not allowed.
+
 Examples
-  hasp export-backup --output backup.json --recovery-passphrase 'passphrase'
+  echo "$PP" | hasp export-backup --output backup.json --recovery-passphrase-stdin
+  hasp export-backup --output backup.json --recovery-passphrase-fd 3 3<<<"$PP"
+  hasp export-backup --output backup.json --recovery-passphrase-stdin --json
 `
 
 const restoreBackupHelpText = `hasp restore-backup
 
 Restore an encrypted backup into the current HASP home.
 
+Flags
+  --input <path>               source file for the encrypted backup
+  --recovery-passphrase-stdin  read passphrase from stdin (until EOF or newline)
+  --recovery-passphrase-fd N   read passphrase from file descriptor N
+  --recovery-passphrase <pp>   passphrase on argv (UNSAFE — rejected at runtime;
+                               use the stdin or fd form instead)
+  --master-password <pw>       master password on argv (UNSAFE — rejected at
+                               runtime; use HASP_MASTER_PASSWORD instead)
+  --json                       emit machine-readable result on stdout
+
+The passphrase may also be supplied via HASP_BACKUP_PASSPHRASE. The master
+password must be provided via HASP_MASTER_PASSWORD. Passing secrets directly
+on the command line is not allowed.
+
 Examples
-  hasp restore-backup --input backup.json --recovery-passphrase 'passphrase' --master-password 'new-password'
+  echo "$PP" | hasp restore-backup --input backup.json --recovery-passphrase-stdin
+  hasp restore-backup --input backup.json --recovery-passphrase-fd 3 3<<<"$PP"
 `
 
 const mcpHelpText = `hasp mcp
@@ -730,16 +1260,196 @@ Examples
 
 const tuiHelpText = `hasp tui
 
-Open the terminal UI.
+Deprecated. ` + "`hasp tui`" + ` does not open a real terminal UI; it prints a
+one-shot key/value snapshot of the current project binding (canonical root,
+visible refs, vault item count) and exits. The name was aspirational and is
+kept only so older scripts keep working.
+
+Use ` + "`hasp project status`" + ` for the structured project view going forward.
+The snapshot output remains stable for back-compat, but ` + "`hasp tui`" + ` will
+print a deprecation warning to stderr on every invocation.
+
+Flags
+  --json              emit the snapshot as JSON instead of the aligned table
+  --project-root PATH project directory to inspect (default: current dir)
 
 Examples
-  hasp tui
+  hasp project status            # recommended replacement
+  hasp tui                       # legacy snapshot (prints deprecation warning)
+  hasp tui --json                # legacy snapshot as JSON
 `
 
 const versionHelpText = `hasp version
 
 Print the build version.
 
+Flags
+  --json   emit machine-readable version envelope on stdout
+
 Examples
   hasp version
+  hasp version --json
+`
+
+const docsHelpText = `hasp docs
+
+Render reference documentation from the live help topic inventory. Useful for
+shipping a single offline reference page alongside the binary and for
+downstream packagers who want the same source of truth as the CLI.
+
+Subcommands
+  markdown   render every help topic as one markdown page
+
+Examples
+  hasp docs markdown --out docs/cli.md
+`
+
+const internalsHelpText = `hasp help internals
+
+Lower-level vocabulary for operators, integrators, and adversarial reviewers.
+Most users never need these terms; the four root concepts (vault, repo, agent,
+grant) cover the daily surface.
+
+Vault and secrets
+  vault           encrypted local store under HASP_HOME.
+  secret          one named item in the vault.
+  alias           a per-repo nickname mapped to a vault secret name. Lets a
+                  command see "API_TOKEN" while the vault stores "stripe_live".
+  reference       a structured pointer to a vault item ("@my_secret") that
+                  resolves to a value at delivery time.
+  named reference an alias used as a reference inside an agent or app profile.
+  exposure        the policy on a secret that controls whether it may be
+                  injected into env, written to a file, or held vault-only.
+
+Repo (project) surface
+  project         a git-backed root path bound to the broker.
+  binding         the saved record that ties a repo path to a set of secrets,
+                  aliases, and grant defaults.
+  consumer        an app or agent profile attached to a repo. The same secret
+                  can flow to multiple consumers under different aliases.
+
+Broker and grants
+  broker          the local runtime that mediates every secret delivery.
+  grant           one short-lived permission to deliver one secret to one run.
+                  Carries a scope (project/secret/window) and a lease.
+  lease           the time-bounded handle the broker holds for an active grant.
+                  Ends on window expiry, manual revoke, or process exit.
+  scope           the (project root, secret, window) tuple that limits a grant.
+  session token   the in-memory handle the daemon issues to a CLI process for
+                  one open session. Never written to disk; binds to a peer PID.
+
+Redactor encoding coverage
+  The redactor scans output for every encoded form of each managed secret.
+  Encoding forms currently masked (minRedactLen=6 bytes minimum value length):
+    raw             literal bytes
+    base64-std      RFC 4648 standard alphabet with padding
+    base64-url      URL-safe alphabet with padding
+    base32-std      RFC 4648 standard alphabet with padding
+    hex-lower       lowercase hex (0-9, a-f)
+    hex-upper       uppercase hex (0-9, A-F)
+    url-encoded     percent-encoded query-string form
+    json-escaped    JSON string body escapes (e.g. \n, \t, \\)
+    html-entity     per-byte hex entity (&#x41; etc.)
+    double-percent  percent-encode then re-encode % signs (%2541 etc.)
+    unicode-escape  per-codepoint \uXXXX form
+
+  Markers are NOT length-preserving. A 4096-byte secret becomes "[REDACTED]"
+  (10 bytes); encoded forms become "[REDACTED_B64]", "[REDACTED_HEX]", etc.
+  Byte offsets and line lengths after a managed value will shift, so column-
+  aware log shippers and byte-position diff tools must not assume the pre-
+  redaction layout. Line counts are preserved (no marker contains '\n').
+
+Audit and verification
+  audit chain     append-only HMAC-chained log of every grant decision.
+                  See: hasp audit / hasp audit tail.
+  fail-closed     the broker default — if any check fails (peer UID/PID,
+                  expiry, revoked grant, missing capability), no value is
+                  delivered.
+
+Examples
+  hasp help grant
+  hasp audit tail --json
+  hasp doctor
+`
+
+const exitCodesHelpText = `hasp help exit-codes
+
+Every hasp command exits with a stable bucket so scripts can branch on
+machine-readable failure without parsing strings. The same buckets back the
+"code" field in --json error envelopes.
+
+  0  ok                  command succeeded
+  1  generic / internal  uncategorised failure (E_INTERNAL or no envelope)
+  2  user input          missing flag, malformed grammar, not in a repo
+                         (E_USER_INPUT, E_NOT_IN_REPO)
+  3  permission          vault locked, wrong password, grant denied
+                         (E_PERMISSION, E_VAULT_LOCKED, E_PASSWORD_WRONG,
+                          E_GRANT_DENIED)
+  4  daemon / I/O        daemon unreachable or broker timeout
+                         (E_DAEMON_UNREACHABLE)
+  5  leak detected       repo scan found managed values in the working tree
+                         (E_REPO_LEAK)
+  6  not found           named secret/binding/grant is not in the vault
+                         (E_NOT_FOUND)
+
+Examples
+  hasp secret show DOES_NOT_EXIST       # exits 6 (E_NOT_FOUND)
+  hasp secret show ANY --json           # exits 3 if vault is locked
+  hasp check-repo --project-root .      # exits 5 if a managed value is on disk
+
+Scripts should branch on the bucket, not the message text:
+
+  hasp secret show "$NAME" >/dev/null
+  case $? in
+    0)  echo "ok"        ;;
+    6)  echo "not found" ;;
+    3)  echo "vault locked or grant denied" ;;
+    *)  echo "other error: $?" ;;
+  esac
+`
+
+const completionHelpText = `hasp completion
+
+Emit a shell completion script for bash, zsh, fish, or powershell on stdout.
+The completable commands are derived from the live command inventory so the
+script never lags the dispatcher.
+
+Examples
+  hasp completion bash >> ~/.bashrc
+  hasp completion zsh > ~/.config/zsh/_hasp
+  hasp completion fish > ~/.config/fish/completions/hasp.fish
+  hasp completion powershell | Out-String | Invoke-Expression
+`
+
+const upgradeHelpText = `hasp upgrade
+
+Download a newer signed hasp release and atomically replace the running
+binary. Verification chain (fail-closed at every step):
+
+  1. The release ships a KEYS file listing currently-trusted Ed25519
+     public keys, signed by at least one key embedded in this binary.
+  2. The tarball is signed by some key listed in the verified KEYS file.
+  3. The downloaded tarball replaces the running binary via rename(2)
+     on the same filesystem (atomic; the old inode keeps running until
+     this process exits).
+
+Refusals (no on-disk side effects):
+  - --version is older than or equal to the installed version
+    (rollback protection)
+  - KEYS file is not signed by any embedded trust root
+  - tarball is not signed by any KEYS-listed key
+  - artifact URL is not on github.com
+  - this build has no embedded release keys (unsigned 'go build')
+
+Flags
+  --version vX.Y.Z   target release tag (required)
+  --yes              skip the interactive confirm prompt
+  --json             emit a JSON report on stdout
+
+Examples
+  hasp upgrade --version v0.2.0
+  hasp upgrade --version v0.2.0 --yes
+  hasp upgrade --version v0.2.0 --json --yes
+
+Find releases at https://github.com/gethasp/hasp/releases.
 `

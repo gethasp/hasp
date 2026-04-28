@@ -82,7 +82,7 @@ func setupResolveProjectRoot(ctx context.Context, opts setupOptions, prompt *set
 		return "", err
 	}
 	if opts.NonInteractive {
-		return "", errors.New("non-interactive setup requires --repo")
+		return "", errors.New("non-interactive setup requires --project-root")
 	}
 	if err := setupWriteStage(prompt.out, "Repo setup",
 		"HASP will protect this repo with brokered bindings and optional local guardrails.",
@@ -194,7 +194,7 @@ func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents [
 maybeOverwrite:
 	if setupAnyExistingAgentConfig(agents) && !opts.OverwriteExistingConfig.set {
 		if opts.NonInteractive {
-			return errors.New("non-interactive setup requires --overwrite-existing-config=true|false when agent config files already exist")
+			return errors.New("non-interactive setup requires --overwrite-existing-config=always|never when agent config files already exist")
 		}
 		value, err := promptBool(prompt, "Allow HASP to update existing agent config files and create backups", true)
 		if err != nil {
@@ -213,7 +213,7 @@ func validateSetupNonInteractive(opts setupOptions) error {
 		return errors.New("non-interactive setup requires --hasp-home")
 	}
 	if opts.PasswordEnv == "" && !opts.PasswordStdin {
-		return errors.New("non-interactive setup requires --master-password-env or --master-password-stdin")
+		return errors.New("non-interactive setup requires a master password; set HASP_MASTER_PASSWORD or run without --non-interactive")
 	}
 	return nil
 }

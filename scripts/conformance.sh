@@ -135,4 +135,4 @@ esac
 HASP_HOME="$(mktemp -d)" HASP_MASTER_PASSWORD="artifact-password" "$artifact_root/bin/hasp" version >/dev/null
 HASP_HOME="$(mktemp -d)" HASP_MASTER_PASSWORD="artifact-password" "$artifact_root/bin/hasp" init >/dev/null
 
-(cd ./apps/server && go test ./internal/profiles)
+(cd ./apps/server && go test -tags=hasp_test_fastkdf ./internal/profiles)

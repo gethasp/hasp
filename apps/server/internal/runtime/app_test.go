@@ -25,7 +25,20 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
-	os.Exit(m.Run())
+	// Always point HASP_HOME at a temp dir so runtime tests never touch the
+	// real ~/.hasp directory.  Individual tests may call t.Setenv("HASP_HOME",
+	// t.TempDir()) to get their own isolated directory; t.Setenv restores the
+	// process-level value set here on test cleanup.
+	dir, err := os.MkdirTemp("", "hasp-test-runtime-*")
+	if err == nil {
+		os.Setenv("HASP_HOME", dir)
+	}
+	os.Setenv("HASP_TEST", "1")
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
 }
 
 func TestSessionStoreOpenAndRevoke(t *testing.T) {

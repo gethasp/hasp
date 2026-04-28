@@ -111,7 +111,7 @@ func autoAdoptEligible(projectRoot string, binding store.Binding) bool {
 
 func validateProjectScopedSetupOptions(opts setupOptions) error {
 	if strings.TrimSpace(opts.Repo) == "" && (opts.BindImports || len(opts.BindItems) > 0 || len(opts.Aliases) > 0) {
-		return errors.New("project-scoped setup options require --repo")
+		return errors.New("project-scoped setup options require --project-root")
 	}
 	return nil
 }

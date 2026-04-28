@@ -1,25 +1,73 @@
 package runtime
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"os/exec"
+	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 )
 
 var (
 	currentUserFn = user.Current
 	gitTopLevelFn = func(abs string) ([]byte, error) {
-		return exec.Command("git", "-C", abs, "rev-parse", "--show-toplevel").Output()
+		out, err := gitsafe.TopLevelCached(context.Background(), abs)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(out + "\n"), nil
 	}
-	randomRead  = rand.Read
-	filepathAbs = filepath.Abs
+	randomRead     = rand.Read
+	filepathAbs    = filepath.Abs
+	evalSymlinksFn = filepath.EvalSymlinks
 )
+
+var (
+	canonicalRootCacheMu sync.Mutex
+	canonicalRootCache   = make(map[string]canonicalRootEntry)
+)
+
+type canonicalRootEntry struct {
+	inputInfo os.FileInfo
+	resolved  string
+}
+
+func resetCanonicalRootCache() {
+	canonicalRootCacheMu.Lock()
+	canonicalRootCache = make(map[string]canonicalRootEntry)
+	canonicalRootCacheMu.Unlock()
+}
+
+func cachedEvalSymlinks(abs string) (string, bool) {
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", false
+	}
+	canonicalRootCacheMu.Lock()
+	entry, hit := canonicalRootCache[abs]
+	canonicalRootCacheMu.Unlock()
+	if hit && os.SameFile(entry.inputInfo, info) {
+		return entry.resolved, true
+	}
+	resolved, err := evalSymlinksFn(abs)
+	if err != nil {
+		canonicalRootCacheMu.Lock()
+		delete(canonicalRootCache, abs)
+		canonicalRootCacheMu.Unlock()
+		return "", false
+	}
+	canonicalRootCacheMu.Lock()
+	canonicalRootCache[abs] = canonicalRootEntry{inputInfo: info, resolved: resolved}
+	canonicalRootCacheMu.Unlock()
+	return resolved, true
+}
 
 type Session struct {
 	ID           string
@@ -44,20 +92,34 @@ type SessionView struct {
 	LastSeenAt   time.Time `json:"last_seen_at"`
 }
 
+// processBinding pairs a session token with the per-process identity token
+// captured at registration time. ResolveProcess re-probes the identity to
+// detect pid reuse: a registered pid whose identity has changed must not
+// inherit the prior session.
+type processBinding struct {
+	token    string
+	identity string
+}
+
 type SessionStore struct {
 	mu        sync.RWMutex
 	sessions  map[string]Session
-	processes map[int]string
+	processes map[int]processBinding
 	now       func() time.Time
 	idleTTL   time.Duration
+	// processIdentity returns a stable token identifying the process at pid.
+	// Set explicitly per SessionStore so tests can simulate pid reuse without
+	// swapping a package-level var under a global mutex.
+	processIdentity func(pid int) (string, error)
 }
 
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
-		sessions:  make(map[string]Session),
-		processes: make(map[int]string),
-		now:       func() time.Time { return time.Now().UTC() },
-		idleTTL:   DefaultVaultIdleTimeout,
+		sessions:        make(map[string]Session),
+		processes:       make(map[int]processBinding),
+		now:             func() time.Time { return time.Now().UTC() },
+		idleTTL:         DefaultVaultIdleTimeout,
+		processIdentity: realProcessIdentity,
 	}
 }
 
@@ -113,7 +175,7 @@ func (s *SessionStore) Revoke(token string) bool {
 	}
 	delete(s.sessions, token)
 	for pid, existing := range s.processes {
-		if existing == token {
+		if existing.token == token {
 			delete(s.processes, pid)
 		}
 	}
@@ -170,7 +232,7 @@ func (s *SessionStore) PruneExpired() {
 		if s.sessionExpired(session, now) {
 			delete(s.sessions, token)
 			for pid, existing := range s.processes {
-				if existing == token {
+				if existing.token == token {
 					delete(s.processes, pid)
 				}
 			}
@@ -183,6 +245,7 @@ func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
 		return false
 	}
 	now := s.now().UTC()
+	identity, _ := s.processIdentity(pid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, ok := s.sessions[sessionToken]
@@ -190,7 +253,7 @@ func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
 		delete(s.sessions, sessionToken)
 		return false
 	}
-	s.processes[pid] = sessionToken
+	s.processes[pid] = processBinding{token: sessionToken, identity: identity}
 	return true
 }
 
@@ -203,10 +266,23 @@ func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, ancestor := range lineage {
-		token, ok := s.processes[ancestor]
+		binding, ok := s.processes[ancestor]
 		if !ok {
 			continue
 		}
+		// PID-reuse defense: re-probe the per-process identity captured at
+		// registration. If both sides report a non-empty token and they
+		// differ, the kernel reused this pid for an unrelated process — drop
+		// the stale binding rather than honoring it. When either probe is
+		// empty the platform is unsupported and we fall back to ancestry.
+		if binding.identity != "" {
+			current, _ := s.processIdentity(ancestor)
+			if current != "" && current != binding.identity {
+				delete(s.processes, ancestor)
+				continue
+			}
+		}
+		token := binding.token
 		session, ok := s.sessions[token]
 		if !ok || s.sessionExpired(session, now) {
 			delete(s.sessions, token)
@@ -249,8 +325,7 @@ func CanonicalProjectRoot(path string) string {
 	if out, err := gitTopLevelFn(abs); err == nil {
 		abs = strings.TrimSpace(string(out))
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err == nil {
+	if resolved, ok := cachedEvalSymlinks(abs); ok {
 		return resolved
 	}
 	return filepath.Clean(abs)

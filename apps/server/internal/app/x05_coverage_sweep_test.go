@@ -105,7 +105,7 @@ func TestAuditCommandBlockedFlagExplicit(t *testing.T) {
 		}, nil
 	}
 	var out bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--json", "--blocked"}, &out); err != nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--json", "--blocked"}, &out); err != nil {
 		t.Fatalf("audit --blocked: %v", err)
 	}
 	body := out.String()
@@ -126,12 +126,12 @@ func TestAuditCommandSinceAcceptsRFC3339AndRejectsGarbage(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return nil, nil }
 
 	var out bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--json", "--since=2020-01-02T03:04:05Z"}, &out); err != nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--json", "--since=2020-01-02T03:04:05Z"}, &out); err != nil {
 		t.Fatalf("audit --since RFC3339: %v", err)
 	}
 
 	out.Reset()
-	if err := auditCommandWithArgs([]string{"--since=not-a-time"}, &out); err == nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--since=not-a-time"}, &out); err == nil {
 		t.Fatal("expected error for invalid --since value")
 	}
 }
@@ -148,7 +148,7 @@ func TestAuditCommandFormatTimelineEventsError(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return nil, errors.New("events fail") }
 
 	var out bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--format=timeline"}, &out); err == nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--format=timeline"}, &out); err == nil {
 		t.Fatal("expected events error to propagate through timeline path")
 	}
 }

@@ -34,14 +34,17 @@ func (b *setupOptionalBool) String() string {
 
 func (b *setupOptionalBool) Set(value string) error {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "true", "1", "yes", "y":
+	case "always", "true", "1", "yes", "y":
 		b.set = true
 		b.value = true
-	case "false", "0", "no", "n":
+	case "never", "false", "0", "no", "n":
 		b.set = true
 		b.value = false
+	case "ask":
+		b.set = false
+		b.value = false
 	default:
-		return fmt.Errorf("expected true or false, got %q", value)
+		return fmt.Errorf("expected always|never|ask (got %q)", value)
 	}
 	return nil
 }
@@ -84,6 +87,7 @@ type setupOptions struct {
 	InstallHooks            setupOptionalBool
 	EnableConvenienceUnlock setupOptionalBool
 	OverwriteExistingConfig setupOptionalBool
+	SkipPasswordPolicy      bool
 }
 
 type setupPlanPreview struct {

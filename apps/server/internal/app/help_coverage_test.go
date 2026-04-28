@@ -35,14 +35,14 @@ func TestHelpTopicsCoverPublishedTopics(t *testing.T) {
 		{[]string{"app", "install"}, "Create or refresh the managed launcher"},
 		{[]string{"app", "shell"}, "Open a login shell"},
 		{[]string{"app", "disconnect"}, "Remove the saved app profile"},
-		{[]string{"app", "list"}, "List saved app consumers"},
+		{[]string{"app", "list"}, "List saved apps"},
 		{[]string{"agent"}, "Connect a coding agent"},
 		{[]string{"agent", "connect"}, "Write the local agent config"},
 		{[]string{"agent", "mcp"}, "Run the agent-specific HASP MCP wrapper"},
 		{[]string{"agent", "launch"}, "Run a command under an agent-safe HASP session"},
 		{[]string{"agent", "shell"}, "Open a shell under an agent-safe HASP session"},
 		{[]string{"agent", "disconnect"}, "Remove the HASP config block"},
-		{[]string{"agent", "list"}, "List saved agent consumers"},
+		{[]string{"agent", "list"}, "List saved agents"},
 		{[]string{"project"}, "Manage repo boundaries"},
 		{[]string{"run"}, "Run one repo-scoped command"},
 		{[]string{"inject"}, "Resolve repo-scoped refs"},
@@ -57,7 +57,7 @@ func TestHelpTopicsCoverPublishedTopics(t *testing.T) {
 		{[]string{"export-backup"}, "Write an encrypted backup"},
 		{[]string{"restore-backup"}, "Restore an encrypted backup"},
 		{[]string{"mcp"}, "Start the MCP server"},
-		{[]string{"tui"}, "Open the terminal UI"},
+		{[]string{"tui"}, "Deprecated"},
 		{[]string{"version"}, "Print the build version"},
 	}
 
@@ -78,7 +78,7 @@ func TestRootCommandInventoryStaysInSyncWithHelp(t *testing.T) {
 		if spec.group != commandGroupDaily && spec.group != commandGroupUtility {
 			t.Fatalf("unexpected command group for %s: %s", spec.name, spec.group)
 		}
-		if !strings.Contains(rootHelp, spec.name) {
+		if !spec.hidden && !strings.Contains(rootHelp, spec.name) {
 			t.Fatalf("root help missing command %q", spec.name)
 		}
 		if len(spec.helpTopic) == 0 {
@@ -113,7 +113,7 @@ func TestRunWithStarterHelpRoutes(t *testing.T) {
 		{[]string{"export-backup", "--help"}, "Write an encrypted backup"},
 		{[]string{"restore-backup", "--help"}, "Restore an encrypted backup"},
 		{[]string{"mcp", "--help"}, "Start the MCP server"},
-		{[]string{"tui", "--help"}, "Open the terminal UI"},
+		{[]string{"tui", "--help"}, "Deprecated"},
 	}
 
 	for _, tc := range cases {

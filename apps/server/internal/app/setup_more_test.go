@@ -49,14 +49,14 @@ func TestSetupOptionalBoolAndAgentFlags(t *testing.T) {
 }
 
 func TestParseSetupOptionsAndValidation(t *testing.T) {
-	if _, err := parseSetupOptions([]string{"--master-password-env", "A", "--master-password-stdin"}); err == nil {
+	if _, _, err := parseSetupOptions([]string{"--master-password-env", "A", "--master-password-stdin"}); err == nil {
 		t.Fatal("expected conflicting password source error")
 	}
-	if _, err := parseSetupOptions([]string{"extra"}); err == nil {
+	if _, _, err := parseSetupOptions([]string{"extra"}); err == nil {
 		t.Fatal("expected usage error for trailing args")
 	}
 
-	opts, err := parseSetupOptions([]string{
+	opts, _, err := parseSetupOptions([]string{
 		"--non-interactive",
 		"--hasp-home", "/tmp/hasp-home",
 		"--repo", "/tmp/repo",
@@ -291,7 +291,7 @@ func TestSetupImportBindAtomicWriteAndHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new vault store: %v", err)
 	}
-	handle, _, err := setupEnsureHandle(context.Background(), vaultStore, "correct horse battery staple", false)
+	handle, _, err := setupEnsureHandle(context.Background(), vaultStore, "correct horse battery staple", false, false)
 	if err != nil {
 		t.Fatalf("ensure handle: %v", err)
 	}
@@ -375,13 +375,13 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		t.Fatalf("expected nil setupOptionalBool string to be empty")
 	}
 
-	if _, err := parseSetupOptions([]string{"--master-password-env", "PW", "--master-password-stdin"}); err == nil {
+	if _, _, err := parseSetupOptions([]string{"--master-password-env", "PW", "--master-password-stdin"}); err == nil {
 		t.Fatal("expected conflicting password source error")
 	}
-	if _, err := parseSetupOptions([]string{"--import", "-", "--master-password-stdin"}); err == nil {
+	if _, _, err := parseSetupOptions([]string{"--import", "-", "--master-password-stdin"}); err == nil {
 		t.Fatal("expected stdin conflict error")
 	}
-	if _, err := parseSetupOptions([]string{"trailing"}); err == nil {
+	if _, _, err := parseSetupOptions([]string{"trailing"}); err == nil {
 		t.Fatal("expected trailing arg usage error")
 	}
 
@@ -458,7 +458,7 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 	if err := storeHandle.Init(context.Background(), "pw"); err != nil {
 		t.Fatalf("init store: %v", err)
 	}
-	if _, _, err := setupEnsureHandle(context.Background(), storeHandle, "wrong", true); err == nil {
+	if _, _, err := setupEnsureHandle(context.Background(), storeHandle, "wrong", true, false); err == nil {
 		t.Fatal("expected wrong password on existing vault")
 	}
 
@@ -474,7 +474,7 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		}
 		return &store.Handle{}, nil
 	}
-	handle, state, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false)
+	handle, state, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false, false)
 	if err != nil || handle == nil || state != "existing" || password != "correct-password" {
 		t.Fatalf("expected retry success, got handle=%v state=%q password=%q err=%v", handle != nil, state, password, err)
 	}
@@ -486,12 +486,12 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 	openStoreWithPasswordFn = func(context.Context, *store.Store, string) (*store.Handle, error) {
 		return nil, store.ErrInvalidPassword
 	}
-	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil || !strings.Contains(err.Error(), "retry write fail") {
+	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false, false); err == nil || !strings.Contains(err.Error(), "retry write fail") {
 		t.Fatalf("expected retry write failure, got %v", err)
 	}
 
 	prompt = newSetupPrompter(setupErrReader{}, io.Discard)
-	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err == nil {
+	if _, _, _, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false, false); err == nil {
 		t.Fatal("expected retry prompt read failure")
 	}
 
@@ -519,7 +519,7 @@ func TestSetupAdditionalErrorBranches(t *testing.T) {
 		}
 		return &store.Handle{}, nil
 	}
-	if _, _, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false); err != nil || password != "correct-password" {
+	if _, _, password, err := setupOpenHandleWithRetry(context.Background(), prompt, storeHandle, "wrong", true, false, false); err != nil || password != "correct-password" {
 		t.Fatalf("expected empty retry password success, got %q err=%v", password, err)
 	}
 	if !strings.Contains(emptyRetryOut.String(), "Master password is required. Try again.") {

@@ -182,6 +182,15 @@ func parseJSONMap(t *testing.T, raw string) map[string]any {
 
 func openRuntimeSession(t *testing.T, e evalEnv, projectRoot string, ttlSeconds int) string {
 	t.Helper()
+	return openRuntimeSessionWithDuration(t, e, projectRoot, time.Duration(ttlSeconds)*time.Second)
+}
+
+// openRuntimeSessionWithDuration is the sub-second-aware analogue of
+// openRuntimeSession. When ttl is < 1s the request is sent over the wire as
+// TTLMillis so the daemon honours the precise duration; otherwise it falls
+// back to TTLSeconds for back-compat with older daemons. hasp-4xf9.
+func openRuntimeSessionWithDuration(t *testing.T, e evalEnv, projectRoot string, ttl time.Duration) string {
+	t.Helper()
 	t.Setenv(paths.EnvHome, e.home)
 	t.Setenv(paths.EnvSocket, e.socket)
 	if _, _, err := runHasp(t, e, "", "status"); err != nil {
@@ -196,11 +205,16 @@ func openRuntimeSession(t *testing.T, e evalEnv, projectRoot string, ttlSeconds 
 		t.Fatalf("dial daemon: %v", err)
 	}
 	defer client.Close()
-	reply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{
+	req := runtime.OpenSessionRequest{
 		HostLabel:   "integration-test",
 		ProjectRoot: projectRoot,
-		TTLSeconds:  ttlSeconds,
-	})
+	}
+	if ttl > 0 && ttl < time.Second {
+		req.TTLMillis = int(ttl / time.Millisecond)
+	} else {
+		req.TTLSeconds = int(ttl.Seconds())
+	}
+	reply, err := client.OpenSession(context.Background(), req)
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}

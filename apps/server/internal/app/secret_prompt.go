@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -57,14 +57,13 @@ func secretUpdateInputs(args []string, prompt *secretPrompt) ([]secretInput, err
 func secretInputsFromArgs(args []string, prompt *secretPrompt) ([]secretInput, error) {
 	out := make([]secretInput, 0, len(args))
 	for _, arg := range args {
-		name, value, ok := strings.Cut(arg, "=")
+		name, _, ok := strings.Cut(arg, "=")
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return nil, errors.New("secret name is required")
 		}
 		if ok {
-			out = append(out, secretInput{name: name, value: []byte(value)})
-			continue
+			return nil, errors.New("refusing secret value on argv: use interactive prompt, --from-stdin, or --from-file (value visible in ps/history)")
 		}
 		prompted, err := prompt.secretValue(name)
 		if err != nil {
@@ -140,7 +139,7 @@ func newSecretPrompt(stdin io.Reader, stdout io.Writer, stderr io.Writer) *secre
 }
 
 func (p *secretPrompt) line(label string) (string, error) {
-	if _, err := fmt.Fprintf(p.stdout, "%s: ", label); err != nil {
+	if _, err := fmt.Fprintf(p.stderr, "%s: ", label); err != nil {
 		return "", err
 	}
 	text, err := p.reader.ReadString('\n')
@@ -155,7 +154,7 @@ func (p *secretPrompt) secretValue(name string) ([]byte, error) {
 		text, err := p.line("Value")
 		return []byte(text), err
 	}
-	if _, err := fmt.Fprint(p.stdout, "Value: "); err != nil {
+	if _, err := fmt.Fprint(p.stderr, "Value: "); err != nil {
 		return nil, err
 	}
 	value, err := p.readHidden()
@@ -182,7 +181,7 @@ func (p *secretPrompt) confirm(label string, defaultYes bool) (bool, error) {
 }
 
 func (p *secretPrompt) collision(name string) (string, string, error) {
-	if _, err := fmt.Fprintf(p.stdout, "Secret %s already exists.\n\n1. Replace existing value\n2. Save under a different name\n3. Skip this secret\n4. Cancel\n\nChoice: ", name); err != nil {
+	if _, err := fmt.Fprintf(p.stderr, "Secret %s already exists.\n\n1. Replace existing value\n2. Save under a different name\n3. Skip this secret\n4. Cancel\n\nChoice: ", name); err != nil {
 		return "", "", err
 	}
 	choice, err := p.reader.ReadString('\n')
@@ -203,7 +202,7 @@ func (p *secretPrompt) collision(name string) (string, string, error) {
 }
 
 func (p *secretPrompt) readHidden() ([]byte, error) {
-	file, ok := stdinFile(p.stdin)
+	file, ok := ttyutil.StdinFile(p.stdin)
 	if !ok {
 		text, err := p.reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -229,46 +228,13 @@ func (p *secretPrompt) readHidden() ([]byte, error) {
 		_ = secretSetTTYEchoFn(file, true)
 	}()
 	text, err := p.reader.ReadString('\n')
-	if _, printErr := fmt.Fprintln(p.stdout); printErr != nil && err == nil {
+	if _, printErr := fmt.Fprintln(p.stderr); printErr != nil && err == nil {
 		err = printErr
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	return []byte(strings.TrimSpace(text)), nil
-}
-
-func stdinFile(reader io.Reader) (*os.File, bool) {
-	if reader == nil {
-		return nil, false
-	}
-	if file, ok := reader.(*os.File); ok {
-		return file, true
-	}
-	return nil, false
-}
-
-func isCharDevice(file *os.File) bool {
-	if file == nil {
-		return false
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
-func secretSetTTYEcho(file *os.File, enabled bool) error {
-	arg := "-echo"
-	if enabled {
-		arg = "echo"
-	}
-	cmd := secretExecCommandFn("stty", arg)
-	cmd.Stdin = file
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
 }
 
 func shouldMaskSecretValue(name string) bool {

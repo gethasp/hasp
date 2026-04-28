@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -66,7 +67,7 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 	}
 	secretGetwdFn = func() (string, error) { return "/tmp/repo", nil }
 	appCanonicalProjectRootFn = func(context.Context, string) (string, error) { return "", errors.New("project fail") }
-	if err := secretAddCommand(context.Background(), []string{"KEY=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "project fail" {
+	if err := secretAddCommand(context.Background(), []string{"KEY"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "project fail" {
 		t.Fatalf("expected add project context failure, got %v", err)
 	}
 	appCanonicalProjectRootFn = origCanon
@@ -77,7 +78,7 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 	if out, err := run("git", "-C", gitRoot, "init"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	if err := secretAddCommand(context.Background(), []string{"--project-root", gitRoot, "KEY=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "binding fail" {
+	if err := secretAddCommand(context.Background(), []string{"--project-root", gitRoot, "--expose=always", "KEY"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "binding fail" {
 		t.Fatalf("expected add binding failure, got %v", err)
 	}
 	resolveBindingViewAppFn = origResolveBinding
@@ -85,20 +86,20 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 	if _, err := handle.UpsertItem("TOKEN", store.ItemKindKV, []byte("abc123"), store.ItemMetadata{}); err != nil {
 		t.Fatalf("seed token: %v", err)
 	}
-	if err := secretAddCommand(context.Background(), []string{"TOKEN=value"}, bytes.NewBufferString("4\n"), io.Discard, io.Discard); err == nil || err.Error() != "secret add cancelled" {
+	if err := secretAddCommand(context.Background(), []string{"--expose=always", "TOKEN"}, bytes.NewBufferString("value\n4\n"), io.Discard, io.Discard); err == nil || err.Error() != "secret add cancelled" {
 		t.Fatalf("expected add collision cancellation, got %v", err)
 	}
 	secretUpsertItemFn = func(*store.Handle, string, store.ItemKind, []byte, store.ItemMetadata) (store.Item, error) {
 		return store.Item{}, errors.New("upsert fail")
 	}
-	if err := secretAddCommand(context.Background(), []string{"OTHER=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "upsert fail" {
+	if err := secretAddCommand(context.Background(), []string{"--expose=always", "OTHER"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "upsert fail" {
 		t.Fatalf("expected add upsert failure, got %v", err)
 	}
 	secretUpsertItemFn = origUpsert
 	secretBindItemAliasFn = func(*store.Handle, context.Context, string, string) (string, error) {
 		return "", errors.New("bind fail")
 	}
-	if err := secretAddCommand(context.Background(), []string{"--project-root", gitRoot, "YET_ANOTHER=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "bind fail" {
+	if err := secretAddCommand(context.Background(), []string{"--project-root", gitRoot, "--expose=always", "YET_ANOTHER"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "bind fail" {
 		t.Fatalf("expected add bind failure, got %v", err)
 	}
 	secretBindItemAliasFn = origBind
@@ -107,7 +108,7 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 		t.Fatalf("expected update input failure, got %v", err)
 	}
 	secretGetItemFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
-	if err := secretUpdateCommand(context.Background(), []string{"TOKEN=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "get fail" {
+	if err := secretUpdateCommand(context.Background(), []string{"TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "get fail" {
 		t.Fatalf("expected update get failure, got %v", err)
 	}
 	secretGetItemFn = origGetItem
@@ -137,8 +138,10 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 	if err := secretGetCommand(context.Background(), []string{"--reveal", "TOKEN"}, bytes.NewBuffer(nil), errWriter{err: errors.New("reveal write fail")}, io.Discard); err == nil || err.Error() != "reveal write fail" {
 		t.Fatalf("expected reveal write failure, got %v", err)
 	}
-	if err := secretGetCommand(context.Background(), []string{"--reveal", "TOKEN"}, bytes.NewBuffer(nil), &failSecondWriteWriter{}, io.Discard); err == nil {
-		t.Fatal("expected newline failure after kv reveal")
+	// hasp-jx3r: newline is now only appended when TTY or --newline is set.
+	// Use --newline to force the second write and verify the error propagates.
+	if err := secretGetCommand(context.Background(), []string{"--reveal", "--newline", "TOKEN"}, bytes.NewBuffer(nil), &failSecondWriteWriter{}, io.Discard); err == nil {
+		t.Fatal("expected newline failure after kv reveal with --newline")
 	}
 
 	if err := secretListCommand(context.Background(), nil, errWriter{err: errors.New("list encode fail")}); err == nil || err.Error() != "list encode fail" {
@@ -254,7 +257,7 @@ func TestSecretCommandHelpersZeroHitBranches(t *testing.T) {
 	}
 	installHooksFn = origInstallHooks
 
-	if _, err := newSecretPrompt(bytes.NewBuffer(nil), errWriter{err: errors.New("masked prompt fail")}, io.Discard).secretValue("TOKEN"); err == nil || err.Error() != "masked prompt fail" {
+	if _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("masked prompt fail")}).secretValue("TOKEN"); err == nil || err.Error() != "masked prompt fail" {
 		t.Fatalf("expected masked secret write failure, got %v", err)
 	}
 	if _, err := newSecretPrompt(errReader{err: errors.New("hidden fail")}, io.Discard, io.Discard).secretValue("TOKEN"); err == nil || err.Error() != "hidden fail" {
@@ -301,7 +304,7 @@ func TestSecretCommandHelpersZeroHitBranches(t *testing.T) {
 	if value, err := newSecretPrompt(tempFile3, io.Discard, io.Discard).readHidden(); err == nil || value != nil {
 		t.Fatalf("expected tty fallback read error, got %q err=%v", string(value), err)
 	}
-	if got, ok := stdinFile(nil); ok || got != nil {
+	if got, ok := ttyutil.StdinFile(nil); ok || got != nil {
 		t.Fatalf("expected nil stdinFile result, got %v %v", got, ok)
 	}
 }

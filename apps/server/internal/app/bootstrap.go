@@ -62,16 +62,17 @@ type bootstrapResult struct {
 }
 
 type bootstrapOptions struct {
-	ProfileID     string
-	ProjectRoot   string
-	DefaultPolicy store.SecretPolicy
-	InstallHooks  bool
-	Verify        bool
-	JSONOutput    bool
-	Aliases       aliasFlags
-	BindItems     stringListFlags
-	ImportPaths   stringListFlags
-	BindImports   bool
+	ProfileID          string
+	ProjectRoot        string
+	DefaultPolicy      store.SecretPolicy
+	InstallHooks       bool
+	Verify             bool
+	JSONOutput         bool
+	Aliases            aliasFlags
+	BindItems          stringListFlags
+	ImportPaths        stringListFlags
+	BindImports        bool
+	SkipPasswordPolicy bool
 }
 
 const genericDocsPath = "docs/agent-profiles/generic.md"
@@ -81,14 +82,18 @@ func bootstrapCommand(ctx context.Context, args []string, stdout io.Writer) erro
 }
 
 func bootstrapCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error)) error {
+	return bootstrapCommandWithInputAndDeps(ctx, args, stdin, stdout, verifyFn, defaultBootstrapDeps())
+}
+
+func bootstrapCommandWithInputAndDeps(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error), deps bootstrapDeps) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "profiles":
-			return bootstrapProfilesCommand(args[1:], stdout)
+			return bootstrapProfilesCommand(ctx, args[1:], stdout)
 		case "doctor":
-			return bootstrapDoctorCommand(ctx, args[1:], stdin, stdout)
+			return bootstrapDoctorCommandWithDeps(ctx, args[1:], stdin, stdout, deps)
 		case "generic":
-			return bootstrapGenericCommand(ctx, args[1:], stdin, stdout, verifyFn)
+			return bootstrapGenericCommandWithDeps(ctx, args[1:], stdin, stdout, verifyFn, deps)
 		case "print-config":
 			return bootstrapPrintConfigCommand(args[1:], stdout)
 		}
@@ -102,15 +107,19 @@ func bootstrapCommandWithInput(ctx context.Context, args []string, stdin io.Read
 	if err != nil {
 		return err
 	}
-	return executeBootstrap(ctx, target, opts, stdin, stdout, verifyFn)
+	return executeBootstrap(ctx, target, opts, stdin, stdout, verifyFn, deps)
 }
 
 func bootstrapGenericCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error)) error {
+	return bootstrapGenericCommandWithDeps(ctx, args, stdin, stdout, verifyFn, defaultBootstrapDeps())
+}
+
+func bootstrapGenericCommandWithDeps(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error), deps bootstrapDeps) error {
 	opts, err := parseBootstrapOptions(args, true)
 	if err != nil {
 		return err
 	}
-	return executeBootstrap(ctx, genericBootstrapTarget(), opts, stdin, stdout, verifyFn)
+	return executeBootstrap(ctx, genericBootstrapTarget(), opts, stdin, stdout, verifyFn, deps)
 }
 
 func bootstrapCommandWith(ctx context.Context, args []string, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error)) error {
@@ -131,6 +140,7 @@ func parseBootstrapOptions(args []string, allowGeneric bool) (bootstrapOptions, 
 	installHooks := fs.Bool("hooks", true, "")
 	verify := fs.Bool("verify", true, "")
 	bindImports := fs.Bool("bind-imports", false, "")
+	skipPasswordPolicy := fs.Bool("skip-password-policy", false, "")
 	var aliases aliasFlags
 	var bindItems stringListFlags
 	fs.Var(&aliases, "alias", "alias=item")
@@ -146,17 +156,23 @@ func parseBootstrapOptions(args []string, allowGeneric bool) (bootstrapOptions, 
 		return bootstrapOptions{}, errors.New("generic bootstrap does not accept --profile")
 	}
 
+	expandedRoot, err := expandUserPath(strings.TrimSpace(*projectRoot))
+	if err != nil {
+		return bootstrapOptions{}, fmt.Errorf("--project-root: %w", err)
+	}
+
 	return bootstrapOptions{
-		ProfileID:     *profileID,
-		ProjectRoot:   *projectRoot,
-		DefaultPolicy: store.SecretPolicy(*defaultPolicy),
-		InstallHooks:  *installHooks,
-		Verify:        *verify,
-		JSONOutput:    *jsonOutput,
-		Aliases:       aliases,
-		BindItems:     bindItems,
-		ImportPaths:   importPaths,
-		BindImports:   *bindImports,
+		ProfileID:          *profileID,
+		ProjectRoot:        expandedRoot,
+		DefaultPolicy:      store.SecretPolicy(*defaultPolicy),
+		InstallHooks:       *installHooks,
+		Verify:             *verify,
+		JSONOutput:         *jsonOutput,
+		Aliases:            aliases,
+		BindItems:          bindItems,
+		ImportPaths:        importPaths,
+		BindImports:        *bindImports,
+		SkipPasswordPolicy: *skipPasswordPolicy,
 	}, nil
 }
 
@@ -205,7 +221,7 @@ func genericBootstrapTarget() bootstrapTarget {
 	}
 }
 
-func bootstrapProfilesCommand(args []string, stdout io.Writer) error {
+func bootstrapProfilesCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("bootstrap profiles", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
@@ -215,19 +231,19 @@ func bootstrapProfilesCommand(args []string, stdout io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: hasp bootstrap profiles [--json]")
 	}
-	return bootstrapProfilesCommandWithMode(stdout, *jsonOutput, profiles.LoadCatalog, profiles.LoadReleaseGates)
+	return bootstrapProfilesCommandWithMode(ctx, stdout, *jsonOutput, profiles.LoadCatalog, profiles.LoadReleaseGates)
 }
 
 func bootstrapProfilesCommandWith(stdout io.Writer, loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) error {
-	return bootstrapProfilesCommandWithMode(stdout, false, loadCatalog, loadGates)
+	return bootstrapProfilesCommandWithMode(context.Background(), stdout, false, loadCatalog, loadGates)
 }
 
-func bootstrapProfilesCommandWithMode(stdout io.Writer, jsonOutput bool, loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) error {
+func bootstrapProfilesCommandWithMode(ctx context.Context, stdout io.Writer, jsonOutput bool, loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) error {
 	result, err := bootstrapProfileListing(loadCatalog, loadGates)
 	if err != nil {
 		return err
 	}
-	return renderBootstrapProfileListingMaybeHuman(stdout, jsonOutput, result)
+	return renderBootstrapProfileListingMaybeHuman(ctx, stdout, jsonOutput, result)
 }
 
 func bootstrapProfileListing(loadCatalog func() ([]profiles.Profile, error), loadGates func() (profiles.ReleaseGateManifest, error)) (map[string]any, error) {
@@ -280,12 +296,12 @@ func bootstrapProfileListing(loadCatalog func() ([]profiles.Profile, error), loa
 	}, nil
 }
 
-func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstrapOptions, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error)) error {
+func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstrapOptions, stdin io.Reader, stdout io.Writer, verifyFn func(profiles.Profile, bool) (map[string]any, error), deps bootstrapDeps) error {
 	vaultStore, err := newVaultStoreFn()
 	if err != nil {
 		return err
 	}
-	handle, initState, err := ensureBootstrapHandle(ctx, vaultStore)
+	handle, initState, err := ensureBootstrapHandle(ctx, vaultStore, opts.SkipPasswordPolicy)
 	if err != nil {
 		return err
 	}
@@ -293,12 +309,12 @@ func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstra
 		return err
 	}
 	var visible []store.VisibleReference
-	binding, _, err := resolveBindingViewBootstrapFn(handle, ctx, opts.ProjectRoot)
+	binding, _, err := deps.ResolveBindingView(handle, ctx, opts.ProjectRoot)
 	if err != nil {
 		return err
 	}
 
-	importPreviews, imported, binding, _, err := applyBootstrapImports(ctx, handle, opts, binding, stdin)
+	importPreviews, imported, binding, _, err := applyBootstrapImports(ctx, handle, opts, binding, stdin, deps)
 	if err != nil {
 		return err
 	}
@@ -306,7 +322,7 @@ func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstra
 	if err != nil {
 		return err
 	}
-	binding, visible, err = resolveBindingViewBootstrapFn(handle, ctx, opts.ProjectRoot)
+	binding, visible, err = deps.ResolveBindingView(handle, ctx, opts.ProjectRoot)
 	if err != nil {
 		return err
 	}
@@ -334,10 +350,10 @@ func executeBootstrap(ctx context.Context, target bootstrapTarget, opts bootstra
 		Notes:              bootstrapNotes(target, opts, len(imported) > 0),
 		NextSteps:          bootstrapNextSteps(target.Profile),
 	}
-	return renderBootstrapJSONOrHuman(stdout, opts.JSONOutput, result)
+	return renderBootstrapJSONOrHuman(ctx, stdout, opts.JSONOutput, result)
 }
 
-func applyBootstrapImports(ctx context.Context, handle *store.Handle, opts bootstrapOptions, binding store.Binding, stdin io.Reader) ([]importPreview, []store.ImportedItem, store.Binding, []store.VisibleReference, error) {
+func applyBootstrapImports(ctx context.Context, handle *store.Handle, opts bootstrapOptions, binding store.Binding, stdin io.Reader, deps bootstrapDeps) ([]importPreview, []store.ImportedItem, store.Binding, []store.VisibleReference, error) {
 	if len(opts.ImportPaths) == 0 {
 		return nil, nil, binding, nil, nil
 	}
@@ -367,7 +383,7 @@ func applyBootstrapImports(ctx context.Context, handle *store.Handle, opts boots
 		}
 		binding.Aliases = currentAliases
 	}
-	updatedBinding, visible, err := resolveBindingViewBootstrapFn(handle, ctx, opts.ProjectRoot)
+	updatedBinding, visible, err := deps.ResolveBindingView(handle, ctx, opts.ProjectRoot)
 	if err != nil {
 		return nil, nil, binding, nil, err
 	}
@@ -388,7 +404,7 @@ func bindBootstrapItems(ctx context.Context, handle *store.Handle, projectRoot s
 	return bound, nil
 }
 
-func ensureBootstrapHandle(ctx context.Context, vaultStore *store.Store) (*store.Handle, string, error) {
+func ensureBootstrapHandle(ctx context.Context, vaultStore *store.Store, skipPasswordPolicy bool) (*store.Handle, string, error) {
 	handle, err := openVaultHandleFn(ctx)
 	if err == nil {
 		return handle, "existing", nil
@@ -399,6 +415,11 @@ func ensureBootstrapHandle(ctx context.Context, vaultStore *store.Store) (*store
 	password, err := loadMasterPassword()
 	if err != nil {
 		return nil, "", fmt.Errorf("vault not initialized; set HASP_MASTER_PASSWORD to let bootstrap initialize it")
+	}
+	if !skipPasswordPolicy {
+		if err := store.EnforcePasswordPolicy(password); err != nil {
+			return nil, "", err
+		}
 	}
 	if err := vaultStore.Init(ctx, password); err != nil {
 		return nil, "", err

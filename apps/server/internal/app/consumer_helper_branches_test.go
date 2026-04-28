@@ -41,8 +41,6 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 
 	origGet := secretGetItemFn
 	origEnsure := ensureSessionAppFn
-	origRun := runnerExecuteFn
-	origAuth := authorizeItemAppFn
 	origGetApp := storeGetAppFn
 	origAppExec := appExecuteConsumerFn
 	origInstallLauncher := appInstallLauncherFn
@@ -53,8 +51,6 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 	defer func() {
 		secretGetItemFn = origGet
 		ensureSessionAppFn = origEnsure
-		runnerExecuteFn = origRun
-		authorizeItemAppFn = origAuth
 		storeGetAppFn = origGetApp
 		appExecuteConsumerFn = origAppExec
 		appInstallLauncherFn = origInstallLauncher
@@ -63,6 +59,7 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 		secretIsCharDeviceFn = origIsCharDevice
 		appUserShellFn = origShell
 	}()
+	deps := defaultExecDeps()
 
 	if _, err := appConsumerBindings(handle, mappingFlag{"OPENAI_API_KEY": "MISSING"}, nil, nil); err == nil {
 		t.Fatal("expected env binding missing secret failure")
@@ -86,60 +83,63 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 	ensureSessionAppFn = func(context.Context, brokerops.Connector, string, string, string) (brokerops.Session, error) {
 		return brokerops.Session{}, errors.New("session fail")
 	}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || err.Error() != "session fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", deps); err == nil || err.Error() != "session fail" {
 		t.Fatalf("expected execute session failure, got %v", err)
 	}
 	ensureSessionAppFn = func(context.Context, brokerops.Connector, string, string, string) (brokerops.Session, error) {
 		return brokerops.Session{Token: "session-token"}, nil
 	}
-	authorizeItemAppFn = func(*store.Handle, string, string, store.Item, store.Operation, store.GrantScope, store.GrantScope, time.Duration) (store.Item, error) {
+	failAuthDeps := defaultExecDeps()
+	failAuthDeps.AuthorizeItem = func(*store.Handle, string, string, store.Item, store.Operation, store.GrantScope, store.GrantScope, time.Duration) (store.Item, error) {
 		return store.Item{}, errors.New("authorize fail")
 	}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || err.Error() != "authorize fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", failAuthDeps); err == nil || err.Error() != "authorize fail" {
 		t.Fatalf("expected execute authorize failure, got %v", err)
 	}
-	authorizeItemAppFn = origAuth
 	secretGetItemFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || err.Error() != "get fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", deps); err == nil || err.Error() != "get fail" {
 		t.Fatalf("expected execute get failure, got %v", err)
 	}
 	secretGetItemFn = origGet
 	consumer.Bindings = []store.AppBinding{{SecretName: "API_TOKEN", Delivery: "bogus", Target: "OPENAI_API_KEY"}}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || !strings.Contains(err.Error(), "unsupported app delivery") {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", deps); err == nil || !strings.Contains(err.Error(), "unsupported app delivery") {
 		t.Fatalf("expected execute unsupported delivery failure, got %v", err)
 	}
 	consumer.Bindings = []store.AppBinding{{SecretName: "API_TOKEN", Delivery: store.AppDeliveryTempDotenv, Target: "DATABASE_URL"}}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || !strings.Contains(err.Error(), "dotenv_env") {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", deps); err == nil || !strings.Contains(err.Error(), "dotenv_env") {
 		t.Fatalf("expected execute dotenv env failure, got %v", err)
 	}
 	consumer.DotenvEnv = "ENV_FILE"
-	runnerExecuteFn = func(context.Context, runner.Input) (runner.Result, error) {
+	failRunDeps := defaultExecDeps()
+	failRunDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
 		return runner.Result{}, errors.New("runner fail")
 	}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run"); err == nil || err.Error() != "runner fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", failRunDeps); err == nil || err.Error() != "runner fail" {
 		t.Fatalf("expected execute runner failure, got %v", err)
 	}
-	runnerExecuteFn = func(context.Context, runner.Input) (runner.Result, error) {
+	stdoutDeps := defaultExecDeps()
+	stdoutDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
 		return runner.Result{Stdout: []byte("abc123")}, nil
 	}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, errWriter{err: errors.New("stdout fail")}, io.Discard, &fakeStarter{}, "run"); err == nil || err.Error() != "stdout fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, errWriter{err: errors.New("stdout fail")}, io.Discard, &fakeStarter{}, "run", stdoutDeps); err == nil || err.Error() != "stdout fail" {
 		t.Fatalf("expected execute stdout failure, got %v", err)
 	}
-	runnerExecuteFn = func(context.Context, runner.Input) (runner.Result, error) {
+	stderrDeps := defaultExecDeps()
+	stderrDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
 		return runner.Result{Stderr: []byte("abc123")}, nil
 	}
-	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, errWriter{err: errors.New("stderr fail")}, &fakeStarter{}, "run"); err == nil || err.Error() != "stderr fail" {
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, errWriter{err: errors.New("stderr fail")}, &fakeStarter{}, "run", stderrDeps); err == nil || err.Error() != "stderr fail" {
 		t.Fatalf("expected execute stderr failure, got %v", err)
 	}
 
 	storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) { return consumer, nil }
-	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string) (runner.Result, error) {
+	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string, execDeps) (runner.Result, error) {
 		return runner.Result{ExitCode: 7}, nil
 	}
 	if err := appRunCommand(context.Background(), []string{"myapp"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "command exited with code 7") {
 		t.Fatalf("expected app run nonzero exit, got %v", err)
 	}
-	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string) (runner.Result, error) {
+	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string, execDeps) (runner.Result, error) {
 		return runner.Result{}, errors.New("run fail")
 	}
 	if err := appRunCommand(context.Background(), []string{"myapp"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || err.Error() != "run fail" {
@@ -147,7 +147,7 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 	}
 
 	appUserShellFn = func() string { return "" }
-	appExecuteConsumerFn = func(_ context.Context, _ *store.Handle, _ store.AppConsumer, command []string, _ io.Writer, _ io.Writer, _ starter, _ string) (runner.Result, error) {
+	appExecuteConsumerFn = func(_ context.Context, _ *store.Handle, _ store.AppConsumer, command []string, _ io.Writer, _ io.Writer, _ starter, _ string, _ execDeps) (runner.Result, error) {
 		if len(command) != 2 || command[0] != "/bin/sh" || command[1] != "-l" {
 			t.Fatalf("expected default shell command, got %+v", command)
 		}
@@ -156,7 +156,7 @@ func TestAppConsumerHelperBranches(t *testing.T) {
 	if err := appShellCommand(context.Background(), []string{"myapp"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || !strings.Contains(err.Error(), "command exited with code 9") {
 		t.Fatalf("expected app shell nonzero exit, got %v", err)
 	}
-	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string) (runner.Result, error) {
+	appExecuteConsumerFn = func(context.Context, *store.Handle, store.AppConsumer, []string, io.Writer, io.Writer, starter, string, execDeps) (runner.Result, error) {
 		return runner.Result{}, errors.New("shell fail")
 	}
 	if err := appShellCommand(context.Background(), []string{"myapp"}, io.Discard, io.Discard, &fakeStarter{}); err == nil || err.Error() != "shell fail" {
@@ -367,8 +367,8 @@ func TestAppConsumerLauncherAndRollbackHelpers(t *testing.T) {
 	storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) {
 		return store.AppConsumer{Name: "bad/name", Command: []string{"true"}}, nil
 	}
-	if err := appInstallCommand(context.Background(), []string{"bad/name"}, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid app consumer name") {
-		t.Fatalf("expected install invalid consumer name failure, got %v", err)
+	if err := appInstallCommand(context.Background(), []string{"bad/name"}, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid app name") {
+		t.Fatalf("expected install invalid app name failure, got %v", err)
 	}
 	storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) {
 		return store.AppConsumer{Name: "myapp", Command: []string{"true"}}, nil

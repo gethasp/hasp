@@ -249,7 +249,7 @@ func setupStageLine(out io.Writer, line string) string {
 	case strings.HasPrefix(line, "   "):
 		return line
 	default:
-		return "  " + setupStyle(out, "36", "•") + " " + line
+		return "  " + setupStyle(out, "36", cliGlyph(out, "•", "-")) + " " + line
 	}
 }
 
@@ -302,10 +302,12 @@ func setupWriterSupportsColor(out io.Writer) bool {
 }
 
 func setupSummaryLead(out io.Writer, text string) string {
+	// hasp-41fc: drop unicode glyph on non-color writers and non-UTF-8 locales.
+	glyph := cliGlyph(out, "✓", "[ok]")
 	if !setupWriterSupportsColor(out) {
-		return "✓ " + text
+		return glyph + " " + text
 	}
-	return "\x1b[1;32m✓\x1b[0m " + text
+	return "\x1b[1;32m" + glyph + "\x1b[0m " + text
 }
 
 func setupWriteKeyValueBlock(out io.Writer, title string, lines ...string) error {
@@ -338,7 +340,19 @@ func setupSummarySectionHeader(out io.Writer, title string) string {
 }
 
 func setupSummaryKeyValue(out io.Writer, label string, value string) string {
-	return "  " + setupSummaryLabel(out, fmt.Sprintf("%-24s", label)) + "  " + setupSummaryValue(out, value)
+	return setupSummaryKeyValueAligned(out, label, value, 24)
+}
+
+// setupSummaryKeyValueAligned pads label to width chars (rune-counted) so a
+// caller computing a per-block max width can align all values to the same
+// column without the legacy fixed-24 gutter.
+func setupSummaryKeyValueAligned(out io.Writer, label string, value string, width int) string {
+	pad := width - len(label)
+	if pad < 0 {
+		pad = 0
+	}
+	padded := label + strings.Repeat(" ", pad)
+	return "  " + setupSummaryLabel(out, padded) + "  " + setupSummaryValue(out, value)
 }
 
 func setupSummaryLabel(out io.Writer, text string) string {
@@ -367,9 +381,9 @@ func setupSummaryAgentLine(out io.Writer, agent setupAgentOutcome) string {
 	if !agent.Changed {
 		status = "unchanged"
 	}
-	icon := "✓"
+	icon := cliGlyph(out, "✓", "[ok]")
 	if !agent.Changed {
-		icon = "•"
+		icon = cliGlyph(out, "•", "-")
 	}
 	return "  " + setupStyle(out, "1;32", icon) + " " +
 		setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label)) + "  " +
@@ -378,7 +392,7 @@ func setupSummaryAgentLine(out io.Writer, agent setupAgentOutcome) string {
 }
 
 func setupSummarySecretLine(out io.Writer, secret secretMutationView) string {
-	line := "  " + setupStyle(out, "1;32", "•") + " " +
+	line := "  " + setupStyle(out, "1;32", cliGlyph(out, "•", "-")) + " " +
 		setupSummaryLabel(out, fmt.Sprintf("%-18s", secret.Name)) + "  " +
 		setupSummaryValue(out, secret.Outcome)
 	if strings.TrimSpace(secret.Reference) != "" {
@@ -388,7 +402,7 @@ func setupSummarySecretLine(out io.Writer, secret secretMutationView) string {
 }
 
 func setupSummaryAppLine(out io.Writer, app setupAppOutcome) string {
-	line := "  " + setupStyle(out, "1;32", "•") + " " +
+	line := "  " + setupStyle(out, "1;32", cliGlyph(out, "•", "-")) + " " +
 		setupSummaryLabel(out, fmt.Sprintf("%-18s", app.Name))
 	if strings.TrimSpace(app.LauncherPath) != "" {
 		line += "  " + setupSummaryValue(out, app.LauncherPath)
@@ -556,8 +570,9 @@ func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
 		if err := setupWriteSummarySection(out, "Agent config targets"); err != nil {
 			return err
 		}
+		bullet := cliGlyph(out, "•", "-")
 		for _, agent := range plan.Agents {
-			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", "•")+" "+setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label))+"  "+setupSummaryValue(out, setupDisplayPath(agent.ConfigPath("")))); err != nil {
+			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", bullet)+" "+setupSummaryLabel(out, fmt.Sprintf("%-18s", agent.Label))+"  "+setupSummaryValue(out, setupDisplayPath(agent.ConfigPath("")))); err != nil {
 				return err
 			}
 		}

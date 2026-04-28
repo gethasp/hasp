@@ -13,7 +13,7 @@ func TestVersionAndBootstrapProfilesJSONBranches(t *testing.T) {
 	lockAppSeams(t)
 
 	var out bytes.Buffer
-	if err := versionCommand([]string{"--json"}, &out); err != nil {
+	if err := versionCommand(context.Background(), []string{"--json"}, &out); err != nil {
 		t.Fatalf("versionCommand json: %v", err)
 	}
 	var versionPayload map[string]any
@@ -23,12 +23,12 @@ func TestVersionAndBootstrapProfilesJSONBranches(t *testing.T) {
 	if versionPayload["version"] == "" {
 		t.Fatalf("expected version payload, got %q", out.String())
 	}
-	if err := versionCommand([]string{"extra"}, &out); err == nil {
+	if err := versionCommand(context.Background(), []string{"extra"}, &out); err == nil {
 		t.Fatal("expected version usage failure")
 	}
 
 	out.Reset()
-	if err := bootstrapProfilesCommand([]string{"--json"}, &out); err != nil {
+	if err := bootstrapProfilesCommand(context.Background(), []string{"--json"}, &out); err != nil {
 		t.Fatalf("bootstrapProfilesCommand json: %v", err)
 	}
 	var profilesPayload map[string]any
@@ -38,7 +38,7 @@ func TestVersionAndBootstrapProfilesJSONBranches(t *testing.T) {
 	if _, ok := profilesPayload["profiles"]; !ok {
 		t.Fatalf("expected profiles payload, got %q", out.String())
 	}
-	if err := bootstrapProfilesCommand([]string{"extra"}, &out); err == nil {
+	if err := bootstrapProfilesCommand(context.Background(), []string{"extra"}, &out); err == nil {
 		t.Fatal("expected bootstrap profiles usage failure")
 	}
 
@@ -60,13 +60,14 @@ func TestRunWithStarterGetAndTUIJSONBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	// Use --from-stdin to avoid argv plaintext exposure (NAME=VALUE form is now rejected).
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
 	var out bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"get", "--json", "API_TOKEN"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
-		t.Fatalf("runWithStarter get json: %v", err)
+	if err := runWithStarter(context.Background(), []string{"secret", "get", "--json", "API_TOKEN"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("runWithStarter secret get json: %v", err)
 	}
 	var getPayload map[string]any
 	if err := json.Unmarshal(out.Bytes(), &getPayload); err != nil {
@@ -78,7 +79,7 @@ func TestRunWithStarterGetAndTUIJSONBranches(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := tuiCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out); err != nil {
+	if err := tuiCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out, io.Discard); err != nil {
 		t.Fatalf("tuiCommand json: %v", err)
 	}
 	var tuiPayload map[string]any

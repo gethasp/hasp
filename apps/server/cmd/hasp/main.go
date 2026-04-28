@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 
@@ -17,8 +16,8 @@ func main() {
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if err := app.Run(ctx, args, stdin, stdout, stderr); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
+		app.WriteCLIError(stderr, err, app.ArgsRequestJSON(args))
+		return app.AppErrorExitCode(err)
 	}
 	return 0
 }

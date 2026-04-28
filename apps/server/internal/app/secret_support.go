@@ -8,6 +8,9 @@ import (
 	"os/user"
 	goruntime "runtime"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
+	"github.com/gethasp/hasp/apps/server/internal/app/ui"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -17,8 +20,8 @@ var (
 	secretGetwdFn               = os.Getwd
 	secretClipboardFn           = copySecretToClipboard
 	secretExecCommandFn         = exec.Command
-	secretIsCharDeviceFn        = isCharDevice
-	secretSetTTYEchoFn          = secretSetTTYEcho
+	secretIsCharDeviceFn        = ttyutil.IsCharDevice
+	secretSetTTYEchoFn          = ttyutil.SetTTYEcho
 	secretRuntimeGOOS           = goruntime.GOOS
 	secretUpsertItemFn          = (*store.Handle).UpsertItem
 	secretGetItemFn             = (*store.Handle).GetItem
@@ -31,14 +34,21 @@ var (
 	secretRevokeGrantsForItemFn = (*store.Handle).RevokeGrantsForItem
 	secretNewManagerFn          = runtime.NewManager
 	secretDialRuntimeFn         = runtime.Dial
+
+	// secretRevealIsTTYFn reports whether the given writer is a terminal.
+	// Tests stub this to simulate TTY / non-TTY behaviour without a real pty.
+	secretRevealIsTTYFn = ui.IsInteractiveWriter
 )
 
+// Convenience aliases for the env / time constants exported by secrettypes.
+// The qualified names live in production call sites that move to secretops
+// in Stage 2d; tests inside package app keep using these short names.
 const (
-	envAgentSafeMode    = "HASP_AGENT_SAFE_MODE"
-	envSessionToken     = "HASP_SESSION_TOKEN"
-	envAgentConsumer    = "HASP_AGENT_CONSUMER"
-	envAgentProjectRoot = "HASP_AGENT_PROJECT_ROOT"
-	timeRFC3339         = "2006-01-02T15:04:05Z07:00"
+	envAgentSafeMode    = secrettypes.EnvAgentSafeMode
+	envSessionToken     = secrettypes.EnvSessionToken
+	envAgentConsumer    = secrettypes.EnvAgentConsumer
+	envAgentProjectRoot = secrettypes.EnvAgentProjectRoot
+	timeRFC3339         = secrettypes.TimeRFC3339
 )
 
 type secretPlaintextPolicy struct {
@@ -56,24 +66,12 @@ type secretPrompt struct {
 	stderr io.Writer
 }
 
-type secretMetadataView struct {
-	Name           string               `json:"name"`
-	NamedReference string               `json:"named_reference,omitempty"`
-	Kind           store.ItemKind       `json:"kind"`
-	CreatedAt      string               `json:"created_at"`
-	UpdatedAt      string               `json:"updated_at"`
-	Exposures      []store.ItemExposure `json:"exposures"`
-}
-
-type secretMutationView struct {
-	Name           string               `json:"name"`
-	NamedReference string               `json:"named_reference,omitempty"`
-	Kind           store.ItemKind       `json:"kind,omitempty"`
-	Outcome        string               `json:"outcome"`
-	ProjectRoot    string               `json:"project_root,omitempty"`
-	Reference      string               `json:"reference,omitempty"`
-	Exposures      []store.ItemExposure `json:"exposures,omitempty"`
-}
+// secretMetadataView and secretMutationView are aliased to the canonical
+// shapes in package secrettypes so that callers in cli_output, runtime, and
+// the soon-to-move secret CLI handlers all share the same struct. The local
+// names stay in place for incremental migration through Stages 2c-2d.
+type secretMetadataView = secrettypes.MetadataView
+type secretMutationView = secrettypes.MutationView
 
 type secretInput struct {
 	name  string

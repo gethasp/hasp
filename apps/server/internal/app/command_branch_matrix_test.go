@@ -17,7 +17,7 @@ func TestCommandBranchMatrix(t *testing.T) {
 	lockAppSeams(t)
 
 	var out bytes.Buffer
-	if err := versionCommand([]string{"--json"}, &out); err != nil {
+	if err := versionCommand(context.Background(), []string{"--json"}, &out); err != nil {
 		t.Fatalf("versionCommand json: %v", err)
 	}
 	var versionPayload map[string]any
@@ -27,18 +27,18 @@ func TestCommandBranchMatrix(t *testing.T) {
 	if versionPayload["version"] == "" {
 		t.Fatalf("expected version payload, got %q", out.String())
 	}
-	if err := versionCommand([]string{"extra"}, &out); err == nil {
+	if err := versionCommand(context.Background(), []string{"extra"}, &out); err == nil {
 		t.Fatal("expected version usage failure")
 	}
-	if err := versionCommand([]string{"--bad"}, &out); err == nil {
+	if err := versionCommand(context.Background(), []string{"--bad"}, &out); err == nil {
 		t.Fatal("expected version parse failure")
 	}
 
-	if err := runWithStarter(context.Background(), []string{"list", "--help"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
-		t.Fatalf("runWithStarter list help: %v", err)
+	if err := runWithStarter(context.Background(), []string{"secret", "list", "--help"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("runWithStarter secret list help: %v", err)
 	}
-	if err := runWithStarter(context.Background(), []string{"get", "--help"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
-		t.Fatalf("runWithStarter get help: %v", err)
+	if err := runWithStarter(context.Background(), []string{"secret", "get", "--help"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("runWithStarter secret get help: %v", err)
 	}
 	if err := runWithStarter(context.Background(), []string{"version", "extra"}, bytes.NewBuffer(nil), &out, &out, &fakeStarter{}); err == nil {
 		t.Fatal("expected runWithStarter version usage failure")
@@ -52,13 +52,13 @@ func TestCommandBranchMatrix(t *testing.T) {
 	if err := agentConsumerCommand(context.Background(), []string{"mcp", "--help"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
 		t.Fatalf("agent mcp help: %v", err)
 	}
-	if err := bootstrapProfilesCommand([]string{"--json"}, &out); err != nil {
+	if err := bootstrapProfilesCommand(context.Background(), []string{"--json"}, &out); err != nil {
 		t.Fatalf("bootstrapProfilesCommand json: %v", err)
 	}
-	if err := bootstrapProfilesCommand([]string{"extra"}, &out); err == nil {
+	if err := bootstrapProfilesCommand(context.Background(), []string{"extra"}, &out); err == nil {
 		t.Fatal("expected bootstrap profiles usage failure")
 	}
-	if err := bootstrapProfilesCommand([]string{"--bad"}, &out); err == nil {
+	if err := bootstrapProfilesCommand(context.Background(), []string{"--bad"}, &out); err == nil {
 		t.Fatal("expected bootstrap profiles parse failure")
 	}
 

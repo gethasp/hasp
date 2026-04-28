@@ -315,7 +315,7 @@ func TestSetupOptionalFirstRunActionCoverageBranches(t *testing.T) {
 
 		t.Run("invalid app name", func(t *testing.T) {
 			_, err := setupMaybeConnectAppNow(context.Background(), newSetupPrompter(bytes.NewBufferString("y\n../bad\ntrue\nn\n"), io.Discard), handle, "")
-			if err == nil || !strings.Contains(err.Error(), "invalid app consumer name") {
+			if err == nil || !strings.Contains(err.Error(), "invalid app name") {
 				t.Fatalf("expected invalid-name failure, got %v", err)
 			}
 		})

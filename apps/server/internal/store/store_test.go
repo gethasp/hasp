@@ -38,24 +38,6 @@ func (m *memoryKeyring) Delete(service string, account string) error {
 	return nil
 }
 
-func TestPasswordIterationsAreReducedInTests(t *testing.T) {
-	if passwordIterations != testPasswordIterations {
-		t.Fatalf("passwordIterations = %d, want %d in test binaries", passwordIterations, testPasswordIterations)
-	}
-	if passwordIterations >= productionPasswordIterations {
-		t.Fatalf("passwordIterations should stay below production cost in tests: got %d want < %d", passwordIterations, productionPasswordIterations)
-	}
-}
-
-func TestDerivePasswordIterations(t *testing.T) {
-	if got := derivePasswordIterations("hasp.test"); got != testPasswordIterations {
-		t.Fatalf("derivePasswordIterations(test) = %d, want %d", got, testPasswordIterations)
-	}
-	if got := derivePasswordIterations("hasp"); got != productionPasswordIterations {
-		t.Fatalf("derivePasswordIterations(prod) = %d, want %d", got, productionPasswordIterations)
-	}
-}
-
 func TestInitOpenAndCRUDItems(t *testing.T) {
 	store := newTestStore(t)
 

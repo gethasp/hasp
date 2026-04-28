@@ -26,6 +26,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -274,7 +275,7 @@ func TestAuditIncidentDrillJSONRedaction(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return events, nil }
 
 	var buf bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--incident-bundle", "--json"}, &buf); err != nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--incident-bundle", "--json"}, &buf); err != nil {
 		t.Fatalf("auditCommandWithArgs --incident-bundle --json: unexpected error: %v", err)
 	}
 	output := buf.String()
@@ -364,7 +365,7 @@ func TestAuditIncidentDrillHumanVsJSONRedactionCoverage(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return events, nil }
 
 	var jsonBuf bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--incident-bundle", "--json"}, &jsonBuf); err != nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--incident-bundle", "--json"}, &jsonBuf); err != nil {
 		t.Fatalf("auditCommandWithArgs: %v", err)
 	}
 	jsonOutput := jsonBuf.String()

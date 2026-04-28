@@ -57,7 +57,7 @@ func TestRunVersionMCPAndStarterConstructionSuccess(t *testing.T) {
 	if err := runWithStarter(context.Background(), []string{"version"}, bytes.NewBuffer(nil), &versionOut, io.Discard, &fakeStarter{}); err != nil {
 		t.Fatalf("run version: %v", err)
 	}
-	if !strings.Contains(versionOut.String(), runtime.Version()) {
+	if !strings.Contains(versionOut.String(), runtime.VersionString()) {
 		t.Fatalf("expected version output, got %q", versionOut.String())
 	}
 
@@ -94,7 +94,7 @@ func TestUsageAndMissingPasswordBranches(t *testing.T) {
 	if err := importCommand(context.Background(), nil, io.Discard); err == nil {
 		t.Fatal("expected import usage error")
 	}
-	if err := setCommand(context.Background(), nil, io.Discard); err == nil {
+	if err := setCommand(context.Background(), nil, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected set usage error")
 	}
 	if err := captureCommand(context.Background(), nil, io.Discard, &fakeStarter{}); err == nil {
@@ -115,9 +115,13 @@ func TestUsageAndMissingPasswordBranches(t *testing.T) {
 	if err := exportBackupCommand(context.Background(), []string{"--output", filepath.Join(t.TempDir(), "backup.json")}, io.Discard); err == nil {
 		t.Fatal("expected export backup usage error without passphrase")
 	}
-	if err := restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "backup.json"), "--recovery-passphrase", "recovery"}, io.Discard); err == nil {
+	// HASP_BACKUP_PASSPHRASE provides the recovery passphrase safely;
+	// HASP_MASTER_PASSWORD is "" so restore should fail on missing master password.
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "recovery")
+	if err := restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "backup.json")}, io.Discard); err == nil {
 		t.Fatal("expected restore backup usage error without master password")
 	}
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "")
 	if _, err := loadMasterPassword(); err == nil {
 		t.Fatal("expected master password error")
 	}
@@ -158,7 +162,7 @@ func TestProjectBindHookFailureAndHooklessSuccess(t *testing.T) {
 
 	plainProject := t.TempDir()
 	var hooklessOut bytes.Buffer
-	if err := projectBindCommand(context.Background(), []string{"--project-root", plainProject, "--hooks=false", "--alias", "secret_01=item_01"}, &hooklessOut); err != nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", plainProject, "--hooks=false", "--allow-non-git", "--alias", "secret_01=item_01"}, &hooklessOut); err != nil {
 		t.Fatalf("project bind without hooks: %v", err)
 	}
 
@@ -244,10 +248,10 @@ func TestProjectStatusAndUnbindDirectBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run set: %v", err)
 	}
-	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--alias", "secret_01=api_token"}, io.Discard); err != nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--allow-non-git", "--alias", "secret_01=api_token"}, io.Discard); err != nil {
 		t.Fatalf("project bind: %v", err)
 	}
-	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--alias", "secret_01=api_token"}, errWriter{err: errors.New("project bind encode failure")}); err == nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--allow-non-git", "--alias", "secret_01=api_token"}, errWriter{err: errors.New("project bind encode failure")}); err == nil {
 		t.Fatal("expected project bind encode failure")
 	}
 	if err := projectStatusCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
@@ -289,7 +293,7 @@ func TestRuntimeCommandWriterBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run set: %v", err)
 	}
-	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--alias", "secret_01=api_token"}, io.Discard); err != nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--allow-non-git", "--alias", "secret_01=api_token"}, io.Discard); err != nil {
 		t.Fatalf("project bind: %v", err)
 	}
 
@@ -297,15 +301,16 @@ func TestRuntimeCommandWriterBranches(t *testing.T) {
 	if err := pingCommand(context.Background(), errWriter{err: pingErr}, starter); !errors.Is(err, pingErr) {
 		t.Fatalf("expected ping writer failure, got %v", err)
 	}
-	if err := pingCommand(context.Background(), io.Discard, &fakeStarter{err: io.EOF}); err == nil {
-		t.Fatal("expected ping ensureClient failure")
+	// ping/status with no daemon running must report "not running" (exit 0) rather than auto-starting.
+	if err := pingCommand(context.Background(), io.Discard, &fakeStarter{err: io.EOF}); err != nil {
+		t.Fatalf("expected ping to report not-running cleanly, got %v", err)
 	}
 	statusErr := errors.New("status writer failure")
 	if err := statusCommand(context.Background(), errWriter{err: statusErr}, starter); !errors.Is(err, statusErr) {
 		t.Fatalf("expected status writer failure, got %v", err)
 	}
-	if err := statusCommand(context.Background(), io.Discard, &fakeStarter{err: io.EOF}); err == nil {
-		t.Fatal("expected status ensureClient failure")
+	if err := statusCommand(context.Background(), io.Discard, &fakeStarter{err: io.EOF}); err != nil {
+		t.Fatalf("expected status to report not-running cleanly, got %v", err)
 	}
 	if err := sessionOpenCommand(context.Background(), []string{"--project-root", projectRoot, "--bad"}, io.Discard, starter); err == nil {
 		t.Fatal("expected session open parse error")
@@ -380,32 +385,35 @@ func TestRuntimeCommandWriterBranches(t *testing.T) {
 	if err := sessionResolveCommand(context.Background(), []string{"--token", reply.SessionToken}, io.Discard, &fakeStarter{err: io.EOF}); err == nil {
 		t.Fatal("expected session resolve ensureClient failure")
 	}
-	if err := tuiCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
+	if err := tuiCommand(context.Background(), []string{"--bad"}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected tui parse error")
 	}
 	tuiErr := errors.New("tui writer failure")
-	if err := tuiCommand(context.Background(), []string{"--project-root", projectRoot}, errWriter{err: tuiErr}); !errors.Is(err, tuiErr) {
+	if err := tuiCommand(context.Background(), []string{"--project-root", projectRoot}, errWriter{err: tuiErr}, io.Discard); !errors.Is(err, tuiErr) {
 		t.Fatalf("expected tui writer failure, got %v", err)
 	}
 	missingItemProject := t.TempDir()
-	if err := projectBindCommand(context.Background(), []string{"--project-root", missingItemProject, "--hooks=false", "--alias", "secret_01=missing_item"}, io.Discard); err != nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", missingItemProject, "--hooks=false", "--allow-non-git", "--alias", "secret_01=missing_item"}, io.Discard); err != nil {
 		t.Fatalf("project bind missing-item project: %v", err)
 	}
-	if err := tuiCommand(context.Background(), []string{"--project-root", missingItemProject}, io.Discard); err == nil {
+	if err := tuiCommand(context.Background(), []string{"--project-root", missingItemProject}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected tui missing-item failure")
 	}
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
 	invalidBackupTarget := t.TempDir()
-	if err := exportBackupCommand(context.Background(), []string{"--output", invalidBackupTarget, "--recovery-passphrase", "backup-passphrase"}, io.Discard); err == nil {
+	if err := exportBackupCommand(context.Background(), []string{"--output", invalidBackupTarget}, io.Discard); err == nil {
 		t.Fatal("expected export backup path failure")
 	}
-	if err := restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "missing-backup.json"), "--recovery-passphrase", "backup-passphrase", "--master-password", "restored-password"}, io.Discard); err == nil {
+	t.Setenv("HASP_MASTER_PASSWORD", "restored-password")
+	if err := restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "missing-backup.json")}, io.Discard); err == nil {
 		t.Fatal("expected restore backup missing-input failure")
 	}
 	t.Setenv("HASP_MASTER_PASSWORD", "wrong password")
-	if err := exportBackupCommand(context.Background(), []string{"--output", filepath.Join(t.TempDir(), "backup.json"), "--recovery-passphrase", "backup-passphrase"}, io.Discard); err == nil {
+	if err := exportBackupCommand(context.Background(), []string{"--output", filepath.Join(t.TempDir(), "backup.json")}, io.Discard); err == nil {
 		t.Fatal("expected export backup wrong-password failure")
 	}
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "")
 }
 
 func TestStoreCreationFailureBranches(t *testing.T) {
@@ -432,19 +440,20 @@ func TestStoreCreationFailureBranches(t *testing.T) {
 
 	assertStoreFail("initCommand", initCommand(context.Background(), io.Discard))
 	assertStoreFail("importCommand", importCommand(context.Background(), []string{envPath}, io.Discard))
-	assertStoreFail("setCommand", setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, io.Discard))
+	assertStoreFail("setCommand", setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard))
 	assertStoreFail("redactCommand", redactCommand(context.Background(), bytes.NewBufferString("secret"), io.Discard))
-	assertStoreFail("projectBindCommand", projectBindCommand(context.Background(), []string{"--project-root", t.TempDir(), "--hooks=false"}, io.Discard))
+	assertStoreFail("projectBindCommand", projectBindCommand(context.Background(), []string{"--project-root", t.TempDir(), "--hooks=false", "--allow-non-git"}, io.Discard))
 	assertStoreFail("projectStatusCommand", projectStatusCommand(context.Background(), []string{"--project-root", t.TempDir()}, io.Discard))
 	assertStoreFail("projectUnbindCommand", projectUnbindCommand(context.Background(), []string{"--project-root", t.TempDir()}, io.Discard))
 	if _, err := openVaultHandle(context.Background()); err == nil || !strings.Contains(err.Error(), "store init fail") {
 		t.Fatalf("openVaultHandle: expected store init fail, got %v", err)
 	}
-	assertStoreFail("exportBackupCommand", exportBackupCommand(context.Background(), []string{"--output", filepath.Join(t.TempDir(), "backup.json"), "--recovery-passphrase", "backup-passphrase"}, io.Discard))
-	assertStoreFail("restoreBackupCommand", restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "backup.json"), "--recovery-passphrase", "backup-passphrase", "--master-password", "restored-password"}, io.Discard))
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
+	assertStoreFail("exportBackupCommand", exportBackupCommand(context.Background(), []string{"--output", filepath.Join(t.TempDir(), "backup.json")}, io.Discard))
+	assertStoreFail("restoreBackupCommand", restoreBackupCommand(context.Background(), []string{"--input", filepath.Join(t.TempDir(), "backup.json")}, io.Discard))
 
 	starter := newDaemonTestStarter(t)
-	assertStoreFail("captureCommand", captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", t.TempDir(), "--grant-project", "window", "--grant-write"}, io.Discard, starter))
+	assertStoreFail("captureCommand", captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", t.TempDir(), "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, io.Discard, starter))
 }
 
 func TestWrongPasswordAndBadPathBranches(t *testing.T) {
@@ -464,7 +473,7 @@ func TestWrongPasswordAndBadPathBranches(t *testing.T) {
 	if err := importCommand(context.Background(), []string{envPath}, io.Discard); err == nil {
 		t.Fatal("expected importCommand wrong-password failure")
 	}
-	if err := setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, io.Discard); err == nil {
+	if err := setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected setCommand wrong-password failure")
 	}
 	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false"}, io.Discard); err == nil {
@@ -481,10 +490,10 @@ func TestWrongPasswordAndBadPathBranches(t *testing.T) {
 	}
 
 	starter := newDaemonTestStarter(t)
-	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, starter); err == nil {
+	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, io.Discard, starter); err == nil {
 		t.Fatal("expected captureCommand wrong-password failure")
 	}
-	if err := tuiCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard); err == nil {
+	if err := tuiCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected tuiCommand openVaultHandle failure")
 	}
 }

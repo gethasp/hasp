@@ -15,13 +15,6 @@ import (
 )
 
 func TestImportSupportHelpers(t *testing.T) {
-	origCreateTemp := createTempImportFn
-	origWriteFile := writeImportFileFn
-	defer func() {
-		createTempImportFn = origCreateTemp
-		writeImportFileFn = origWriteFile
-	}()
-
 	if _, err := prepareImport("", "auto", "", nil, false, nil); err == nil {
 		t.Fatal("expected missing import path error")
 	}
@@ -71,8 +64,9 @@ func TestImportSupportHelpers(t *testing.T) {
 	if _, _, _, _, _, err := importBytes("-", "bogus", bytes.NewBufferString("API_TOKEN=abc123\n")); err == nil {
 		t.Fatal("expected stdin format resolution failure")
 	}
-	createTempImportFn = func(dir, pattern string) (*os.File, error) {
-		file, err := origCreateTemp(dir, pattern)
+	closeDeps := defaultImportSupportDeps()
+	closeDeps.CreateTemp = func(dir, pattern string) (*os.File, error) {
+		file, err := os.CreateTemp(dir, pattern)
 		if err != nil {
 			return nil, err
 		}
@@ -81,10 +75,9 @@ func TestImportSupportHelpers(t *testing.T) {
 		}
 		return file, nil
 	}
-	if _, _, _, _, _, err := importBytes("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n")); err == nil {
+	if _, _, _, _, _, err := importBytesWithDeps("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n"), closeDeps); err == nil {
 		t.Fatalf("expected temp close failure, got %v", err)
 	}
-	createTempImportFn = origCreateTemp
 	if _, err := resolveImportFormat("secret.txt", "auto"); err == nil {
 		t.Fatal("expected unsupported auto format")
 	}
@@ -114,22 +107,22 @@ func TestImportSupportHelpers(t *testing.T) {
 		t.Fatalf("expected preview scanner failure, got %v", err)
 	}
 
-	createTempImportFn = func(string, string) (*os.File, error) { return nil, errors.New("create fail") }
-	if _, _, _, _, _, err := importBytes("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n")); err == nil || !strings.Contains(err.Error(), "create fail") {
+	createFailDeps := defaultImportSupportDeps()
+	createFailDeps.CreateTemp = func(string, string) (*os.File, error) { return nil, errors.New("create fail") }
+	if _, _, _, _, _, err := importBytesWithDeps("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n"), createFailDeps); err == nil || !strings.Contains(err.Error(), "create fail") {
 		t.Fatalf("expected create temp failure, got %v", err)
 	}
-	createTempImportFn = origCreateTemp
-	writeImportFileFn = func(string, []byte, os.FileMode) error { return errors.New("write fail") }
-	if _, _, _, _, _, err := importBytes("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n")); err == nil || !strings.Contains(err.Error(), "write fail") {
+	writeFailDeps := defaultImportSupportDeps()
+	writeFailDeps.WriteFile = func(string, []byte, os.FileMode) error { return errors.New("write fail") }
+	if _, _, _, _, _, err := importBytesWithDeps("-", "env", bytes.NewBufferString("API_TOKEN=abc123\n"), writeFailDeps); err == nil || !strings.Contains(err.Error(), "write fail") {
 		t.Fatalf("expected write import failure, got %v", err)
 	}
-	writeImportFileFn = origWriteFile
 	if _, err := prepareImport("-", "env", "", bytes.NewBufferString("BROKEN"), false, nil); err == nil {
 		t.Fatal("expected prepareImport preview failure for invalid env stdin")
 	}
 
 	var out bytes.Buffer
-	if err := encodeImportCommandResultWithMode(&out, stdinPrepared.Preview, &store.ImportResult{Imported: []store.ImportedItem{{Name: "API_TOKEN", Kind: store.ItemKindKV}}}, true, true); err != nil {
+	if err := encodeImportCommandResultWithMode(context.Background(), &out, stdinPrepared.Preview, &store.ImportResult{Imported: []store.ImportedItem{{Name: "API_TOKEN", Kind: store.ItemKindKV}}}, true, true); err != nil {
 		t.Fatalf("encode import result: %v", err)
 	}
 	var payload map[string]any
@@ -190,8 +183,7 @@ func TestImportCommandCompatibilityBranches(t *testing.T) {
 func TestApplyBootstrapImportsResidualBranches(t *testing.T) {
 	lockAppSeams(t)
 
-	origResolveBinding := resolveBindingViewBootstrapFn
-	defer func() { resolveBindingViewBootstrapFn = origResolveBinding }()
+	deps := defaultBootstrapDeps()
 
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
@@ -211,7 +203,7 @@ func TestApplyBootstrapImportsResidualBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	binding, _, err := resolveBindingViewBootstrapFn(handle, context.Background(), projectRoot)
+	binding, _, err := deps.ResolveBindingView(handle, context.Background(), projectRoot)
 	if err != nil {
 		t.Fatalf("initial binding view: %v", err)
 	}
@@ -220,7 +212,7 @@ func TestApplyBootstrapImportsResidualBranches(t *testing.T) {
 	if err := os.WriteFile(badJSONPath, []byte("{bad json"), 0o600); err != nil {
 		t.Fatalf("write bad json: %v", err)
 	}
-	if _, _, _, _, err := applyBootstrapImports(context.Background(), handle, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{badJSONPath}}, binding, bytes.NewBuffer(nil)); err == nil {
+	if _, _, _, _, err := applyBootstrapImports(context.Background(), handle, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{badJSONPath}}, binding, bytes.NewBuffer(nil), deps); err == nil {
 		t.Fatal("expected applyBootstrapImports import-path failure")
 	}
 
@@ -228,10 +220,9 @@ func TestApplyBootstrapImportsResidualBranches(t *testing.T) {
 	if err := os.WriteFile(goodEnvPath, []byte("API_TOKEN=abc123\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	resolveBindingViewBootstrapFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
-		return store.Binding{}, nil, errors.New("post-import binding fail")
-	}
-	if _, _, _, _, err := applyBootstrapImports(context.Background(), handle, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{goodEnvPath}}, binding, bytes.NewBuffer(nil)); err == nil || !strings.Contains(err.Error(), "post-import binding fail") {
+	failingDeps := deps
+	failingDeps.ResolveBindingView = failingResolveBinding("post-import binding fail")
+	if _, _, _, _, err := applyBootstrapImports(context.Background(), handle, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{goodEnvPath}}, binding, bytes.NewBuffer(nil), failingDeps); err == nil || !strings.Contains(err.Error(), "post-import binding fail") {
 		t.Fatalf("expected applyBootstrapImports post-import resolve failure, got %v", err)
 	}
 }

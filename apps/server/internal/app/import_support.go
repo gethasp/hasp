@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,8 +15,17 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-var createTempImportFn = os.CreateTemp
-var writeImportFileFn = os.WriteFile
+type importSupportDeps struct {
+	CreateTemp func(dir, pattern string) (*os.File, error)
+	WriteFile  func(name string, data []byte, perm os.FileMode) error
+}
+
+func defaultImportSupportDeps() importSupportDeps {
+	return importSupportDeps{
+		CreateTemp: os.CreateTemp,
+		WriteFile:  os.WriteFile,
+	}
+}
 
 type importPlanItem struct {
 	Name  string         `json:"name"`
@@ -87,6 +97,10 @@ func prepareImport(path string, format string, name string, stdin io.Reader, bin
 }
 
 func importBytes(path string, format string, stdin io.Reader) ([]byte, string, string, string, func(), error) {
+	return importBytesWithDeps(path, format, stdin, defaultImportSupportDeps())
+}
+
+func importBytesWithDeps(path string, format string, stdin io.Reader, deps importSupportDeps) ([]byte, string, string, string, func(), error) {
 	source := strings.TrimSpace(path)
 	if source == "-" {
 		if stdin == nil {
@@ -100,7 +114,7 @@ func importBytes(path string, format string, stdin io.Reader) ([]byte, string, s
 		if err != nil {
 			return nil, "", "", "", nil, err
 		}
-		tempFile, err := createTempImportFn("", "hasp-import-*."+resolvedFormat)
+		tempFile, err := deps.CreateTemp("", "hasp-import-*."+resolvedFormat)
 		if err != nil {
 			return nil, "", "", "", nil, err
 		}
@@ -108,7 +122,7 @@ func importBytes(path string, format string, stdin io.Reader) ([]byte, string, s
 			_ = os.Remove(tempFile.Name())
 			return nil, "", "", "", nil, err
 		}
-		if err := writeImportFileFn(tempFile.Name(), data, 0o600); err != nil {
+		if err := deps.WriteFile(tempFile.Name(), data, 0o600); err != nil {
 			_ = os.Remove(tempFile.Name())
 			return nil, "", "", "", nil, err
 		}
@@ -233,7 +247,7 @@ func projectedNames(items []importPlanItem) []string {
 	return names
 }
 
-func encodeImportCommandResultWithMode(stdout io.Writer, preview importPreview, result *store.ImportResult, applied bool, jsonOutput bool) error {
+func encodeImportCommandResultWithMode(ctx context.Context, stdout io.Writer, preview importPreview, result *store.ImportResult, applied bool, jsonOutput bool) error {
 	payload := map[string]any{
 		"preview": preview,
 		"applied": applied,
@@ -241,7 +255,7 @@ func encodeImportCommandResultWithMode(stdout io.Writer, preview importPreview, 
 	if result != nil {
 		payload["imported"] = result.Imported
 	}
-	return renderJSONOrHuman(stdout, jsonOutput, payload, func(w io.Writer) error {
+	return renderJSONOrHuman(ctx, stdout, jsonOutput, payload, func(w io.Writer) error {
 		return renderImportCommandResult(w, preview, result, applied)
 	})
 }

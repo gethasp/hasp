@@ -118,7 +118,7 @@ func TestRunSetupAdditionalCoverageBranches(t *testing.T) {
 		if err := os.WriteFile(configPath, []byte(`{}`), 0o600); err != nil {
 			t.Fatalf("write existing config: %v", err)
 		}
-		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "--overwrite-existing-config=true|false") {
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "--overwrite-existing-config=always|never") {
 			t.Fatalf("expected overwrite approval error, got %v", err)
 		}
 	})
@@ -189,7 +189,7 @@ func TestRunSetupAdditionalCoverageBranches(t *testing.T) {
 	t.Run("validate non-interactive failure propagates", func(t *testing.T) {
 		opts := baseOpts
 		opts.PasswordEnv = ""
-		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "--master-password-env") {
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "HASP_MASTER_PASSWORD") {
 			t.Fatalf("expected validateSetupNonInteractive failure, got %v", err)
 		}
 	})
@@ -287,7 +287,7 @@ func TestSetupResolveBoolOptionsAndNonInteractiveCoverage(t *testing.T) {
 			want string
 		}{
 			{name: "missing home", opts: setupOptions{NonInteractive: true}, want: "--hasp-home"},
-			{name: "missing password", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp"}, want: "--master-password-env"},
+			{name: "missing password", opts: setupOptions{NonInteractive: true, HaspHome: "/tmp/hasp"}, want: "HASP_MASTER_PASSWORD"},
 		}
 		for _, tc := range cases {
 			if err := validateSetupNonInteractive(tc.opts); err == nil || !strings.Contains(err.Error(), tc.want) {

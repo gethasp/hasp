@@ -142,10 +142,15 @@ func TestBrokerRPCRegisterAndResolveProcessErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
 	}
+	// peerPID mirrors what the per-connection serveConn path stamps. With
+		// peerPID = os.Getpid(), RegisterProcess(req.PID = os.Getpid()) passes
+		// the socket peer-PID gate so the test can exercise the downstream
+		// audit-nil / audit-non-nil branches.
 	broker := &brokerRPC{
 		paths:     resolved,
 		startedAt: time.Now().UTC(),
 		sessions:  NewSessionStore(),
+		peerPID:   uint32(os.Getpid()),
 	}
 	var registerReply RegisterProcessResponse
 	if err := broker.RegisterProcess(RegisterProcessRequest{}, &registerReply); err == nil {
@@ -176,7 +181,7 @@ func TestBrokerRPCRegisterAndResolveProcessErrors(t *testing.T) {
 		t.Fatalf("register process success with nil audit: %v", err)
 	}
 	broker.audit, _ = audit.New()
-	if err := broker.RegisterProcess(RegisterProcessRequest{SessionToken: session.Token, PID: os.Getpid() + 1}, &registerReply); err != nil {
+	if err := broker.RegisterProcess(RegisterProcessRequest{SessionToken: session.Token, PID: os.Getpid()}, &registerReply); err != nil {
 		t.Fatalf("register process success with audit: %v", err)
 	}
 }
@@ -234,7 +239,7 @@ func TestResolveProcessNoLineageBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	store.processes[os.Getpid()] = session.Token
+	store.processes[os.Getpid()] = processBinding{token: session.Token}
 	delete(store.sessions, session.Token)
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process to drop missing session mapping")
@@ -244,7 +249,7 @@ func TestResolveProcessNoLineageBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open expiring session: %v", err)
 	}
-	store.processes[os.Getpid()] = expired.Token
+	store.processes[os.Getpid()] = processBinding{token: expired.Token}
 	time.Sleep(5 * time.Millisecond)
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process to drop expired session mapping")

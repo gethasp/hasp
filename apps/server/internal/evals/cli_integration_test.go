@@ -177,8 +177,8 @@ func TestCLISessionLifecycleEval(t *testing.T) {
 		t.Fatal("run with revoked session unexpectedly succeeded")
 	}
 
-	expiredToken := openRuntimeSession(t, env, env.projectRoot, 1)
-	time.Sleep(2 * time.Second)
+	expiredToken := openRuntimeSessionWithDuration(t, env, env.projectRoot, 50*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	if _, _, err := runHasp(t, env, "", "write-env", "--project-root", env.projectRoot, "--session-token", expiredToken, "--output", filepath.Join(env.projectRoot, ".env"), "--env", "API_TOKEN=secret_01"); err == nil {
 		t.Fatal("write-env with expired session unexpectedly succeeded")
 	}

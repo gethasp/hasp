@@ -437,7 +437,7 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new store: %v", err)
 		}
-		if _, _, err := setupEnsureHandle(context.Background(), vaultStore, "", false); err == nil || !strings.Contains(err.Error(), "master password is required") {
+		if _, _, err := setupEnsureHandle(context.Background(), vaultStore, "", false, true); err == nil || !strings.Contains(err.Error(), "master password is required") {
 			t.Fatalf("expected init validation failure, got %v", err)
 		}
 	})

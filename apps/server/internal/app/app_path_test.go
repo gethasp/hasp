@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -162,18 +163,18 @@ func TestEnsureLauncherDirOnPathChoiceBranches(t *testing.T) {
 	secretIsCharDeviceFn = func(*os.File) bool { return true }
 
 	t.Setenv("PATH", launcherDir)
-	result, err := ensureLauncherDirOnPathChoice(setupOptionalBool{}, nil, io.Discard, io.Discard, launcherDir)
+	result, err := ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{}, nil, io.Discard, io.Discard, launcherDir)
 	if err != nil || result.Changed {
 		t.Fatalf("expected no-op when PATH already contains launcher dir, got %+v err=%v", result, err)
 	}
 
 	t.Setenv("PATH", "")
-	noResult, err := ensureLauncherDirOnPathChoice(setupOptionalBool{set: true, value: false}, nil, io.Discard, io.Discard, launcherDir)
+	noResult, err := ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{set: true, value: false}, nil, io.Discard, io.Discard, launcherDir)
 	if err != nil || noResult.Changed {
 		t.Fatalf("expected explicit false no-op, got %+v err=%v", noResult, err)
 	}
 
-	yesResult, err := ensureLauncherDirOnPathChoice(setupOptionalBool{set: true, value: true}, nil, io.Discard, io.Discard, launcherDir)
+	yesResult, err := ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{set: true, value: true}, nil, io.Discard, io.Discard, launcherDir)
 	if err != nil || !yesResult.Changed {
 		t.Fatalf("expected explicit true write, got %+v err=%v", yesResult, err)
 	}
@@ -189,7 +190,7 @@ func TestEnsureLauncherDirOnPathChoiceBranches(t *testing.T) {
 		t.Fatalf("rewind prompt file: %v", err)
 	}
 	var promptOut bytes.Buffer
-	result, err = ensureLauncherDirOnPathChoice(setupOptionalBool{}, promptFile, &promptOut, &promptOut, filepath.Join(homeDir, ".other", "bin"))
+	result, err = ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{}, promptFile, &promptOut, &promptOut, filepath.Join(homeDir, ".other", "bin"))
 	if err != nil || !result.Changed {
 		t.Fatalf("expected interactive yes path update, got %+v err=%v", result, err)
 	}
@@ -218,12 +219,12 @@ func TestEnsureLauncherDirOnPathChoiceBranches(t *testing.T) {
 	if err := closedPromptErrFile.Close(); err != nil {
 		t.Fatalf("close reopened prompt error file: %v", err)
 	}
-	if _, err := ensureLauncherDirOnPathChoice(setupOptionalBool{}, closedPromptErrFile, io.Discard, io.Discard, filepath.Join(homeDir, ".error", "bin")); err == nil {
+	if _, err := ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{}, closedPromptErrFile, io.Discard, io.Discard, filepath.Join(homeDir, ".error", "bin")); err == nil {
 		t.Fatal("expected prompt read failure")
 	}
 
 	appUserHomeDirFn = func() (string, error) { return "", os.ErrPermission }
-	if _, err := ensureLauncherDirOnPathChoice(setupOptionalBool{set: true, value: true}, nil, io.Discard, io.Discard, filepath.Join(homeDir, ".fail", "bin")); err == nil {
+	if _, err := ensureLauncherDirOnPathChoice(context.Background(), setupOptionalBool{set: true, value: true}, nil, io.Discard, io.Discard, filepath.Join(homeDir, ".fail", "bin")); err == nil {
 		t.Fatal("expected path choice helper error from home resolution")
 	}
 	appUserHomeDirFn = func() (string, error) { return homeDir, nil }

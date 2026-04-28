@@ -37,7 +37,7 @@ func TestSecretCommandsLifecycleInRepo(t *testing.T) {
 	}
 
 	var addOut bytes.Buffer
-	if err := Run(context.Background(), []string{"secret", "add", "SAVEDEO_NOTARY_PASSWORD=abc123"}, bytes.NewBuffer(nil), &addOut, &addOut); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "--expose=always", "SAVEDEO_NOTARY_PASSWORD"}, bytes.NewBufferString("abc123\n"), &addOut, &addOut); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	if !strings.Contains(addOut.String(), "secret_01") || !strings.Contains(addOut.String(), "@SAVEDEO_NOTARY_PASSWORD") {
@@ -53,11 +53,11 @@ func TestSecretCommandsLifecycleInRepo(t *testing.T) {
 	}
 
 	var listOut bytes.Buffer
-	if err := Run(context.Background(), []string{"list"}, bytes.NewBuffer(nil), &listOut, &listOut); err != nil {
-		t.Fatalf("top-level list alias: %v", err)
+	if err := Run(context.Background(), []string{"secret", "list"}, bytes.NewBuffer(nil), &listOut, &listOut); err != nil {
+		t.Fatalf("secret list: %v", err)
 	}
 	if !strings.Contains(listOut.String(), "@SAVEDEO_NOTARY_PASSWORD") {
-		t.Fatalf("expected named reference in top-level list output, got %q", listOut.String())
+		t.Fatalf("expected named reference in secret list output, got %q", listOut.String())
 	}
 
 	var revealOut bytes.Buffer
@@ -98,7 +98,7 @@ func TestSecretCommandsLifecycleInRepo(t *testing.T) {
 		t.Fatalf("expected one visible ref after expose, got %+v", statusPayload["visible"])
 	}
 
-	if err := Run(context.Background(), []string{"secret", "update", "SAVEDEO_NOTARY_PASSWORD=rotated"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "update", "SAVEDEO_NOTARY_PASSWORD"}, bytes.NewBufferString("rotated\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret update: %v", err)
 	}
 	revealOut.Reset()
@@ -166,7 +166,7 @@ func TestSecretAddOutsideRepoAndCollisionPolicies(t *testing.T) {
 	}
 
 	var skipOut bytes.Buffer
-	if err := Run(context.Background(), []string{"secret", "add", "--on-conflict", "skip", "OPENAI_API_KEY=rotated"}, bytes.NewBuffer(nil), &skipOut, &skipOut); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--on-conflict", "skip", "--from-stdin", "OPENAI_API_KEY"}, bytes.NewBufferString("rotated\n"), &skipOut, &skipOut); err != nil {
 		t.Fatalf("secret add skip collision: %v", err)
 	}
 	if !strings.Contains(skipOut.String(), "skipped") {
@@ -200,18 +200,13 @@ func TestSecretRevealBlockedForProtectedAgentRepoAndOverride(t *testing.T) {
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
 	origGetwd := secretGetwdFn
-	origApprove := sessionGrantPlaintextApproveFn
-	defer func() {
-		secretGetwdFn = origGetwd
-		sessionGrantPlaintextApproveFn = origApprove
-	}()
+	defer func() { secretGetwdFn = origGetwd }()
 	secretGetwdFn = func() (string, error) { return projectRoot, nil }
-	sessionGrantPlaintextApproveFn = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
 
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	if err := Run(context.Background(), []string{"agent", "connect", "claude-code", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
@@ -290,7 +285,7 @@ func TestSecretRevealBlockedByExplicitAgentSafeEnv(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "OPENAI_API_KEY=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "OPENAI_API_KEY"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	if err := Run(context.Background(), []string{"secret", "get", "--copy", "OPENAI_API_KEY"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
@@ -316,18 +311,13 @@ func TestSecretRevealBlockedByAgentSafeSessionEnvOutsideRepo(t *testing.T) {
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
 	origGetwd := secretGetwdFn
-	origApprove := sessionGrantPlaintextApproveFn
-	defer func() {
-		secretGetwdFn = origGetwd
-		sessionGrantPlaintextApproveFn = origApprove
-	}()
+	defer func() { secretGetwdFn = origGetwd }()
 	secretGetwdFn = func() (string, error) { return nonRepo, nil }
-	sessionGrantPlaintextApproveFn = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
 
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add in project: %v", err)
 	}
 
@@ -424,7 +414,7 @@ func TestSecretGetAndPolicyAdditionalBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
@@ -446,8 +436,10 @@ func TestSecretGetAndPolicyAdditionalBranches(t *testing.T) {
 	if err := secretGetCommand(context.Background(), []string{"--json", "--reveal", "API_TOKEN"}, bytes.NewBuffer(nil), &out, &out); err != nil {
 		t.Fatalf("secretGetCommand json reveal: %v", err)
 	}
+	// hasp-jx3r: "value" is now nested inside "secret", not at the top level.
+	// Check for the nested shape: {"secret":{"value":"abc123",...},...}
 	if !strings.Contains(out.String(), "\"value\":\"abc123\"") {
-		t.Fatalf("unexpected reveal json %q", out.String())
+		t.Fatalf("unexpected reveal json (want secret.value=abc123) %q", out.String())
 	}
 	if err := Run(context.Background(), []string{"set", "--name", "CERT_FILE", "--kind", "file", "--value", "pem"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("set file secret: %v", err)
@@ -486,7 +478,7 @@ func TestSecretPlaintextPolicyErrorBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	handle, err := openVaultHandle(context.Background())
@@ -530,7 +522,7 @@ func TestEnforceSecretPlaintextPolicyConsumeFailure(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
@@ -590,7 +582,7 @@ func TestSecretRevealBlockedByRegisteredProcessTreeOutsideRepo(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add in project: %v", err)
 	}
 
@@ -632,14 +624,10 @@ func TestSessionGrantPlaintextRejectsSessionScope(t *testing.T) {
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
-	origApprove := sessionGrantPlaintextApproveFn
-	defer func() { sessionGrantPlaintextApproveFn = origApprove }()
-	sessionGrantPlaintextApproveFn = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
-
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add in project: %v", err)
 	}
 

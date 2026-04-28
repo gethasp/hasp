@@ -26,13 +26,13 @@ for mod in "${modules[@]}"; do
   echo "Testing $dir"
   case "$mode" in
     --integration)
-      (cd "$dir" && go test -tags=integration ./...)
+      (cd "$dir" && go test -tags=integration,hasp_test_fastkdf ./...)
       ;;
     --race)
-      (cd "$dir" && go test -race ./...)
+      (cd "$dir" && go test -tags=hasp_test_fastkdf -race ./...)
       ;;
     *)
-      (cd "$dir" && go test ./...)
+      (cd "$dir" && go test -tags=hasp_test_fastkdf ./...)
       ;;
   esac
 done

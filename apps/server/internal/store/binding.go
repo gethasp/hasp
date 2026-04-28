@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 )
 
 var filepathAbsFn = filepath.Abs
@@ -56,8 +57,12 @@ func (h *Handle) UpsertBinding(ctx context.Context, projectPath string, aliases 
 	}
 	binding, ok := h.state.Bindings[root]
 	if !ok {
+		id, idErr := randomHex(12)
+		if idErr != nil {
+			return Binding{}, fmt.Errorf("mint binding id: %w", idErr)
+		}
 		binding = Binding{
-			ID:            randomHex(12),
+			ID:            id,
 			CanonicalRoot: root,
 			Aliases:       map[string]string{},
 		}
@@ -86,8 +91,12 @@ func (h *Handle) BindItemAlias(ctx context.Context, projectPath string, itemName
 	}
 	binding, ok := h.state.Bindings[root]
 	if !ok {
+		id, idErr := randomHex(12)
+		if idErr != nil {
+			return "", fmt.Errorf("mint binding id: %w", idErr)
+		}
 		binding = Binding{
-			ID:                   randomHex(12),
+			ID:                   id,
 			CanonicalRoot:        root,
 			Aliases:              map[string]string{},
 			DefaultCapturePolicy: normalizePolicy(item.Metadata.Policy),
@@ -209,10 +218,8 @@ func CanonicalProjectRoot(ctx context.Context, projectPath string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("resolve project path: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", abs, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err == nil {
-		return normalizeRoot(strings.TrimSpace(string(out))), nil
+	if root, err := gitsafe.TopLevelCached(ctx, abs); err == nil {
+		return normalizeRoot(root), nil
 	}
 	return normalizeRoot(abs), nil
 }

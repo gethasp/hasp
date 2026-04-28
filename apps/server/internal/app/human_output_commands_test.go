@@ -50,9 +50,9 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 		}
 	}
 
-	assertOutput([]string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, nil, "Secret add")
+	assertOutput([]string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), "Secret add")
 	assertOutput([]string{"secret", "get", "API_TOKEN"}, nil, "Metadata only")
-	assertOutput([]string{"list"}, nil, "Vault secrets")
+	assertOutput([]string{"secret", "list"}, nil, "Vault secrets")
 	assertOutput([]string{"secret", "hide", "--project-root", projectRoot, "API_TOKEN"}, nil, "Secret hide")
 	assertOutput([]string{"secret", "expose", "--project-root", projectRoot, "API_TOKEN"}, nil, "Secret expose")
 
@@ -67,7 +67,7 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 	assertOutput([]string{"check-repo", "--project-root", projectRoot, "--allow-managed-secrets"}, nil, "Repo check")
 
 	assertOutput([]string{"app", "connect", "myapp", "--cmd", "true", "--project-root", projectRoot, "--env", "OPENAI_API_KEY=API_TOKEN"}, nil, "App connected")
-	assertOutput([]string{"app", "list"}, nil, "App consumers")
+	assertOutput([]string{"app", "list"}, nil, "Apps")
 	assertOutput([]string{"app", "install", "myapp", "--add-to-path=false"}, nil, "App installed")
 	assertOutput([]string{"app", "disconnect", "myapp"}, nil, "App disconnected")
 
@@ -117,12 +117,11 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 		t.Fatalf("open session: %v", err)
 	}
 
-	origApprove := sessionGrantPlaintextApproveFn
-	defer func() { sessionGrantPlaintextApproveFn = origApprove }()
-	sessionGrantPlaintextApproveFn = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
+	approveDeps := defaultSessionLocalDeps()
+	approveDeps.Approve = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
 
 	var grantOut bytes.Buffer
-	if err := sessionGrantPlaintextCommand(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, &grantOut, starter); err != nil {
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, &grantOut, starter, approveDeps); err != nil {
 		t.Fatalf("sessionGrantPlaintextCommand: %v", err)
 	}
 	if !strings.Contains(grantOut.String(), "Plaintext grant") {
@@ -137,9 +136,10 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 		t.Fatalf("unexpected session resolve output %q", resolveOut.String())
 	}
 
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
 	var exportOut bytes.Buffer
 	backupPath := filepath.Join(t.TempDir(), "backup.json")
-	if err := exportBackupCommand(context.Background(), []string{"--output", backupPath, "--recovery-passphrase", "backup-passphrase"}, &exportOut); err != nil {
+	if err := exportBackupCommand(context.Background(), []string{"--output", backupPath}, &exportOut); err != nil {
 		t.Fatalf("exportBackupCommand: %v", err)
 	}
 	if !strings.Contains(exportOut.String(), "Backup exported") {
@@ -148,7 +148,8 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 
 	restoreHome := t.TempDir()
 	t.Setenv("HASP_HOME", restoreHome)
-	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath, "--recovery-passphrase", "backup-passphrase", "--master-password", "restored-password"}, &exportOut); err != nil {
+	t.Setenv("HASP_MASTER_PASSWORD", "restored-password")
+	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath}, &exportOut); err != nil {
 		t.Fatalf("restoreBackupCommand: %v", err)
 	}
 	if !strings.Contains(exportOut.String(), "Backup restored") {

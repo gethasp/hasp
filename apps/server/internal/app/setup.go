@@ -17,9 +17,16 @@ import (
 )
 
 func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	opts, err := parseSetupOptions(args)
+	opts, repoFlagUsed, err := parseSetupOptions(args)
 	if err != nil {
 		return err
+	}
+	if repoFlagUsed {
+		// hasp-uxcn: --repo is the legacy flag; --project-root is canonical
+		// across the rest of the CLI. Surface a one-time deprecation note
+		// so existing scripts keep working but newcomers learn the unified
+		// spelling.
+		emitDeprecationWarning(ctx, stderr, "[hasp] 'hasp setup --repo' is deprecated; use --project-root instead.\n")
 	}
 	summary, err := runSetup(ctx, opts, stdin, stderr)
 	if err != nil {
@@ -31,19 +38,24 @@ func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io
 	return json.NewEncoder(stdout).Encode(summary)
 }
 
-func parseSetupOptions(args []string) (setupOptions, error) {
+func parseSetupOptions(args []string) (setupOptions, bool, error) {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	nonInteractive := fs.Bool("non-interactive", false, "")
 	jsonOutput := fs.Bool("json", false, "")
 	haspHome := fs.String("hasp-home", "", "")
 	repo := fs.String("repo", "", "")
+	// hasp-uxcn: --project-root is the canonical spelling shared with run,
+	// inject, and the secret commands. --repo is kept as a back-compat alias
+	// (deprecation warning emitted by setupCommand when --repo was used).
+	projectRoot := fs.String("project-root", "", "")
 	passwordEnv := fs.String("master-password-env", "", "")
 	passwordStdin := fs.Bool("master-password-stdin", false, "")
 	importPath := fs.String("import", "", "")
 	importFormat := fs.String("import-format", "auto", "")
 	bindImports := fs.Bool("bind-imports", false, "")
 	defaultPolicy := fs.String("default-policy", string(store.PolicySession), "")
+	skipPasswordPolicy := fs.Bool("skip-password-policy", false, "")
 	var agents setupAgentFlags
 	var bindItems stringListFlags
 	var aliases aliasFlags
@@ -54,32 +66,64 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 	fs.Var(&agents, "agent", "agent id")
 	fs.Var(&bindItems, "bind-item", "item name")
 	fs.Var(&aliases, "alias", "alias=item")
-	fs.Var(&autoProtectRepos, "auto-protect-repos", "true|false")
-	fs.Var(&installHooks, "install-hooks", "true|false")
-	fs.Var(&convenienceUnlock, "enable-convenience-unlock", "true|false")
-	fs.Var(&overwriteExistingConfig, "overwrite-existing-config", "true|false")
+	fs.Var(&autoProtectRepos, "auto-protect-repos", "always|never|ask")
+	fs.Var(&installHooks, "install-hooks", "always|never|ask")
+	fs.Var(&convenienceUnlock, "enable-convenience-unlock", "always|never|ask")
+	fs.Var(&overwriteExistingConfig, "overwrite-existing-config", "always|never|ask")
 	if err := fs.Parse(args); err != nil {
-		return setupOptions{}, err
+		return setupOptions{}, false, err
 	}
 	if fs.NArg() != 0 {
-		return setupOptions{}, errors.New("usage: hasp setup [--hasp-home <path>] [--repo <path>] [--agent <id>] [--import <path>] [--bind-imports] [--non-interactive]")
+		// hasp-28um: generate the usage line from the FlagSet so it stays in
+		// sync with the actual flag surface (no more "lists 6 of 17 flags").
+		return setupOptions{}, false, errors.New(buildUsageLine("setup", fs))
 	}
 	if strings.TrimSpace(*passwordEnv) != "" && *passwordStdin {
-		return setupOptions{}, errors.New("setup accepts only one password source")
+		return setupOptions{}, false, errors.New("setup accepts only one password source")
 	}
 	if strings.TrimSpace(*importPath) == "-" && *passwordStdin {
-		return setupOptions{}, errors.New("setup cannot use stdin for both password and import")
+		return setupOptions{}, false, errors.New("setup cannot use stdin for both password and import")
+	}
+	repoTrimmed := strings.TrimSpace(*repo)
+	projectRootTrimmed := strings.TrimSpace(*projectRoot)
+	if repoTrimmed != "" && projectRootTrimmed != "" && repoTrimmed != projectRootTrimmed {
+		return setupOptions{}, false, errors.New("--repo and --project-root are aliases; supply only one (--project-root preferred)")
+	}
+	repoFlagUsed := repoTrimmed != "" && projectRootTrimmed == ""
+	chosen := projectRootTrimmed
+	if chosen == "" {
+		chosen = repoTrimmed
+	}
+	expandedRepo := chosen
+	if expandedRepo != "" {
+		var expandErr error
+		expandedRepo, expandErr = expandUserPath(expandedRepo)
+		if expandErr != nil {
+			label := "--project-root"
+			if repoFlagUsed {
+				label = "--repo"
+			}
+			return setupOptions{}, false, fmt.Errorf("%s: %w", label, expandErr)
+		}
+	}
+	expandedImport := strings.TrimSpace(*importPath)
+	if expandedImport != "" && expandedImport != "-" {
+		var expandErr error
+		expandedImport, expandErr = expandUserPath(expandedImport)
+		if expandErr != nil {
+			return setupOptions{}, false, fmt.Errorf("--import: %w", expandErr)
+		}
 	}
 	return setupOptions{
 		NonInteractive:          *nonInteractive,
 		JSONOutput:              *jsonOutput,
 		HaspHome:                strings.TrimSpace(*haspHome),
-		Repo:                    strings.TrimSpace(*repo),
+		Repo:                    expandedRepo,
 		Agents:                  agents,
 		AutoProtectRepos:        autoProtectRepos,
 		PasswordEnv:             strings.TrimSpace(*passwordEnv),
 		PasswordStdin:           *passwordStdin,
-		ImportPath:              strings.TrimSpace(*importPath),
+		ImportPath:              expandedImport,
 		ImportFormat:            strings.TrimSpace(*importFormat),
 		BindImports:             *bindImports,
 		BindItems:               bindItems,
@@ -88,7 +132,8 @@ func parseSetupOptions(args []string) (setupOptions, error) {
 		InstallHooks:            installHooks,
 		EnableConvenienceUnlock: convenienceUnlock,
 		OverwriteExistingConfig: overwriteExistingConfig,
-	}, nil
+		SkipPasswordPolicy:      *skipPasswordPolicy,
+	}, repoFlagUsed, nil
 }
 
 func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut io.Writer) (setupSummary, error) {
@@ -180,7 +225,7 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err != nil {
 		return setupSummary{}, err
 	}
-	handle, initState, _, err := setupOpenHandleWithRetry(ctx, prompt, vaultStore, password, vaultExists, opts.NonInteractive)
+	handle, initState, _, err := setupOpenHandleWithRetry(ctx, prompt, vaultStore, password, vaultExists, opts.NonInteractive, opts.SkipPasswordPolicy)
 	if err != nil {
 		return setupSummary{}, err
 	}
@@ -347,9 +392,9 @@ func setupConvenienceUnlockDetail(err error) string {
 	return text
 }
 
-func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool) (*store.Handle, string, string, error) {
+func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool, skipPasswordPolicy bool) (*store.Handle, string, string, error) {
 	for {
-		handle, initState, err := setupEnsureHandle(ctx, vaultStore, password, vaultExists)
+		handle, initState, err := setupEnsureHandle(ctx, vaultStore, password, vaultExists, skipPasswordPolicy)
 		if err == nil {
 			return handle, initState, password, nil
 		}
@@ -403,7 +448,7 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 		}
 		return password, vaultExists, nil
 	case opts.NonInteractive:
-		return "", vaultExists, errors.New("non-interactive setup requires a master password source")
+		return "", vaultExists, errors.New("non-interactive setup requires a master password; set HASP_MASTER_PASSWORD or run without --non-interactive")
 	}
 
 	if vaultExists {
@@ -459,13 +504,18 @@ func setupVaultExists(home string) bool {
 	return err == nil
 }
 
-func setupEnsureHandle(ctx context.Context, vaultStore *store.Store, password string, vaultExists bool) (*store.Handle, string, error) {
+func setupEnsureHandle(ctx context.Context, vaultStore *store.Store, password string, vaultExists bool, skipPasswordPolicy bool) (*store.Handle, string, error) {
 	if vaultExists {
 		handle, err := openStoreWithPasswordFn(ctx, vaultStore, password)
 		if err != nil {
 			return nil, "", err
 		}
 		return handle, "existing", nil
+	}
+	if !skipPasswordPolicy {
+		if err := store.EnforcePasswordPolicy(password); err != nil {
+			return nil, "", err
+		}
 	}
 	if err := vaultStore.Init(ctx, password); err != nil {
 		return nil, "", err

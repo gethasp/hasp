@@ -47,12 +47,15 @@ func TestOpenVaultHandleBackupAndAuditHelpers(t *testing.T) {
 	if err := restoreBackupCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
 		t.Fatal("expected restore parse error")
 	}
-	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath, "--recovery-passphrase", "backup-passphrase", "--master-password", "restored-password"}, errWriter{err: restoreErr}); !errors.Is(err, restoreErr) {
+	// HASP_BACKUP_PASSPHRASE="backup-passphrase" and HASP_MASTER_PASSWORD="restored-password" are set above.
+	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath}, errWriter{err: restoreErr}); !errors.Is(err, restoreErr) {
 		t.Fatalf("expected restore writer failure, got %v", err)
 	}
-	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath, "--recovery-passphrase", "wrong-passphrase", "--master-password", "restored-password"}, io.Discard); err == nil {
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "wrong-passphrase")
+	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath}, io.Discard); err == nil {
 		t.Fatal("expected restore wrong-passphrase failure")
 	}
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
 
 	auditHome := t.TempDir()
 	t.Setenv("HASP_HOME", auditHome)
@@ -69,20 +72,20 @@ func TestOpenVaultHandleBackupAndAuditHelpers(t *testing.T) {
 		t.Fatalf("expected appended audit event, got %q", string(data))
 	}
 	auditWriterErr := errors.New("audit writer failure")
-	if err := auditCommand(errWriter{err: auditWriterErr}); !errors.Is(err, auditWriterErr) {
+	if err := auditCommand(context.Background(), errWriter{err: auditWriterErr}); !errors.Is(err, auditWriterErr) {
 		t.Fatalf("expected audit writer failure, got %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(auditHome, "audit.jsonl"), []byte("{bad json\n"), 0o600); err != nil {
 		t.Fatalf("write malformed audit log: %v", err)
 	}
-	if err := auditCommand(io.Discard); err == nil {
+	if err := auditCommand(context.Background(), io.Discard); err == nil {
 		t.Fatal("expected audit verify failure")
 	}
 
 	origNewAudit := newAuditLogFn
 	defer func() { newAuditLogFn = origNewAudit }()
 	newAuditLogFn = func() (*audit.Log, error) { return nil, errors.New("audit init failure") }
-	if err := auditCommand(io.Discard); err == nil {
+	if err := auditCommand(context.Background(), io.Discard); err == nil {
 		t.Fatal("expected audit constructor failure")
 	}
 	appendAudit(audit.EventRun, "tester", map[string]any{"scope": "ignore-failure"})

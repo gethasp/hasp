@@ -18,6 +18,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -254,7 +255,7 @@ func TestAuditCommandWithArgsSinceFlag(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return stubEvents, nil }
 
 	var buf bytes.Buffer
-	err := auditCommandWithArgs([]string{"--since", "1h", "--json"}, &buf)
+	err := auditCommandWithArgs(context.Background(), []string{"--since", "1h", "--json"}, &buf)
 	if err != nil {
 		t.Fatalf("--since flag: unexpected error: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestAuditCommandWithArgsSecretFlag(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return nil, nil }
 
 	// --secret flag must be accepted (not produce a "flag not defined" error).
-	err := auditCommandWithArgs([]string{"--secret", "proj/DB_PASSWORD", "--json"}, io.Discard)
+	err := auditCommandWithArgs(context.Background(), []string{"--secret", "proj/DB_PASSWORD", "--json"}, io.Discard)
 	if err != nil {
 		t.Fatalf("--secret flag: expected no error but got: %v", err)
 	}
@@ -299,7 +300,7 @@ func TestAuditCommandWithArgsRejectsPositional(t *testing.T) {
 	defer func() { newAuditLogFn = origLog }()
 	newAuditLogFn = func() (*audit.Log, error) { return nil, nil }
 
-	err := auditCommandWithArgs([]string{"extra"}, io.Discard)
+	err := auditCommandWithArgs(context.Background(), []string{"extra"}, io.Discard)
 	if err == nil {
 		t.Fatal("expected error for positional argument, got nil")
 	}

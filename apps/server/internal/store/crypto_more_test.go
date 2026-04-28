@@ -48,14 +48,9 @@ func TestCryptoHelpersErrorPaths(t *testing.T) {
 	if _, err := randomBytes(4); err == nil {
 		t.Fatal("expected randomBytes failure")
 	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("expected randomHex panic")
-			}
-		}()
-		_ = randomHex(4)
-	}()
+	if _, err := randomHex(4); err == nil {
+		t.Fatal("expected randomHex error on entropy failure")
+	}
 
 	randReadFn = origRandRead
 	newGCMFn = func(cipher.Block) (cipher.AEAD, error) { return nil, errors.New("gcm fail") }

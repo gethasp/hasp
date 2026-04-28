@@ -22,6 +22,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -298,7 +299,7 @@ func TestAuditCommandTimelineWithSecretFilter(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return allEvents, nil }
 
 	var buf bytes.Buffer
-	err := auditCommandWithArgs([]string{"--format", "timeline", "--secret", "proj/KEEP_ME"}, &buf)
+	err := auditCommandWithArgs(context.Background(), []string{"--format", "timeline", "--secret", "proj/KEEP_ME"}, &buf)
 	if err != nil {
 		t.Fatalf("--format=timeline --secret: unexpected error: %v", err)
 	}
@@ -338,7 +339,7 @@ func TestAuditCommandTableWithSecretFilter(t *testing.T) {
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return allEvents, nil }
 
 	var buf bytes.Buffer
-	err := auditCommandWithArgs([]string{"--format", "table", "--secret", "proj/TARGET"}, &buf)
+	err := auditCommandWithArgs(context.Background(), []string{"--format", "table", "--secret", "proj/TARGET"}, &buf)
 	if err != nil {
 		t.Fatalf("--format=table --secret: unexpected error: %v", err)
 	}
@@ -370,7 +371,7 @@ func TestAuditCommandAcceptsFormatFlag(t *testing.T) {
 
 	for _, fmt := range []string{"timeline", "table"} {
 		var buf bytes.Buffer
-		err := auditCommandWithArgs([]string{"--format", fmt}, &buf)
+		err := auditCommandWithArgs(context.Background(), []string{"--format", fmt}, &buf)
 		if err != nil {
 			t.Errorf("--format=%s: unexpected error: %v", fmt, err)
 		}

@@ -45,13 +45,13 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", filepath.Join(projectRoot, ".env"), "--env", "API_TOKEN=secret_01"}, io.Discard, io.Discard, testStarter); err == nil {
 		t.Fatal("expected write-env approval error without grants")
 	}
-	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", filepath.Join(projectRoot, ".env"), "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window"}, errWriter{err: errors.New("write-env encode failure")}, io.Discard, testStarter); err == nil {
+	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", filepath.Join(projectRoot, ".env"), "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m"}, errWriter{err: errors.New("write-env encode failure")}, io.Discard, testStarter); err == nil {
 		t.Fatal("expected write-env encode failure")
 	}
 	var warningErr bytes.Buffer
 	var warningOut bytes.Buffer
 	insideProjectPath := filepath.Join(projectRoot, ".env.inside")
-	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", insideProjectPath, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window"}, &warningOut, &warningErr, testStarter); err != nil {
+	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", insideProjectPath, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m"}, &warningOut, &warningErr, testStarter); err != nil {
 		t.Fatalf("write-env warning case: %v", err)
 	}
 	if !strings.Contains(warningErr.String(), "destination is inside the bound project") {
@@ -62,7 +62,7 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 	if err := os.Mkdir(outputDir, 0o755); err != nil {
 		t.Fatalf("mkdir output dir: %v", err)
 	}
-	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", outputDir, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session"}, io.Discard, io.Discard, testStarter); err == nil {
+	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", outputDir, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m"}, io.Discard, io.Discard, testStarter); err == nil {
 		t.Fatal("expected write-env open failure")
 	}
 
@@ -70,7 +70,7 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 	if err := os.WriteFile(appendPath, []byte("EXISTING=1\n"), 0o600); err != nil {
 		t.Fatalf("write append file: %v", err)
 	}
-	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", appendPath, "--append", "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window"}, io.Discard, io.Discard, testStarter); err != nil {
+	if err := writeEnvCommand(context.Background(), []string{"--project-root", projectRoot, "--output", appendPath, "--append", "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m"}, io.Discard, io.Discard, testStarter); err != nil {
 		t.Fatalf("write-env append: %v", err)
 	}
 	appended, err := os.ReadFile(appendPath)
@@ -86,13 +86,13 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 		t.Fatalf("write secret file: %v", err)
 	}
 	var overrideOut bytes.Buffer
-	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot, "--allow-managed-secrets"}, &overrideOut); err != nil {
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot, "--allow-managed-secrets"}, &overrideOut, io.Discard); err != nil {
 		t.Fatalf("check repo override: %v", err)
 	}
 	if !strings.Contains(overrideOut.String(), "\"override\":true") {
 		t.Fatalf("expected override response, got %q", overrideOut.String())
 	}
-	if err := checkRepoCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
+	if err := checkRepoCommand(context.Background(), []string{"--bad"}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected check-repo parse error")
 	}
 
@@ -101,7 +101,7 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 		t.Fatalf("write clean file: %v", err)
 	}
 	var cleanOut bytes.Buffer
-	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", cleanRoot}, &cleanOut); err != nil {
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", cleanRoot}, &cleanOut, io.Discard); err != nil {
 		t.Fatalf("check repo clean: %v", err)
 	}
 	if !strings.Contains(cleanOut.String(), "\"matches\":null") {
@@ -111,16 +111,16 @@ func TestWriteEnvCheckRepoAndExecutionErrorBranches(t *testing.T) {
 	if err := os.Symlink(filepath.Join(brokenRoot, "missing-target"), filepath.Join(brokenRoot, "broken-link")); err != nil {
 		t.Fatalf("write broken symlink: %v", err)
 	}
-	if err := checkRepoCommand(context.Background(), []string{"--project-root", brokenRoot}, io.Discard); err == nil {
+	if err := checkRepoCommand(context.Background(), []string{"--project-root", brokenRoot}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected check-repo read failure on broken symlink")
 	}
 
 	writeErr := errors.New("stdout write failure")
-	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, errWriter{err: writeErr}, io.Discard, false, testStarter); !errors.Is(err, writeErr) {
+	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, errWriter{err: writeErr}, io.Discard, false, testStarter); !errors.Is(err, writeErr) {
 		t.Fatalf("expected stdout write failure, got %v", err)
 	}
 	stderrWriteErr := errors.New("stderr write failure")
-	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\" >&2"}, io.Discard, errWriter{err: stderrWriteErr}, false, testStarter); !errors.Is(err, stderrWriteErr) {
+	if err := executeCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\" >&2"}, io.Discard, errWriter{err: stderrWriteErr}, false, testStarter); !errors.Is(err, stderrWriteErr) {
 		t.Fatalf("expected stderr write failure, got %v", err)
 	}
 	if err := runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--", "sh", "-c", "exit 7"}, bytes.NewBuffer(nil), io.Discard, io.Discard, testStarter); err == nil || !strings.Contains(err.Error(), "command exited with code 7") {
@@ -171,7 +171,7 @@ func TestSecretCommandsParseAndWriterBranches(t *testing.T) {
 	if err := initCommand(context.Background(), errWriter{err: errors.New("init writer failure")}); err == nil {
 		t.Fatal("expected init writer failure")
 	}
-	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false"}, io.Discard); err != nil {
+	if err := projectBindCommand(context.Background(), []string{"--project-root", projectRoot, "--hooks=false", "--allow-non-git"}, io.Discard); err != nil {
 		t.Fatalf("project bind: %v", err)
 	}
 
@@ -192,33 +192,33 @@ func TestSecretCommandsParseAndWriterBranches(t *testing.T) {
 	if err := importCommand(context.Background(), []string{filepath.Join(t.TempDir(), "missing.env")}, io.Discard); err == nil {
 		t.Fatal("expected import missing-file failure")
 	}
-	if err := setCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
+	if err := setCommand(context.Background(), []string{"--bad"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected set parse error")
 	}
 	setErr := errors.New("set writer failure")
-	if err := setCommand(context.Background(), []string{"--name", "file_secret", "--kind", "file", "--from-file", filePath}, errWriter{err: setErr}); !errors.Is(err, setErr) {
+	if err := setCommand(context.Background(), []string{"--name", "file_secret", "--kind", "file", "--from-file", filePath}, bytes.NewBuffer(nil), errWriter{err: setErr}, io.Discard); !errors.Is(err, setErr) {
 		t.Fatalf("expected set writer failure, got %v", err)
 	}
-	if err := setCommand(context.Background(), []string{"--name", "bad_kind", "--kind", "bogus", "--value", "x"}, io.Discard); err == nil {
+	if err := setCommand(context.Background(), []string{"--name", "bad_kind", "--kind", "bogus", "--value", "x"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected set unsupported-kind failure")
 	}
-	if err := setCommand(context.Background(), []string{"--name", "missing_file_secret", "--from-file", filepath.Join(t.TempDir(), "missing.bin")}, io.Discard); err == nil {
+	if err := setCommand(context.Background(), []string{"--name", "missing_file_secret", "--from-file", filepath.Join(t.TempDir(), "missing.bin")}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected set missing-file failure")
 	}
 	if err := captureCommand(context.Background(), []string{"--bad"}, io.Discard, testStarter); err == nil {
 		t.Fatal("expected capture parse error")
 	}
 	captureErr := errors.New("capture writer failure")
-	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, errWriter{err: captureErr}, testStarter); !errors.Is(err, captureErr) {
+	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, errWriter{err: captureErr}, testStarter); !errors.Is(err, captureErr) {
 		t.Fatalf("expected capture writer failure, got %v", err)
 	}
-	if err := captureCommand(context.Background(), []string{"--name", "broken_capture", "--from-file", filepath.Join(t.TempDir(), "missing.txt"), "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, testStarter); err == nil {
+	if err := captureCommand(context.Background(), []string{"--name", "broken_capture", "--from-file", filepath.Join(t.TempDir(), "missing.txt"), "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, io.Discard, testStarter); err == nil {
 		t.Fatal("expected capture missing-file failure")
 	}
-	if err := captureCommand(context.Background(), []string{"--name", "capture_bad_kind", "--kind", "bogus", "--value", "x", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, testStarter); err == nil {
+	if err := captureCommand(context.Background(), []string{"--name", "capture_bad_kind", "--kind", "bogus", "--value", "x", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, io.Discard, testStarter); err == nil {
 		t.Fatal("expected capture unsupported-kind failure")
 	}
-	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "updated-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-secret", "session"}, io.Discard, testStarter); err != nil {
+	if err := captureCommand(context.Background(), []string{"--name", "captured_secret", "--value", "updated-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m"}, io.Discard, testStarter); err != nil {
 		t.Fatalf("capture update existing item: %v", err)
 	}
 	redactErr := errors.New("redact writer failure")
@@ -229,10 +229,10 @@ func TestSecretCommandsParseAndWriterBranches(t *testing.T) {
 	if err := importCommand(context.Background(), []string{envPath}, io.Discard); err == nil {
 		t.Fatal("expected import wrong-password failure")
 	}
-	if err := setCommand(context.Background(), []string{"--name", "wrong_password_secret", "--value", "x"}, io.Discard); err == nil {
+	if err := setCommand(context.Background(), []string{"--name", "wrong_password_secret", "--value", "x"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected set wrong-password failure")
 	}
-	if err := captureCommand(context.Background(), []string{"--name", "wrong_password_capture", "--value", "x", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, io.Discard, testStarter); err == nil {
+	if err := captureCommand(context.Background(), []string{"--name", "wrong_password_capture", "--value", "x", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, io.Discard, testStarter); err == nil {
 		t.Fatal("expected capture wrong-password failure")
 	}
 	if err := redactCommand(context.Background(), bytes.NewBufferString("secret"), io.Discard); err == nil {

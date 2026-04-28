@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bufio"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,18 @@ const (
 	EventRepoBlock  = "repo_block"
 	EventInit       = "init"
 	EventImport     = "import"
+	EventRekdf      = "rekdf"
+	EventRekey      = "rekey"
+)
+
+// SchemeSHA256 is the legacy unkeyed scheme — present in events written
+// before the audit key was wired in. SchemeHMACSHA256V1 is the keyed
+// scheme written when an HMAC key has been installed via WithKey. Verify
+// validates each event under the scheme it declared, so a single chain
+// can mix legacy and keyed lines (the upgrade path).
+const (
+	SchemeSHA256       = "sha256"
+	SchemeHMACSHA256V1 = "hmac-sha256-v1"
 )
 
 type Event struct {
@@ -38,11 +51,13 @@ type Event struct {
 	Details   map[string]any `json:"details,omitempty"`
 	PrevHash  string         `json:"prev_hash"`
 	Hash      string         `json:"hash"`
+	Scheme    string         `json:"scheme,omitempty"`
 }
 
 type Log struct {
 	path string
 	now  func() time.Time
+	key  []byte
 }
 
 type auditWriter interface {
@@ -70,6 +85,22 @@ func New() (*Log, error) {
 	}, nil
 }
 
+// WithKey installs an HMAC key for subsequent Append calls. Passing nil or
+// an empty slice clears the key — Append then falls back to plain SHA-256
+// (the SchemeSHA256 path) for callers that have no vault open. Returns
+// the receiver so callers can chain `audit.New().WithKey(k)`.
+func (l *Log) WithKey(key []byte) *Log {
+	if l == nil {
+		return nil
+	}
+	if len(key) == 0 {
+		l.key = nil
+	} else {
+		l.key = append([]byte(nil), key...)
+	}
+	return l
+}
+
 func (l *Log) Append(eventType string, actor string, details map[string]any) (Event, error) {
 	last, sequence, err := l.readLast()
 	if err != nil {
@@ -85,7 +116,7 @@ func (l *Log) Append(eventType string, actor string, details map[string]any) (Ev
 	if last != nil {
 		event.PrevHash = last.Hash
 	}
-	event.Hash = hashEvent(event)
+	event.Scheme, event.Hash = hashEvent(event, l.key)
 
 	if err := auditMkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return Event{}, fmt.Errorf("create audit dir: %w", err)
@@ -131,14 +162,18 @@ func (l *Log) Verify() error {
 		if event.PrevHash != previous {
 			return fmt.Errorf("audit chain mismatch at %d", event.Sequence)
 		}
-		expected := hashEvent(Event{
+		key, err := l.keyForScheme(event.Scheme)
+		if err != nil {
+			return fmt.Errorf("audit scheme at %d: %w", event.Sequence, err)
+		}
+		_, expected := hashEvent(Event{
 			Sequence:  event.Sequence,
 			Timestamp: event.Timestamp,
 			Type:      event.Type,
 			Actor:     event.Actor,
 			Details:   event.Details,
 			PrevHash:  event.PrevHash,
-		})
+		}, key)
 		if event.Hash != expected {
 			return fmt.Errorf("audit hash mismatch at %d", event.Sequence)
 		}
@@ -214,7 +249,31 @@ func (l *Log) readLast() (*Event, int64, error) {
 	return last, count, nil
 }
 
-func hashEvent(event Event) string {
+// keyForScheme picks the right key for verifying an event under its
+// declared scheme. SchemeSHA256 (or empty, for legacy events) returns
+// nil — hashEvent treats nil as the unkeyed branch. SchemeHMACSHA256V1
+// requires a key on the Log; otherwise verification can't even start
+// and we surface that fail-closed instead of silently passing.
+func (l *Log) keyForScheme(scheme string) ([]byte, error) {
+	switch scheme {
+	case "", SchemeSHA256:
+		return nil, nil
+	case SchemeHMACSHA256V1:
+		if len(l.key) == 0 {
+			return nil, fmt.Errorf("hmac key not installed for scheme %q", scheme)
+		}
+		return l.key, nil
+	default:
+		return nil, fmt.Errorf("unknown audit scheme %q", scheme)
+	}
+}
+
+// hashEvent canonicalises an event and returns (scheme, hex-digest).
+// With no key, falls back to plain SHA-256 — preserves the legacy chain
+// shape so an upgraded daemon can keep appending without rewriting
+// history. With a key, switches to HMAC-SHA256 and stamps the event with
+// SchemeHMACSHA256V1 so Verify knows which branch to take.
+func hashEvent(event Event, key []byte) (string, string) {
 	payload := struct {
 		Sequence  int64          `json:"sequence"`
 		Timestamp time.Time      `json:"timestamp"`
@@ -231,6 +290,11 @@ func hashEvent(event Event) string {
 		PrevHash:  event.PrevHash,
 	}
 	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	if len(key) == 0 {
+		sum := sha256.Sum256(data)
+		return SchemeSHA256, hex.EncodeToString(sum[:])
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return SchemeHMACSHA256V1, hex.EncodeToString(mac.Sum(nil))
 }

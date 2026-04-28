@@ -1,11 +1,13 @@
 package hooks
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 )
 
 const marker = "# HASP-MANAGED-HOOK"
@@ -52,10 +54,9 @@ fi
 }
 
 func gitTopLevel(projectRoot string) (string, error) {
-	cmd := exec.Command("git", "-C", projectRoot, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
+	out, err := gitsafe.TopLevelCached(context.Background(), projectRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve git top-level: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return out, nil
 }

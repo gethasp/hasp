@@ -29,7 +29,7 @@ func TestResidualBranchSweep(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestResidualBranchSweep(t *testing.T) {
 		}
 		newVaultStoreFn = origStore
 		newAuditLogFn = func() (*audit.Log, error) { return nil, errors.New("audit fail") }
-		if err := auditCommandWithArgs(nil, io.Discard); err == nil || err.Error() != "audit fail" {
+		if err := auditCommandWithArgs(context.Background(), nil, io.Discard); err == nil || err.Error() != "audit fail" {
 			t.Fatalf("expected audit log creation failure, got %v", err)
 		}
 		if err := initCommandWithArgs(context.Background(), []string{"extra"}, io.Discard); err == nil {
@@ -55,10 +55,10 @@ func TestResidualBranchSweep(t *testing.T) {
 		if err := initCommandWithArgs(context.Background(), []string{"--bad"}, io.Discard); err == nil {
 			t.Fatal("expected init parse failure")
 		}
-		if err := auditCommandWithArgs([]string{"extra"}, io.Discard); err == nil {
+		if err := auditCommandWithArgs(context.Background(), []string{"extra"}, io.Discard); err == nil {
 			t.Fatal("expected audit usage failure")
 		}
-		if err := auditCommandWithArgs([]string{"--bad"}, io.Discard); err == nil {
+		if err := auditCommandWithArgs(context.Background(), []string{"--bad"}, io.Discard); err == nil {
 			t.Fatal("expected audit parse failure")
 		}
 		t.Setenv("HASP_MASTER_PASSWORD", "")
@@ -84,7 +84,7 @@ func TestResidualBranchSweep(t *testing.T) {
 
 	t.Run("bootstrap profiles branches", func(t *testing.T) {
 		var out bytes.Buffer
-		if err := bootstrapProfilesCommand(nil, &out); err != nil {
+		if err := bootstrapProfilesCommand(context.Background(), nil, &out); err != nil {
 			t.Fatalf("bootstrapProfilesCommand human: %v", err)
 		}
 		if !bytes.Contains(out.Bytes(), []byte("Bootstrap profiles")) {
@@ -94,9 +94,8 @@ func TestResidualBranchSweep(t *testing.T) {
 
 	t.Run("runtime command approval failures", func(t *testing.T) {
 		starter := newDaemonTestStarter(t)
-		origApprove := sessionGrantPlaintextApproveFn
-		defer func() { sessionGrantPlaintextApproveFn = origApprove }()
-		sessionGrantPlaintextApproveFn = func(runtime.SessionView, string, store.PlaintextAction) error { return errors.New("approval fail") }
+		failApproveDeps := defaultSessionLocalDeps()
+		failApproveDeps.Approve = func(runtime.SessionView, string, store.PlaintextAction) error { return errors.New("approval fail") }
 
 		client, err := starter.Connect(context.Background())
 		if err != nil {
@@ -113,7 +112,7 @@ func TestResidualBranchSweep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open session: %v", err)
 		}
-		if err := sessionGrantPlaintextCommand(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter); err == nil || err.Error() != "approval fail" {
+		if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter, failApproveDeps); err == nil || err.Error() != "approval fail" {
 			t.Fatalf("expected plaintext approval failure, got %v", err)
 		}
 	})
@@ -185,14 +184,14 @@ func TestResidualBranchSweep(t *testing.T) {
 
 	t.Run("check repo no-match json", func(t *testing.T) {
 		var out bytes.Buffer
-		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot, "--json"}, &out); err != nil {
+		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot, "--json"}, &out, io.Discard); err != nil {
 			t.Fatalf("checkRepoCommand json no-match: %v", err)
 		}
 		if !bytes.Contains(out.Bytes(), []byte(`"matches"`)) {
 			t.Fatalf("unexpected checkRepo output %q", out.String())
 		}
 		out.Reset()
-		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot}, &out); err != nil {
+		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot}, &out, io.Discard); err != nil {
 			t.Fatalf("checkRepoCommand human no-match: %v", err)
 		}
 		if !bytes.Contains(out.Bytes(), []byte("Repo check")) {
@@ -226,7 +225,7 @@ func TestResidualBranchSweep(t *testing.T) {
 			t.Fatalf("unexpected init json %q", out.String())
 		}
 		out.Reset()
-		if err := auditCommandWithArgs([]string{"--json"}, &out); err != nil {
+		if err := auditCommandWithArgs(context.Background(), []string{"--json"}, &out); err != nil {
 			t.Fatalf("auditCommandWithArgs json: %v", err)
 		}
 		if !bytes.Contains(out.Bytes(), []byte(`"status":"ok"`)) {

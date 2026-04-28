@@ -31,6 +31,11 @@ type OpenSessionRequest struct {
 	HostLabel    string `json:"host_label"`
 	ProjectRoot  string `json:"project_root"`
 	TTLSeconds   int    `json:"ttl_seconds"`
+	// TTLMillis lets callers request sub-second TTL for tests that exercise
+	// the expiry-rejection codepath without long sleeps. When non-zero it
+	// takes precedence over TTLSeconds. Callers that need >1s TTL keep
+	// using TTLSeconds. hasp-4xf9.
+	TTLMillis    int    `json:"ttl_millis,omitempty"`
 	AgentSafe    bool   `json:"agent_safe,omitempty"`
 	ConsumerName string `json:"consumer_name,omitempty"`
 }

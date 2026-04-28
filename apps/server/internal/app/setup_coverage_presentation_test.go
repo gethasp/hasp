@@ -159,19 +159,19 @@ func TestSetupPresentationHelpers(t *testing.T) {
 		if !strings.Contains(text, "HASP setup") || !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Configured agents") || !strings.Contains(text, "Review before apply") {
 			t.Fatalf("unexpected presentation output %q", text)
 		}
-		if !strings.Contains(text, "  • HASP setup will:") {
+		if !strings.Contains(text, "  - HASP setup will:") {
 			t.Fatalf("expected bulleted intro line, got %q", text)
 		}
 		if !strings.Contains(text, "  1. choose where local encrypted HASP data lives on this machine") {
 			t.Fatalf("expected numbered intro step to stay numbered, got %q", text)
 		}
-		if !strings.Contains(text, "  3. optionally configure coding agents, add vault secrets, and connect one app\n  4. verify the local broker path and surface a first proof command when a bound secret is available\n\n  • Press Enter to accept the default shown in brackets.") {
+		if !strings.Contains(text, "  3. optionally configure coding agents, add vault secrets, and connect one app\n  4. verify the local broker path and surface a first proof command when a bound secret is available\n\n  - Press Enter to accept the default shown in brackets.") {
 			t.Fatalf("expected spacing between numbered intro list and trailing prose, got %q", text)
 		}
-		if !strings.Contains(text, "  • Enter numbers like 1 or 1,3. Enter 0 to skip agent setup for now.\n  • Existing config files are backed up before mutation.\n\n  1. Codex CLI") {
+		if !strings.Contains(text, "  - Enter numbers like 1 or 1,3. Enter 0 to skip agent setup for now.\n  - Existing config files are backed up before mutation.\n\n  1. Codex CLI") {
 			t.Fatalf("expected spacing between agent prose and numbered list, got %q", text)
 		}
-		if !strings.Contains(text, "\n✓ HASP is configured for this machine.\n") {
+		if !strings.Contains(text, "\n[ok] HASP is configured for this machine.\n") {
 			t.Fatalf("expected summary lead without stage indentation, got %q", text)
 		}
 		if strings.Contains(text, "\n  HASP is configured for this machine.\n") {

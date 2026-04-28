@@ -76,6 +76,18 @@ func TestBootstrapOptionAndHelperCoverage(t *testing.T) {
 	}
 }
 
+func failingResolveBinding(msg string) func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+	return func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{}, nil, errors.New(msg)
+	}
+}
+
+func failingCanonical(msg string) func(context.Context, string) (string, error) {
+	return func(context.Context, string) (string, error) {
+		return "", errors.New(msg)
+	}
+}
+
 func TestBootstrapPreviewHelpers(t *testing.T) {
 	lockAppSeams(t)
 
@@ -86,7 +98,8 @@ func TestBootstrapPreviewHelpers(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 
-	aliases, binding, visible, err := bootstrapAliasContext(context.Background(), projectRoot)
+	deps := defaultBootstrapDeps()
+	aliases, binding, visible, err := bootstrapAliasContext(context.Background(), projectRoot, deps)
 	if err != nil {
 		t.Fatalf("bootstrap alias context without vault: %v", err)
 	}
@@ -100,7 +113,7 @@ func TestBootstrapPreviewHelpers(t *testing.T) {
 	if _, _, err := previewBootstrapHandle(context.Background()); err == nil || !strings.Contains(err.Error(), "vault fail") {
 		t.Fatalf("expected preview handle error, got %v", err)
 	}
-	if _, _, _, err := bootstrapAliasContext(context.Background(), projectRoot); err == nil || !strings.Contains(err.Error(), "vault fail") {
+	if _, _, _, err := bootstrapAliasContext(context.Background(), projectRoot, deps); err == nil || !strings.Contains(err.Error(), "vault fail") {
 		t.Fatalf("expected bootstrapAliasContext preview failure, got %v", err)
 	}
 	openVaultHandleFn = origOpenVault
@@ -117,7 +130,7 @@ func TestBootstrapPreviewHelpers(t *testing.T) {
 	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot, "--alias", "secret_01=api_token"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("project bind: %v", err)
 	}
-	aliases, _, visible, err = bootstrapAliasContext(context.Background(), projectRoot)
+	aliases, _, visible, err = bootstrapAliasContext(context.Background(), projectRoot, deps)
 	if err != nil {
 		t.Fatalf("bootstrap alias context with vault: %v", err)
 	}
@@ -132,12 +145,12 @@ func TestBootstrapPreviewHelpers(t *testing.T) {
 	if err := os.WriteFile(manifestPath, []byte(`{"version":"1","references":[{"alias":"secret_99","item":"missing_item"}]}`), 0o600); err != nil {
 		t.Fatalf("write malformed manifest: %v", err)
 	}
-	if _, _, _, err := bootstrapAliasContext(context.Background(), projectRoot); err == nil {
+	if _, _, _, err := bootstrapAliasContext(context.Background(), projectRoot, deps); err == nil {
 		t.Fatal("expected bootstrapAliasContext manifest failure")
 	}
 
 	t.Setenv("HASP_HOME", t.TempDir())
-	if aliases, _, _, err := bootstrapAliasContext(context.Background(), projectRoot); err != nil || len(aliases) != 0 {
+	if aliases, _, _, err := bootstrapAliasContext(context.Background(), projectRoot, deps); err != nil || len(aliases) != 0 {
 		t.Fatalf("expected nil-handle bootstrapAliasContext, got aliases=%v err=%v", aliases, err)
 	}
 }
@@ -145,22 +158,16 @@ func TestBootstrapPreviewHelpers(t *testing.T) {
 func TestBootstrapErrorSeams(t *testing.T) {
 	lockAppSeams(t)
 
-	origCanonical := bootstrapCanonicalProjectRootFn
-	origResolveBinding := resolveBindingViewBootstrapFn
 	origOpenVault := openVaultHandleFn
 	defer func() {
-		bootstrapCanonicalProjectRootFn = origCanonical
-		resolveBindingViewBootstrapFn = origResolveBinding
 		openVaultHandleFn = origOpenVault
 	}()
 
-	bootstrapCanonicalProjectRootFn = func(context.Context, string) (string, error) {
-		return "", errors.New("canonical fail")
-	}
-	if _, err := buildBootstrapDoctor(context.Background(), genericBootstrapTarget(), bootstrapOptions{ProjectRoot: "."}, bytes.NewBuffer(nil)); err == nil || !strings.Contains(err.Error(), "canonical fail") {
+	failingCanonicalDeps := defaultBootstrapDeps()
+	failingCanonicalDeps.CanonicalProjectRoot = failingCanonical("canonical fail")
+	if _, err := buildBootstrapDoctor(context.Background(), genericBootstrapTarget(), bootstrapOptions{ProjectRoot: "."}, bytes.NewBuffer(nil), failingCanonicalDeps); err == nil || !strings.Contains(err.Error(), "canonical fail") {
 		t.Fatalf("expected canonical root failure, got %v", err)
 	}
-	bootstrapCanonicalProjectRootFn = origCanonical
 
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
@@ -179,13 +186,12 @@ func TestBootstrapErrorSeams(t *testing.T) {
 	}
 	openVaultHandleFn = origOpenVault
 
-	resolveBindingViewBootstrapFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
-		return store.Binding{}, nil, errors.New("binding fail")
-	}
-	if err := bootstrapCommand(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--import", filepath.Join(t.TempDir(), "missing.env")}, io.Discard); err == nil || !strings.Contains(err.Error(), "binding fail") {
+	failingBindingDeps := defaultBootstrapDeps()
+	failingBindingDeps.ResolveBindingView = failingResolveBinding("binding fail")
+	if err := bootstrapCommandWithInputAndDeps(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--import", filepath.Join(t.TempDir(), "missing.env")}, nil, io.Discard, bootstrapVerification, failingBindingDeps); err == nil || !strings.Contains(err.Error(), "binding fail") {
 		t.Fatalf("expected bootstrap binding failure, got %v", err)
 	}
-	if err := bootstrapDoctorCommand(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot}, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "binding fail") {
+	if err := bootstrapDoctorCommandWithDeps(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot}, bytes.NewBuffer(nil), io.Discard, failingBindingDeps); err == nil || !strings.Contains(err.Error(), "binding fail") {
 		t.Fatalf("expected doctor binding failure, got %v", err)
 	}
 }
@@ -193,12 +199,8 @@ func TestBootstrapErrorSeams(t *testing.T) {
 func TestBootstrapExecutionAndDoctorResidualErrors(t *testing.T) {
 	lockAppSeams(t)
 
-	origResolveBinding := resolveBindingViewBootstrapFn
-	origCanonical := bootstrapCanonicalProjectRootFn
-	defer func() {
-		resolveBindingViewBootstrapFn = origResolveBinding
-		bootstrapCanonicalProjectRootFn = origCanonical
-	}()
+	deps := defaultBootstrapDeps()
+	origResolveBinding := deps.ResolveBindingView
 
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
@@ -215,32 +217,32 @@ func TestBootstrapExecutionAndDoctorResidualErrors(t *testing.T) {
 	}
 
 	target := genericBootstrapTarget()
-	if err := executeBootstrap(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{filepath.Join(t.TempDir(), "missing.env")}}, bytes.NewBuffer(nil), io.Discard, bootstrapVerification); err == nil {
+	if err := executeBootstrap(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{filepath.Join(t.TempDir(), "missing.env")}}, bytes.NewBuffer(nil), io.Discard, bootstrapVerification, deps); err == nil {
 		t.Fatal("expected executeBootstrap import preview failure")
 	}
 
 	callCount := 0
-	resolveBindingViewBootstrapFn = func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error) {
+	postBindDeps := deps
+	postBindDeps.ResolveBindingView = func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error) {
 		callCount++
 		if callCount >= 2 {
 			return store.Binding{}, nil, errors.New("post-bind fail")
 		}
 		return origResolveBinding(handle, ctx, projectRoot)
 	}
-	if err := executeBootstrap(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"api_token"}}, bytes.NewBuffer(nil), io.Discard, bootstrapVerification); err == nil || !strings.Contains(err.Error(), "post-bind fail") {
+	if err := executeBootstrap(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"api_token"}}, bytes.NewBuffer(nil), io.Discard, bootstrapVerification, postBindDeps); err == nil || !strings.Contains(err.Error(), "post-bind fail") {
 		t.Fatalf("expected executeBootstrap post-bind failure, got %v", err)
 	}
-	resolveBindingViewBootstrapFn = origResolveBinding
 
-	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{filepath.Join(t.TempDir(), "missing.env")}}, bytes.NewBuffer(nil)); err == nil {
+	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, ImportPaths: []string{filepath.Join(t.TempDir(), "missing.env")}}, bytes.NewBuffer(nil), deps); err == nil {
 		t.Fatal("expected doctor import preview failure")
 	}
-	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"missing"}}, bytes.NewBuffer(nil)); err == nil {
+	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"missing"}}, bytes.NewBuffer(nil), deps); err == nil {
 		t.Fatal("expected doctor missing bind item failure")
 	}
 
 	t.Setenv("HASP_HOME", t.TempDir())
-	report, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"missing"}}, bytes.NewBuffer(nil))
+	report, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot, BindItems: []string{"missing"}}, bytes.NewBuffer(nil), deps)
 	if err != nil {
 		t.Fatalf("doctor planned bind count without vault: %v", err)
 	}
@@ -250,7 +252,7 @@ func TestBootstrapExecutionAndDoctorResidualErrors(t *testing.T) {
 
 	t.Setenv("HASP_HOME", t.TempDir())
 	t.Setenv("HASP_MASTER_PASSWORD", "")
-	report, err = buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot}, bytes.NewBuffer(nil))
+	report, err = buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot}, bytes.NewBuffer(nil), deps)
 	if err != nil {
 		t.Fatalf("doctor without master password: %v", err)
 	}
@@ -259,10 +261,9 @@ func TestBootstrapExecutionAndDoctorResidualErrors(t *testing.T) {
 	}
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 
-	bootstrapCanonicalProjectRootFn = func(context.Context, string) (string, error) {
-		return "", errors.New("canonical fail")
-	}
-	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot}, bytes.NewBuffer(nil)); err == nil || !strings.Contains(err.Error(), "canonical fail") {
+	failingCanonicalDeps := deps
+	failingCanonicalDeps.CanonicalProjectRoot = failingCanonical("canonical fail")
+	if _, err := buildBootstrapDoctor(context.Background(), target, bootstrapOptions{ProjectRoot: projectRoot}, bytes.NewBuffer(nil), failingCanonicalDeps); err == nil || !strings.Contains(err.Error(), "canonical fail") {
 		t.Fatalf("expected canonical project root failure, got %v", err)
 	}
 

@@ -28,5 +28,5 @@ fi
 for mod in "${modules[@]}"; do
   dir="$(dirname "$mod")"
   echo "Benchmarking $dir"
-  (cd "$dir" && go test "${bench_flags[@]}" ./...)
+  (cd "$dir" && go test -tags=hasp_test_fastkdf "${bench_flags[@]}" ./...)
 done

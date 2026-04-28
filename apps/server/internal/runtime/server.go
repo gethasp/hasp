@@ -21,6 +21,15 @@ type Manager struct {
 }
 
 var spawnDaemonProcess = startDetachedProcess
+
+// daemonStartupTimeout caps how long EnsureDaemon waits for a freshly-spawned
+// daemon to bind its socket and pass verifyDaemon. The previous 5-second
+// budget was tight on cold launchd start with a Keychain unlock prompt
+// (the user has to physically click "Allow"), and on first run after a
+// reboot when argon2id KDF parameters are sized aggressively. 15s gives
+// the daemon room for both without silently turning a slow start into a
+// hard failure that requires a retry.
+const daemonStartupTimeout = 15 * time.Second
 var (
 	resolveRuntimePaths = paths.Resolve
 	registerServerName  = func(server *rpc.Server, name string, rcvr any) error { return server.RegisterName(name, rcvr) }
@@ -64,7 +73,7 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 	if err := spawnDaemonProcess(ctx); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(daemonStartupTimeout)
 	for time.Now().Before(deadline) {
 		client, err := Dial(ctx, m.paths.SocketPath)
 		if err == nil {
@@ -157,6 +166,12 @@ type rpcServer struct {
 	audit      *audit.Log
 	auditState *AuditState
 	stopOnce   sync.Once
+	// peerUID and peerPID are the peer-credential lookups. Production
+	// builds wire them to realPeerUID / realPeerPID via newRPCServer; tests
+	// override them locally on a server instance instead of swapping
+	// package-level vars under a global mutex.
+	peerUID func(net.Conn) (uint32, error)
+	peerPID func(net.Conn) (uint32, error)
 }
 
 func newRPCServer(runtimePaths paths.Paths) *rpcServer {
@@ -173,6 +188,8 @@ func newRPCServer(runtimePaths paths.Paths) *rpcServer {
 		sessions:   NewSessionStore(),
 		audit:      log,
 		auditState: auditState,
+		peerUID:    realPeerUID,
+		peerPID:    realPeerPID,
 	}
 }
 
@@ -186,7 +203,13 @@ func (s *rpcServer) register() error {
 	})
 }
 
+// serve is the daemon's RPC accept loop. The trust boundary for the daemon
+// is a peer-UID check on every Accept: socket-file mode 0o600 alone does not
+// protect against same-UID processes dialing the socket, so we verify the
+// connecting peer's effective UID via SO_PEERCRED (Linux) / LOCAL_PEERCRED
+// (Darwin) and fail closed on mismatch or lookup failure.
 func (s *rpcServer) serve(ctx context.Context, listener net.Listener) error {
+	expectedUID := uint32(os.Geteuid())
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -197,8 +220,57 @@ func (s *rpcServer) serve(ctx context.Context, listener net.Listener) error {
 				return fmt.Errorf("accept: %w", err)
 			}
 		}
-		go s.server.ServeCodec(jsonrpc.NewServerCodec(conn))
+
+		peerUID, peerErr := s.peerUID(conn)
+		if peerErr != nil {
+			_ = conn.Close()
+			s.appendPeerRejectAudit(map[string]any{
+				"action": "peer.reject",
+				"reason": "lookup_failed",
+				"error":  peerErr.Error(),
+			})
+			continue
+		}
+		if peerUID != expectedUID {
+			_ = conn.Close()
+			s.appendPeerRejectAudit(map[string]any{
+				"action":       "peer.reject",
+				"reason":       "mismatched_uid",
+				"peer_uid":     peerUID,
+				"expected_uid": expectedUID,
+			})
+			continue
+		}
+
+		// Capture peer PID per-connection. s.peerPID errors are NOT a hard
+		// reject at accept (some platforms / kernels may not surface PID even
+		// when UID is fine) — instead we stamp peerPID = 0, which makes
+		// privileged operations like RegisterProcess fail closed inside the
+		// handler. Read-only RPCs (Ping/Status) still work.
+		peerPID, pidErr := s.peerPID(conn)
+		if pidErr != nil {
+			peerPID = 0
+		}
+
+		go s.serveConn(conn, peerPID)
 	}
+}
+
+func (s *rpcServer) serveConn(conn net.Conn, peerPID uint32) {
+	perConn := rpc.NewServer()
+	bound := &brokerRPC{
+		paths:      s.paths,
+		startedAt:  s.startedAt,
+		sessions:   s.sessions,
+		audit:      s.audit,
+		auditState: s.auditState,
+		peerPID:    peerPID,
+	}
+	if err := registerServerName(perConn, "HASP", bound); err != nil {
+		_ = conn.Close()
+		return
+	}
+	perConn.ServeCodec(jsonrpc.NewServerCodec(conn))
 }
 
 func (s *rpcServer) stop() {
@@ -207,18 +279,36 @@ func (s *rpcServer) stop() {
 	})
 }
 
+// appendPeerRejectAudit records a peer rejection audit event. It guards for a
+// nil audit logger so that rejection is still fail-closed even when the audit
+// subsystem failed to initialise.
+func (s *rpcServer) appendPeerRejectAudit(details map[string]any) {
+	if s.audit == nil {
+		s.auditState.RecordAppendResult(errors.New("audit logger unavailable"))
+		return
+	}
+	_, err := s.audit.Append(audit.EventDeny, "daemon", details)
+	s.auditState.RecordAppendResult(err)
+}
+
 type brokerRPC struct {
 	paths      paths.Paths
 	startedAt  time.Time
 	sessions   *SessionStore
 	audit      *audit.Log
 	auditState *AuditState
+	// peerPID is the PID of the unix-socket peer for this connection, captured
+	// at accept time via SO_PEERCRED / LOCAL_PEERPID. Zero means "unknown" —
+	// either the lookup failed or this brokerRPC was registered on the shared
+	// rpc.Server (legacy/template path). Privileged operations that depend on
+	// peer identity (RegisterProcess) fail closed when peerPID is zero.
+	peerPID uint32
 }
 
 func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
 	*reply = PingResponse{
 		Name:       "hasp",
-		Version:    Version(),
+		Version:    VersionString(),
 		ServerTime: time.Now().UTC(),
 	}
 	return nil
@@ -242,7 +332,12 @@ func (b *brokerRPC) OpenSession(req OpenSessionRequest, reply *OpenSessionRespon
 	if req.HostLabel == "" {
 		return errors.New("host_label is required")
 	}
-	ttl := time.Duration(req.TTLSeconds) * time.Second
+	var ttl time.Duration
+	if req.TTLMillis > 0 {
+		ttl = time.Duration(req.TTLMillis) * time.Millisecond
+	} else {
+		ttl = time.Duration(req.TTLSeconds) * time.Second
+	}
 	if ttl <= 0 || ttl > DefaultSessionTTL {
 		ttl = DefaultSessionTTL
 	}
@@ -317,6 +412,30 @@ func (b *brokerRPC) RegisterProcess(req RegisterProcessRequest, reply *RegisterP
 	if req.PID <= 0 {
 		return errors.New("pid is required")
 	}
+	// Socket peer-PID validation: the kernel-attested socket peer must be
+	// either req.PID itself (self-registration) OR an ancestor of req.PID
+	// (parent registering a child it spawned — `hasp agent launch` flow).
+	// Same-uid file permissions alone don't stop a neighbouring process from
+	// binding a session to an arbitrary target PID; the lineage gate does.
+	// peerPID == 0 means "unknown" (lookup failed or brokerRPC isn't bound to
+	// a connection); fail closed.
+	if b.peerPID == 0 {
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{
+			"action": "session.process.register.reject",
+			"reason": "unknown_peer_pid",
+			"pid":    req.PID,
+		})
+		return errors.New("peer pid unavailable; refusing to bind session to caller-supplied pid")
+	}
+	if !peerSharesLineage(b.peerPID, req.PID) {
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{
+			"action":   "session.process.register.reject",
+			"reason":   "peer_not_in_lineage",
+			"req_pid":  req.PID,
+			"peer_pid": b.peerPID,
+		})
+		return fmt.Errorf("pid lineage mismatch: socket peer PID=%d shares no lineage with req.PID=%d", b.peerPID, req.PID)
+	}
 	registered := b.sessions.RegisterProcess(req.SessionToken, req.PID)
 	*reply = RegisterProcessResponse{Registered: registered}
 	if !registered {
@@ -324,6 +443,37 @@ func (b *brokerRPC) RegisterProcess(req RegisterProcessRequest, reply *RegisterP
 	}
 	b.appendAudit(audit.EventApprove, "daemon", map[string]any{"action": "session.process.register", "pid": req.PID})
 	return nil
+}
+
+// peerSharesLineage reports whether the kernel-attested socket peer and
+// reqPID share a parent-chain relationship in either direction. Self
+// (peerPID == reqPID), peer-as-ancestor-of-req (parent registers spawned
+// child), and req-as-ancestor-of-peer (child MCP registers its parent — the
+// `hasp agent mcp` flow registers os.Getppid()) are all valid trust paths.
+// Any other PID — a sibling, an unrelated same-uid process, or an arbitrary
+// PID picked by an attacker — is denied.
+func peerSharesLineage(peerPID uint32, reqPID int) bool {
+	if peerPID == 0 || reqPID <= 0 {
+		return false
+	}
+	if uint32(reqPID) == peerPID {
+		return true
+	}
+	if reqLineage, err := processLineage(reqPID); err == nil {
+		for _, ancestor := range reqLineage {
+			if uint32(ancestor) == peerPID {
+				return true
+			}
+		}
+	}
+	if peerLineage, err := processLineage(int(peerPID)); err == nil {
+		for _, ancestor := range peerLineage {
+			if ancestor == reqPID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *brokerRPC) appendAudit(eventType string, actor string, details map[string]any) {

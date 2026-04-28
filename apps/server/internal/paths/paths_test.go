@@ -51,12 +51,15 @@ func TestResolveUsesUserConfigDirFallback(t *testing.T) {
 	origUserHomeDir := userHomeDir
 	origPathStat := pathStat
 	origRead := configReadFileFn
+	origGuard := resolveGuardDisabled
 	defer func() {
 		userConfigDir = origUserConfigDir
 		userHomeDir = origUserHomeDir
 		pathStat = origPathStat
 		configReadFileFn = origRead
+		resolveGuardDisabled = origGuard
 	}()
+	resolveGuardDisabled = true // userHomeDir and userConfigDir are already stubbed to temp dirs
 	userConfigDir = func() (string, error) { return base, nil }
 	userHomeDir = func() (string, error) { return t.TempDir(), nil }
 	pathStat = os.Stat
@@ -83,12 +86,15 @@ func TestResolveUsesFallbackHomeWithExplicitSocketAndPropagatesConfigDirFailure(
 	origUserHomeDir := userHomeDir
 	origPathStat := pathStat
 	origRead := configReadFileFn
+	origGuard := resolveGuardDisabled
 	defer func() {
 		userConfigDir = origUserConfigDir
 		userHomeDir = origUserHomeDir
 		pathStat = origPathStat
 		configReadFileFn = origRead
+		resolveGuardDisabled = origGuard
 	}()
+	resolveGuardDisabled = true // userHomeDir and userConfigDir are already stubbed to temp dirs
 	userConfigDir = func() (string, error) { return base, nil }
 	userHomeDir = func() (string, error) { return t.TempDir(), nil }
 	pathStat = os.Stat
@@ -159,13 +165,16 @@ func TestResolvePrefersExistingLegacyDotHaspVault(t *testing.T) {
 	origUserHomeDir := userHomeDir
 	origPathStat := pathStat
 	origRead := configReadFileFn
+	origGuard := resolveGuardDisabled
 	defer func() {
 		userConfigDir = origUserConfigDir
 		userHomeDir = origUserHomeDir
 		pathStat = origPathStat
 		configReadFileFn = origRead
+		resolveGuardDisabled = origGuard
 	}()
 
+	resolveGuardDisabled = true // userHomeDir is already stubbed to a temp dir
 	userConfigDir = func() (string, error) { return base, nil }
 	userHomeDir = func() (string, error) { return home, nil }
 	pathStat = os.Stat
@@ -188,13 +197,16 @@ func TestResolvePropagatesLegacyHomeResolutionFailure(t *testing.T) {
 	origUserHomeDir := userHomeDir
 	origPathStat := pathStat
 	origRead := configReadFileFn
+	origGuard := resolveGuardDisabled
 	defer func() {
 		userConfigDir = origUserConfigDir
 		userHomeDir = origUserHomeDir
 		pathStat = origPathStat
 		configReadFileFn = origRead
+		resolveGuardDisabled = origGuard
 	}()
 
+	resolveGuardDisabled = true // userHomeDir is already stubbed to a temp dir
 	userConfigDir = func() (string, error) { return base, nil }
 	userHomeDir = func() (string, error) { return t.TempDir(), nil }
 	pathStat = func(string) (os.FileInfo, error) { return nil, fmt.Errorf("stat fail") }

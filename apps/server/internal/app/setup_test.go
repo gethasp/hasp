@@ -62,7 +62,7 @@ func TestSetupCommandNonInteractiveFailsForProjectScopedOptionsWithoutRepo(t *te
 		io.Discard,
 		&fakeStarter{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "project-scoped setup options require --repo") {
+	if err == nil || !strings.Contains(err.Error(), "project-scoped setup options require --project-root") {
 		t.Fatalf("expected project-scoped setup options failure, got %v", err)
 	}
 }

@@ -1,20 +1,107 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
+	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
+// secretPlaintextInteractiveTTL is the lifetime of an inline TTY-confirmed
+// plaintext grant. Matches the documented operator UX so the prompt copy
+// (`Grant 60s plaintext ... [y/N]`) does not drift from the underlying grant.
+const secretPlaintextInteractiveTTL = 60 * time.Second
+
+// secretPlaintextDeps captures the side-effecting hooks the interactive
+// plaintext policy enforcement needs. Construction is explicit at the call
+// site (production gets defaultSecretPlaintextDeps; tests pass tighter
+// stubs), which makes the seam visible and removes the need for a
+// package-level mutable var.
+type secretPlaintextDeps struct {
+	// Confirm prompts the operator and returns (granted, error). The
+	// returned bool semantically maps to "operator typed y/yes".
+	Confirm func(stderr io.Writer, stdin io.Reader, prompt string) (bool, error)
+	// IsTerminal lets the default Confirm decide whether to even attempt
+	// reading from stdin. Tests can force this to true in CI.
+	IsTerminal func() bool
+}
+
+func defaultSecretPlaintextDeps() secretPlaintextDeps {
+	deps := secretPlaintextDeps{IsTerminal: defaultStderrIsTerminal}
+	deps.Confirm = func(stderr io.Writer, stdin io.Reader, prompt string) (bool, error) {
+		return defaultPlaintextTTYConfirmWithDeps(stderr, stdin, prompt, deps.IsTerminal)
+	}
+	return deps
+}
+
+func defaultStderrIsTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func defaultPlaintextTTYConfirmWithDeps(stderr io.Writer, stdin io.Reader, prompt string, isTerminal func() bool) (bool, error) {
+	if isTerminal == nil || !isTerminal() {
+		return false, nil
+	}
+	if stdin == nil {
+		return false, nil
+	}
+	if _, err := fmt.Fprint(stderr, prompt); err != nil {
+		return false, err
+	}
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return false, err
+	}
+	answer := strings.TrimSpace(strings.ToLower(line))
+	return answer == "y" || answer == "yes", nil
+}
+
 func appendSecretAuditCLI(eventType string, details map[string]any) {
-	appendAudit(eventType, "user", details)
+	auditlog.AppendCLI(eventType, details)
+}
+
+// enforceSecretPlaintextPolicyInteractive wraps enforceSecretPlaintextPolicy
+// with an inline TTY confirm. When the strict policy would block (and the
+// operator could otherwise type out a grant-plaintext command with the same
+// session token), we prompt once for a 60-second one-shot grant and retry.
+// Anything other than an explicit "y"/"yes" leaves the original block error
+// intact, so scripts and IO-error paths still see the actionable message.
+func enforceSecretPlaintextPolicyInteractive(ctx context.Context, handle *store.Handle, itemName string, action store.PlaintextAction, stdin io.Reader, stderr io.Writer, deps secretPlaintextDeps) error {
+	err := enforceSecretPlaintextPolicy(ctx, handle, itemName, action)
+	if err == nil {
+		return nil
+	}
+	policy, perr := secretPlaintextPolicyForContext(ctx, handle)
+	if perr != nil || !policy.Active || policy.SessionToken == "" {
+		return err
+	}
+	if deps.Confirm == nil {
+		return err
+	}
+	prompt := fmt.Sprintf("Grant 60s plaintext %s for %s? [y/N] ", action, itemName)
+	confirmed, confirmErr := deps.Confirm(stderr, stdin, prompt)
+	if confirmErr != nil || !confirmed {
+		return err
+	}
+	if _, gerr := handle.GrantPlaintextUse(policy.SessionToken, itemName, action, "user", store.GrantOnce, secretPlaintextInteractiveTTL); gerr != nil {
+		return gerr
+	}
+	return enforceSecretPlaintextPolicy(ctx, handle, itemName, action)
 }
 
 func enforceSecretPlaintextPolicy(ctx context.Context, handle *store.Handle, itemName string, action store.PlaintextAction) error {
@@ -90,13 +177,13 @@ func secretPlaintextPolicyForContext(ctx context.Context, handle *store.Handle) 
 			AgentConsumers: consumers,
 		}, nil
 	}
-	if envTruthy(envAgentSafeMode) {
-		projectRoot := strings.TrimSpace(os.Getenv(envAgentProjectRoot))
+	if envTruthy(secrettypes.EnvAgentSafeMode) {
+		projectRoot := strings.TrimSpace(os.Getenv(secrettypes.EnvAgentProjectRoot))
 		consumers := []string{}
-		if name := strings.TrimSpace(os.Getenv(envAgentConsumer)); name != "" {
+		if name := strings.TrimSpace(os.Getenv(secrettypes.EnvAgentConsumer)); name != "" {
 			consumers = append(consumers, name)
 		}
-		return secretPlaintextPolicy{Active: true, Source: "env", SessionToken: strings.TrimSpace(os.Getenv(envSessionToken)), ProjectRoot: projectRoot, AgentConsumers: consumers}, nil
+		return secretPlaintextPolicy{Active: true, Source: "env", SessionToken: strings.TrimSpace(os.Getenv(secrettypes.EnvSessionToken)), ProjectRoot: projectRoot, AgentConsumers: consumers}, nil
 	}
 	root, inRepo, err := secretProjectContext(ctx, "")
 	if err != nil || !inRepo {
@@ -142,7 +229,7 @@ func parsePlaintextAction(value string) (store.PlaintextAction, error) {
 }
 
 func secretSessionFromEnv(ctx context.Context) (runtime.SessionView, string, bool, error) {
-	token := strings.TrimSpace(os.Getenv(envSessionToken))
+	token := strings.TrimSpace(os.Getenv(secrettypes.EnvSessionToken))
 	if token == "" {
 		return runtime.SessionView{}, "", false, nil
 	}
@@ -180,15 +267,7 @@ func secretSessionFromProcessTree(ctx context.Context) (runtime.SessionView, str
 }
 
 func secretActorLabel() string {
-	if current, err := secretCurrentUserFn(); err == nil {
-		if strings.TrimSpace(current.Username) != "" {
-			return current.Username
-		}
-	}
-	if value := strings.TrimSpace(os.Getenv("USER")); value != "" {
-		return value
-	}
-	return "unknown"
+	return auditlog.ActorLabel()
 }
 
 func copySecretToClipboard(value []byte) error {

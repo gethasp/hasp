@@ -9,7 +9,7 @@ for dir in ./apps/server ./packages/*; do
   [[ -d "$dir" ]] || continue
   if [[ -d "$dir/internal/evals" ]]; then
     echo "Running evals in $dir"
-    if ! (cd "$dir" && go test -tags=integration ./internal/evals); then
+    if ! (cd "$dir" && go test -tags=integration,hasp_test_fastkdf ./internal/evals); then
       status=1
     fi
   fi

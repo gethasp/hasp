@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -21,6 +22,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 
 	origCurrentUser := secretCurrentUserFn
 	origExec := secretExecCommandFn
+	origTTYExec := ttyutil.ExecCommandFn
 	origClipboard := secretClipboardFn
 	origIsCharDevice := secretIsCharDeviceFn
 	origSetTTYEcho := secretSetTTYEchoFn
@@ -36,6 +38,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	defer func() {
 		secretCurrentUserFn = origCurrentUser
 		secretExecCommandFn = origExec
+		ttyutil.ExecCommandFn = origTTYExec
 		secretClipboardFn = origClipboard
 		secretIsCharDeviceFn = origIsCharDevice
 		secretSetTTYEchoFn = origSetTTYEcho
@@ -72,16 +75,16 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if err != nil || string(value) != "plain-value" {
 		t.Fatalf("unmasked secretValue = %q err=%v", string(value), err)
 	}
-	if _, err := newSecretPrompt(bytes.NewBuffer(nil), errWriter{err: errors.New("line fail")}, io.Discard).line("Label"); err == nil {
+	if _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("line fail")}).line("Label"); err == nil {
 		t.Fatal("expected line write failure")
 	}
 	if _, err := newSecretPrompt(errReader{err: errors.New("read fail")}, io.Discard, io.Discard).line("Label"); err == nil {
 		t.Fatal("expected line read failure")
 	}
-	if _, err := newSecretPrompt(bytes.NewBuffer(nil), errWriter{err: errors.New("value fail")}, io.Discard).secretValue("EMAIL"); err == nil {
+	if _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("value fail")}).secretValue("EMAIL"); err == nil {
 		t.Fatal("expected secretValue line failure")
 	}
-	if _, err := newSecretPrompt(bytes.NewBuffer(nil), errWriter{err: errors.New("masked fail")}, io.Discard).secretValue("API_TOKEN"); err == nil {
+	if _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("masked fail")}).secretValue("API_TOKEN"); err == nil {
 		t.Fatal("expected masked secret prompt write failure")
 	}
 
@@ -111,7 +114,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if err != nil || choice != "cancel" {
 		t.Fatalf("collision cancel = %q %q err=%v", choice, renamed, err)
 	}
-	if _, _, err := newSecretPrompt(bytes.NewBuffer(nil), errWriter{err: errors.New("collision write fail")}, io.Discard).collision("API_TOKEN"); err == nil {
+	if _, _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("collision write fail")}).collision("API_TOKEN"); err == nil {
 		t.Fatal("expected collision write failure")
 	}
 	if choice, renamed, err := newSecretPrompt(bytes.NewBufferString("2\n"), io.Discard, io.Discard).collision("API_TOKEN"); err != nil || choice != "rename" || renamed != "" {
@@ -124,7 +127,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if _, err := secretAddInputs(nil, newSecretPrompt(bytes.NewBufferString("\n"), io.Discard, io.Discard)); err == nil {
 		t.Fatal("expected interactive add empty-name failure")
 	}
-	if _, err := secretUpdateInputs([]string{"UPDATED=value"}, newSecretPrompt(bytes.NewBuffer(nil), io.Discard, io.Discard)); err != nil {
+	if _, err := secretUpdateInputs([]string{"UPDATED"}, newSecretPrompt(bytes.NewBufferString("value\n"), io.Discard, io.Discard)); err != nil {
 		t.Fatalf("expected update inputs from args to succeed, got %v", err)
 	}
 	if _, err := secretUpdateInputs(nil, newSecretPrompt(errReader{err: errors.New("prompt fail")}, io.Discard, io.Discard)); err == nil {
@@ -154,7 +157,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if value, err := newSecretPrompt(bytes.NewBufferString("stdin-secret\n"), io.Discard, io.Discard).readHidden(); err != nil || string(value) != "stdin-secret" {
 		t.Fatalf("readHidden non-file = %q err=%v", string(value), err)
 	}
-	if got, ok := stdinFile(bytes.NewBuffer(nil)); ok || got != nil {
+	if got, ok := ttyutil.StdinFile(bytes.NewBuffer(nil)); ok || got != nil {
 		t.Fatalf("expected stdinFile to reject non-file reader, got %v %v", got, ok)
 	}
 	tempFile, err := os.CreateTemp(t.TempDir(), "secret-input")
@@ -167,7 +170,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if _, err := tempFile.Seek(0, 0); err != nil {
 		t.Fatalf("seek temp file: %v", err)
 	}
-	if got, ok := stdinFile(tempFile); !ok || got == nil {
+	if got, ok := ttyutil.StdinFile(tempFile); !ok || got == nil {
 		t.Fatalf("expected stdinFile to accept os.File, got %v %v", got, ok)
 	}
 	if value, err := newSecretPrompt(tempFile, io.Discard, io.Discard).readHidden(); err != nil || string(value) != "file-secret" {
@@ -202,24 +205,24 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if _, err := tempFile.Seek(0, 0); err != nil {
 		t.Fatalf("seek temp file for print error: %v", err)
 	}
-	if _, err := newSecretPrompt(tempFile, errWriter{err: errors.New("stdout fail")}, io.Discard).readHidden(); err == nil {
+	if _, err := newSecretPrompt(tempFile, io.Discard, errWriter{err: errors.New("stderr fail")}).readHidden(); err == nil {
 		t.Fatal("expected readHidden print failure")
 	}
-	if isCharDevice(nil) {
+	if ttyutil.IsCharDevice(nil) {
 		t.Fatal("expected nil file not to be char device")
 	}
-	if isCharDevice(tempFile) {
+	if ttyutil.IsCharDevice(tempFile) {
 		t.Fatal("expected regular temp file not to be char device")
 	}
 	if err := tempFile.Close(); err != nil {
 		t.Fatalf("close temp file: %v", err)
 	}
-	if isCharDevice(tempFile) {
+	if ttyutil.IsCharDevice(tempFile) {
 		t.Fatal("expected closed file stat failure to report non-char device")
 	}
 	if devNull, err := os.Open("/dev/null"); err == nil {
 		defer devNull.Close()
-		if !isCharDevice(devNull) {
+		if !ttyutil.IsCharDevice(devNull) {
 			t.Fatal("expected /dev/null to be treated as char device")
 		}
 	}
@@ -260,12 +263,15 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	secretExecCommandFn = func(name string, args ...string) *exec.Cmd {
 		return exec.Command(failScript)
 	}
-	if err := secretSetTTYEcho(tempFile, true); err == nil {
-		t.Fatal("expected secretSetTTYEcho true branch to fail on non-tty file")
+	ttyutil.ExecCommandFn = func(name string, args ...string) *exec.Cmd {
+		return exec.Command(failScript)
+	}
+	if err := ttyutil.SetTTYEcho(tempFile, true); err == nil {
+		t.Fatal("expected SetTTYEcho true branch to fail on non-tty file")
 	}
 
-	if err := secretSetTTYEcho(tempFile, false); err == nil {
-		t.Fatal("expected secretSetTTYEcho to fail on non-tty file")
+	if err := ttyutil.SetTTYEcho(tempFile, false); err == nil {
+		t.Fatal("expected SetTTYEcho to fail on non-tty file")
 	}
 
 	secretGetwdFn = func() (string, error) { return "", errors.New("getwd fail") }
@@ -336,7 +342,7 @@ func TestSecretCommandAndStoreEdgeBranches(t *testing.T) {
 		t.Fatalf("expected empty secret list, got %q", listOut.String())
 	}
 
-	if err := Run(context.Background(), []string{"secret", "add", "API_TOKEN=abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	handle, err := openVaultHandle(context.Background())
@@ -363,8 +369,8 @@ func TestSecretCommandAndStoreEdgeBranches(t *testing.T) {
 		t.Fatal("expected add collision error")
 	}
 
-	renameInput := bytes.NewBufferString("2\nAPI_TOKEN_ALT\n")
-	if err := Run(context.Background(), []string{"secret", "add", "API_TOKEN=rotated"}, renameInput, io.Discard, io.Discard); err != nil {
+	renameInput := bytes.NewBufferString("rotated\n2\nAPI_TOKEN_ALT\n")
+	if err := Run(context.Background(), []string{"secret", "add", "--expose=always", "API_TOKEN"}, renameInput, io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add rename collision: %v", err)
 	}
 	var revealAlt bytes.Buffer
@@ -375,7 +381,7 @@ func TestSecretCommandAndStoreEdgeBranches(t *testing.T) {
 		t.Fatalf("unexpected alt reveal output %q", revealAlt.String())
 	}
 
-	if err := Run(context.Background(), []string{"secret", "update", "API_TOKEN=updated"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "update", "API_TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret update: %v", err)
 	}
 	if err := secretUpdateCommand(context.Background(), []string{"--bad"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
@@ -584,7 +590,7 @@ func TestSecretCommandsVaultOpenFailuresAndDefaultLoadFailures(t *testing.T) {
 	secretUpsertItemFn = func(*store.Handle, string, store.ItemKind, []byte, store.ItemMetadata) (store.Item, error) {
 		return store.Item{}, errors.New("upsert fail")
 	}
-	if err := secretAddCommand(context.Background(), []string{"TOKEN=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "upsert fail") {
+	if err := secretAddCommand(context.Background(), []string{"--expose=always", "TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "upsert fail") {
 		t.Fatalf("expected add upsert failure, got %v", err)
 	}
 	secretUpsertItemFn = origUpsert
@@ -592,7 +598,7 @@ func TestSecretCommandsVaultOpenFailuresAndDefaultLoadFailures(t *testing.T) {
 	secretBindItemAliasFn = func(*store.Handle, context.Context, string, string) (string, error) {
 		return "", errors.New("bind fail")
 	}
-	if err := secretAddCommand(context.Background(), []string{"TOKEN2=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "bind fail") {
+	if err := secretAddCommand(context.Background(), []string{"--expose=always", "TOKEN2"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "bind fail") {
 		t.Fatalf("expected add bind failure, got %v", err)
 	}
 	secretBindItemAliasFn = origBind
@@ -603,7 +609,7 @@ func TestSecretCommandsVaultOpenFailuresAndDefaultLoadFailures(t *testing.T) {
 	secretUpsertItemFn = func(*store.Handle, string, store.ItemKind, []byte, store.ItemMetadata) (store.Item, error) {
 		return store.Item{}, errors.New("update fail")
 	}
-	if err := secretUpdateCommand(context.Background(), []string{"TOKEN=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "update fail") {
+	if err := secretUpdateCommand(context.Background(), []string{"TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "update fail") {
 		t.Fatalf("expected update upsert failure, got %v", err)
 	}
 	secretUpsertItemFn = origUpsert

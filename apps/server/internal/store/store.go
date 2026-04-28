@@ -3,8 +3,6 @@ package store
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -25,18 +23,48 @@ var (
 	ErrInvalidPassword     = errors.New("invalid master password")
 	ErrItemNotFound        = errors.New("item not found")
 	ErrKeyringUnavailable  = errors.New("keyring convenience unlock unavailable")
-	// Tests create and open many ephemeral vaults across multiple packages.
-	// Using a lower derivation cost only inside `go test` keeps the default
-	// parallel suite stable without changing production envelopes.
-	passwordIterations = derivePasswordIterations(filepath.Base(os.Args[0]))
+	// passwordIterations is selected once at startup. The build-time default
+	// (defaultPasswordIterations) holds production cost in release builds and
+	// is downgraded only under the explicit hasp_test_fastkdf build tag — never
+	// based on the binary's name, which a previous version did and which let
+	// any binary renamed `*.test` permanently weaken every vault it then init'd.
+	// HASP_KDF_ITERATIONS lets operators override upward; values below
+	// minPasswordIterations panic at startup so a misconfiguration is loud
+	// rather than silently weakening the vault.
+	passwordIterations = resolvePasswordIterations(os.Getenv("HASP_KDF_ITERATIONS"), defaultPasswordIterations, minPasswordIterations)
 )
 
-func derivePasswordIterations(binaryName string) int {
-	if strings.HasSuffix(strings.TrimSpace(binaryName), ".test") {
-		return testPasswordIterations
-	}
-	return productionPasswordIterations
-}
+// FormatVersion returns the on-disk envelope format version every freshly
+// initialised vault stamps into its header. Operators read it via
+// `hasp version --json` to confirm a binary will write a vault their other
+// tools can decrypt.
+func FormatVersion() int { return formatVersion }
+
+// DefaultKDFName returns the canonical name of the KDF used to wrap the
+// vault key on init. Surfaced through `hasp version --json` so an operator
+// auditing a binary can correlate it against the spec recorded in their
+// vault envelope. Switched from "pbkdf2-sha256" to "argon2id" in 0.1.x —
+// pbkdf2-sha256 still opens existing vaults via the dispatch in deriveFromSpec.
+func DefaultKDFName() string { return kdfNameArgon2id }
+
+// DefaultKDFIterations returns the PBKDF2 iteration count resolved at startup
+// from HASP_KDF_ITERATIONS, the build-time default, and the hasp_test_fastkdf
+// build tag. Retained for backwards-compat with `hasp version --json`
+// consumers; with argon2id as the new default it no longer drives new vaults
+// and is reported alongside DefaultKDFTime/Memory/Parallelism.
+func DefaultKDFIterations() int { return passwordIterations }
+
+// DefaultKDFTime returns the argon2id `t` parameter (number of passes) the
+// current binary uses when initialising a new vault.
+func DefaultKDFTime() uint32 { return passwordArgon2Time }
+
+// DefaultKDFMemoryKiB returns the argon2id `m` parameter in KiB the current
+// binary uses when initialising a new vault.
+func DefaultKDFMemoryKiB() uint32 { return passwordArgon2MemoryKiB }
+
+// DefaultKDFParallelism returns the argon2id `p` parameter the current binary
+// uses when initialising a new vault.
+func DefaultKDFParallelism() uint8 { return passwordArgon2Parallelism }
 
 type ItemKind string
 
@@ -151,11 +179,24 @@ type envelopeHeader struct {
 	ConvenienceWrap *sealedBlob `json:"convenience_wrap,omitempty"`
 }
 
+// kdfSpec captures everything OpenWithPassword needs to re-derive the wrap key:
+// the algorithm name dispatches the derive function; the per-algorithm fields
+// below are tagged omitempty so a pbkdf2 envelope (no Time/Memory/Parallelism)
+// and an argon2id envelope (no Iterations) round-trip through JSON without
+// ambiguous zero values.
 type kdfSpec struct {
-	Name       string `json:"name"`
-	Salt       string `json:"salt"`
-	Iterations int    `json:"iterations"`
-	KeyLength  int    `json:"key_length"`
+	Name      string `json:"name"`
+	Salt      string `json:"salt"`
+	KeyLength int    `json:"key_length"`
+
+	// Iterations is the PBKDF2 iteration count. Only set when Name == "pbkdf2-sha256".
+	Iterations int `json:"iterations,omitempty"`
+
+	// Time / Memory / Parallelism are the argon2id tuning parameters from
+	// RFC 9106. Only set when Name == "argon2id". Memory is in KiB.
+	Time        uint32 `json:"time,omitempty"`
+	Memory      uint32 `json:"memory,omitempty"`
+	Parallelism uint8  `json:"parallelism,omitempty"`
 }
 
 type sealedBlob struct {

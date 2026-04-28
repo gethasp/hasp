@@ -125,6 +125,7 @@ git -C "$project_root" init >/dev/null 2>&1
   --project-root "$project_root" \
   --env API_TOKEN=secret_01 \
   --grant-project window \
+  --grant-window 15m \
   -- sh -c 'test "$API_TOKEN" = "abc123"' >/dev/null
 env_output="$temp_home/.env.local"
 "$installed_bin" write-env \
@@ -132,7 +133,8 @@ env_output="$temp_home/.env.local"
   --output "$env_output" \
   --env API_TOKEN=secret_01 \
   --grant-project window \
-  --grant-convenience window >/dev/null
+  --grant-convenience window \
+  --grant-window 15m >/dev/null
 grep -q 'API_TOKEN=abc123' "$env_output"
 backup_path="$temp_home/hasp.backup.json"
 "$installed_bin" export-backup --output "$backup_path" >/dev/null

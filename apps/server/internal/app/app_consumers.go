@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
@@ -79,8 +80,8 @@ func appConnectCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 	var envMappings mappingFlag
 	var fileMappings mappingFlag
 	var dotenvMappings mappingFlag
-	fs.Var(&installLauncher, "install", "true|false")
-	fs.Var(&addToPath, "add-to-path", "true|false")
+	fs.Var(&installLauncher, "install", "always|never|ask")
+	fs.Var(&addToPath, "add-to-path", "always|never|ask")
 	fs.Var(&envMappings, "env", "")
 	fs.Var(&fileMappings, "file", "")
 	fs.Var(&dotenvMappings, "dotenv", "")
@@ -88,7 +89,17 @@ func appConnectCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: hasp app connect <name> --cmd <command> [--project-root <path>] [--env APP_ENV=SECRET] [--file APP_ENV=SECRET] [--dotenv KEY=SECRET --dotenv-env APP_ENV] [--install]")
+		return errors.New("usage: hasp app connect <name> --cmd <command> [--project-root <path>] [--env APP_ENV=@REF] [--file APP_ENV=@REF] [--dotenv KEY=@REF --dotenv-env APP_ENV] [--install]")
+	}
+	if expandedRoot, expandErr := expandUserPath(strings.TrimSpace(*projectRoot)); expandErr != nil {
+		return fmt.Errorf("--project-root: %w", expandErr)
+	} else {
+		*projectRoot = expandedRoot
+	}
+	if !*jsonOutput && !globalFlagsFromContext(ctx).json {
+		warnBareEnvRefs(ctx, stderr, envMappings, "app connect", "--env")
+		warnBareEnvRefs(ctx, stderr, fileMappings, "app connect", "--file")
+		warnBareEnvRefs(ctx, stderr, dotenvMappings, "app connect", "--dotenv")
 	}
 
 	handle, err := openVaultHandleFn(ctx)
@@ -105,7 +116,7 @@ func appConnectCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 		FileMappings:    fileMappings,
 		DotenvMappings:  dotenvMappings,
 	}
-	if file, ok := stdinFile(stdin); ok && secretIsCharDeviceFn(file) {
+	if file, ok := ttyutil.StdinFile(stdin); ok && secretIsCharDeviceFn(file) {
 		if err := appConnectPromptMissing(newSetupPrompter(stdin, stdout), &cfg); err != nil {
 			return err
 		}
@@ -149,8 +160,8 @@ func appConnectCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 		"outcome":       "connected",
 	})
 	payload := map[string]any{"consumer": consumer, "path_update": pathUpdate}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderAppConsumerSummary(w, "App connected", "Saved the app consumer configuration.", consumer, pathUpdate)
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderAppConsumerSummary(w, "App connected", "Saved the app configuration.", consumer, pathUpdate)
 	})
 }
 
@@ -174,7 +185,7 @@ func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg
 	if hadExisting {
 		consumer.LauncherPath = existingConsumer.LauncherPath
 	}
-	installChoice, err := resolveAppLauncherInstallChoice(cfg.Name, cfg.InstallLauncher, stdin, stdout, stderr)
+	installChoice, err := resolveAppLauncherInstallChoice(ctx, cfg.Name, cfg.InstallLauncher, stdin, stdout, stderr)
 	if err != nil {
 		return store.AppConsumer{}, appPathUpdateResult{}, err
 	}
@@ -200,7 +211,7 @@ func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg
 	}
 	pathUpdate := appPathUpdateResult{}
 	if installChoice {
-		pathUpdate, err = ensureLauncherDirOnPathChoice(cfg.AddToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
+		pathUpdate, err = ensureLauncherDirOnPathChoice(ctx, cfg.AddToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
 		if err != nil {
 			if rollbackErr := rollbackAppConsumer(handle, hadExisting, existingConsumer, consumer.Name); rollbackErr != nil {
 				return store.AppConsumer{}, appPathUpdateResult{}, fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
@@ -231,7 +242,7 @@ func appRunCommand(ctx context.Context, args []string, stdout io.Writer, stderr 
 	}
 	command := append([]string{}, consumer.Command...)
 	command = append(command, fs.Args()...)
-	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "run")
+	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "run", defaultExecDeps())
 	if err != nil {
 		return err
 	}
@@ -265,7 +276,7 @@ func appShellCommand(ctx context.Context, args []string, stdout io.Writer, stder
 	}
 	command := []string{shell, "-l"}
 	command = append(command, fs.Args()...)
-	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "shell")
+	runResult, err := appExecuteConsumerFn(ctx, handle, consumer, command, stdout, stderr, s, "shell", defaultExecDeps())
 	if err != nil {
 		return err
 	}
@@ -285,12 +296,12 @@ func appInstallCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	var addToPath setupOptionalBool
-	fs.Var(&addToPath, "add-to-path", "true|false")
+	fs.Var(&addToPath, "add-to-path", "always|never|ask")
 	if err := fs.Parse(remaining); err != nil {
 		return err
 	}
 	if strings.TrimSpace(name) == "" || fs.NArg() != 0 {
-		return errors.New("usage: hasp app install <name> [--add-to-path=true|false]")
+		return errors.New("usage: hasp app install <name> [--add-to-path=always|never|ask]")
 	}
 	handle, err := openVaultHandleFn(ctx)
 	if err != nil {
@@ -316,7 +327,7 @@ func appInstallCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 		}
 		return err
 	}
-	pathUpdate, err := ensureLauncherDirOnPathChoice(addToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
+	pathUpdate, err := ensureLauncherDirOnPathChoice(ctx, addToPath, stdin, stdout, stderr, filepath.Dir(launcherPlan.Path))
 	if err != nil {
 		if _, rollbackErr := storeUpsertAppFn(handle, oldConsumer); rollbackErr != nil {
 			return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
@@ -333,7 +344,7 @@ func appInstallCommandWithInput(ctx context.Context, args []string, stdin io.Rea
 		"outcome":       "installed",
 	})
 	payload := map[string]any{"consumer": consumer, "path_update": pathUpdate}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return renderAppConsumerSummary(w, "App installed", "Installed or refreshed the launcher for the app.", consumer, pathUpdate)
 	})
 }
@@ -376,8 +387,8 @@ func appDisconnectCommand(ctx context.Context, args []string, stdout io.Writer) 
 		"outcome":       "disconnected",
 	})
 	payload := map[string]any{"consumer_name": consumer.Name, "outcome": "disconnected"}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderSimpleAction(w, "App disconnected", "Removed the saved app consumer.",
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(ctx, w, "App disconnected", "Removed the saved app.",
 			cliPair("Name", consumer.Name),
 			cliPair("Outcome", "disconnected"),
 		)
@@ -397,7 +408,7 @@ func appListCommand(ctx context.Context, args []string, stdout io.Writer) error 
 	}
 	consumers := storeListAppsFn(handle)
 	payload := map[string]any{"consumers": consumers}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return renderAppConsumerList(w, consumers)
 	})
 }
@@ -443,7 +454,7 @@ func appConsumerBindings(handle *store.Handle, envMappings mappingFlag, fileMapp
 	return out, nil
 }
 
-func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer store.AppConsumer, command []string, stdout io.Writer, stderr io.Writer, s starter, action string) (runner.Result, error) {
+func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer store.AppConsumer, command []string, stdout io.Writer, stderr io.Writer, s starter, action string, deps execDeps) (runner.Result, error) {
 	env := map[string]string{}
 	files := map[string][]byte{}
 	dotenvLines := make([]string, 0)
@@ -471,7 +482,7 @@ func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer stor
 			return runner.Result{}, err
 		}
 		if bindingID != "" {
-			item, err = authorizeItemAppFn(handle, bindingID, sessionToken, item, store.OperationRun, store.GrantWindow, store.GrantSession, 15*time.Minute)
+			item, err = deps.AuthorizeItem(handle, bindingID, sessionToken, item, store.OperationRun, store.GrantWindow, store.GrantSession, 15*time.Minute)
 			if err != nil {
 				return runner.Result{}, err
 			}
@@ -490,12 +501,12 @@ func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer stor
 	}
 	if len(dotenvLines) > 0 {
 		if strings.TrimSpace(consumer.DotenvEnv) == "" {
-			return runner.Result{}, errors.New("app consumer dotenv delivery requires dotenv_env")
+			return runner.Result{}, errors.New("app dotenv delivery requires dotenv_env")
 		}
 		files[consumer.DotenvEnv] = []byte(strings.Join(dotenvLines, "\n") + "\n")
 	}
 
-	result, err := runnerExecuteFn(ctx, runner.Input{
+	result, err := deps.RunnerExecute(ctx, runner.Input{
 		ProjectRoot: consumer.ProjectRoot,
 		Command:     command,
 		Env:         env,
@@ -596,11 +607,14 @@ func rollbackAppConsumer(handle *store.Handle, hadExisting bool, existing store.
 	return storeDeleteAppFn(handle, name)
 }
 
-func resolveAppLauncherInstallChoice(name string, explicit setupOptionalBool, stdin io.Reader, stdout io.Writer, stderr io.Writer) (bool, error) {
+func resolveAppLauncherInstallChoice(ctx context.Context, name string, explicit setupOptionalBool, stdin io.Reader, stdout io.Writer, stderr io.Writer) (bool, error) {
 	if explicit.set {
 		return explicit.value, nil
 	}
-	file, ok := stdinFile(stdin)
+	if globalFlagsFromContext(ctx).yes {
+		return false, nil
+	}
+	file, ok := ttyutil.StdinFile(stdin)
 	if !ok || !secretIsCharDeviceFn(file) {
 		return false, nil
 	}
@@ -612,7 +626,7 @@ func normalizeAppConnectArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for _, arg := range args {
 		if arg == "--install" {
-			out = append(out, "--install=true")
+			out = append(out, "--install=always")
 			continue
 		}
 		out = append(out, arg)
@@ -709,13 +723,13 @@ func appCommandString(command string) string {
 func validateAppConsumerName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return errors.New("app consumer name is required")
+		return errors.New("app name is required")
 	}
 	if name == "." || name == ".." {
-		return fmt.Errorf("invalid app consumer name %q", name)
+		return fmt.Errorf("invalid app name %q", name)
 	}
 	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
-		return fmt.Errorf("invalid app consumer name %q", name)
+		return fmt.Errorf("invalid app name %q", name)
 	}
 	for _, r := range name {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
@@ -725,7 +739,7 @@ func validateAppConsumerName(name string) error {
 		case '-', '_', '.':
 			continue
 		default:
-			return fmt.Errorf("invalid app consumer name %q", name)
+			return fmt.Errorf("invalid app name %q", name)
 		}
 	}
 	return nil

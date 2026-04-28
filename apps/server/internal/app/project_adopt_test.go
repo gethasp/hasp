@@ -43,12 +43,14 @@ func TestProjectAdoptPreviewAndAdopt(t *testing.T) {
 		t.Fatalf("git init repoB: %v: %s", err, out)
 	}
 
-	if err := paths.SaveConfig(paths.CLIConfig{
-		AutoProtectRepos:     boolPtr(true),
-		AutoInstallHooks:     boolPtr(false),
-		DefaultCapturePolicy: string(store.PolicyAccess),
-	}); err != nil {
-		t.Fatalf("save config: %v", err)
+	origLoad := loadCLIConfigAppFn
+	t.Cleanup(func() { loadCLIConfigAppFn = origLoad })
+	loadCLIConfigAppFn = func() (paths.CLIConfig, error) {
+		return paths.CLIConfig{
+			AutoProtectRepos:     boolPtr(true),
+			AutoInstallHooks:     boolPtr(false),
+			DefaultCapturePolicy: string(store.PolicyAccess),
+		}, nil
 	}
 
 	var previewOut bytes.Buffer
@@ -129,8 +131,10 @@ func TestProjectAdoptSkipsNonProjectDirectories(t *testing.T) {
 	if out, err := run("git", "-C", repo, "init"); err != nil {
 		t.Fatalf("git init repo: %v: %s", err, out)
 	}
-	if err := paths.SaveConfig(paths.CLIConfig{AutoProtectRepos: boolPtr(true)}); err != nil {
-		t.Fatalf("save config: %v", err)
+	origLoad := loadCLIConfigAppFn
+	t.Cleanup(func() { loadCLIConfigAppFn = origLoad })
+	loadCLIConfigAppFn = func() (paths.CLIConfig, error) {
+		return paths.CLIConfig{AutoProtectRepos: boolPtr(true)}, nil
 	}
 
 	var out bytes.Buffer

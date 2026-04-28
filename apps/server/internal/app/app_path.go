@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 )
 
 const (
@@ -18,20 +21,25 @@ type appPathUpdateResult struct {
 	Changed    bool   `json:"changed"`
 }
 
-func ensureLauncherDirOnPathChoice(explicit setupOptionalBool, stdin io.Reader, stdout io.Writer, stderr io.Writer, launcherDir string) (appPathUpdateResult, error) {
+func ensureLauncherDirOnPathChoice(ctx context.Context, explicit setupOptionalBool, stdin io.Reader, stdout io.Writer, stderr io.Writer, launcherDir string) (appPathUpdateResult, error) {
 	if pathContainsDir(os.Getenv("PATH"), launcherDir) {
 		return appPathUpdateResult{}, nil
 	}
 	shouldUpdate := explicit.set && explicit.value
 	if !explicit.set {
-		file, ok := stdinFile(stdin)
-		if ok && secretIsCharDeviceFn(file) {
-			prompt := newSecretPrompt(stdin, stdout, stderr)
-			value, err := prompt.confirm(fmt.Sprintf("Add %s to your shell PATH", launcherDir), false)
-			if err != nil {
-				return appPathUpdateResult{}, err
+		if globalFlagsFromContext(ctx).yes {
+			// --yes selects the safer "no PATH change" default for this prompt;
+			// users who want the change should pass --add-to-path=always.
+		} else {
+			file, ok := ttyutil.StdinFile(stdin)
+			if ok && secretIsCharDeviceFn(file) {
+				prompt := newSecretPrompt(stdin, stdout, stderr)
+				value, err := prompt.confirm(fmt.Sprintf("Add %s to your shell PATH", launcherDir), false)
+				if err != nil {
+					return appPathUpdateResult{}, err
+				}
+				shouldUpdate = value
 			}
-			shouldUpdate = value
 		}
 	}
 	if !shouldUpdate {

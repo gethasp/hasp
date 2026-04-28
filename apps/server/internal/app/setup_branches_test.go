@@ -145,7 +145,7 @@ func TestSetupEnsureHandleExistingVault(t *testing.T) {
 	if err := vaultStore.Init(context.Background(), "correct horse battery staple"); err != nil {
 		t.Fatalf("init store: %v", err)
 	}
-	handle, state, err := setupEnsureHandle(context.Background(), vaultStore, "correct horse battery staple", true)
+	handle, state, err := setupEnsureHandle(context.Background(), vaultStore, "correct horse battery staple", true, false)
 	if err != nil || handle == nil || state != "existing" {
 		t.Fatalf("ensure existing handle state=%q err=%v", state, err)
 	}

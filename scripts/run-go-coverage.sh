@@ -61,7 +61,7 @@ for mod in "${modules[@]}"; do
       fi
       pkg_profile="$(mktemp)"
       pkg_log="$(mktemp)"
-      if ! go test "$pkg" -coverprofile="$pkg_profile" >"$pkg_log" 2>&1; then
+      if ! go test -tags=hasp_test_fastkdf "$pkg" -coverprofile="$pkg_profile" >"$pkg_log" 2>&1; then
         echo "coverage run failed for $pkg:" >&2
         cat "$pkg_log" >&2
         rm -f "$pkg_log"
@@ -73,7 +73,7 @@ for mod in "${modules[@]}"; do
 
     if [[ -d "./internal/evals" ]]; then
       eval_log="$(mktemp)"
-      if ! go test -tags=integration -coverpkg=./... ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
+      if ! go test -tags=integration,hasp_test_fastkdf -coverpkg=./... ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
         echo "coverage run failed for ./internal/evals:" >&2
         cat "$eval_log" >&2
         rm -f "$eval_log"

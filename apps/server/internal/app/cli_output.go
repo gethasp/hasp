@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,18 +10,82 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
+	"github.com/gethasp/hasp/apps/server/internal/app/ui"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-func renderJSONOrHuman(stdout io.Writer, jsonOutput bool, payload any, human func(io.Writer) error) error {
-	if jsonOutput {
-		return json.NewEncoder(stdout).Encode(payload)
+// jsonSchemaVersion is the top-level `_schema` field stamped on every JSON
+// response so consumers can detect breaking shape changes (hasp-1dg1). Bump
+// when fields are renamed/removed in a way that breaks downstream parsers.
+const jsonSchemaVersion = 1
+
+// renderJSONOrHuman emits either JSON or the human-readable form of payload.
+// jsonOutput is the per-command local flag (e.g. `--json` on the FlagSet); the
+// global --json flag from ctx is ORed in so that callers do not need to read
+// globalFlagsFromContext themselves. Either flag being true triggers JSON output.
+//
+// All callers pass their ctx down. When ctx is nil or lacks a globalFlags value
+// (e.g. in tests that call helpers directly), only the local jsonOutput flag is
+// consulted.
+func renderJSONOrHuman(ctx context.Context, stdout io.Writer, jsonOutput bool, payload any, human func(io.Writer) error) error {
+	if jsonOutput || globalFlagsFromContext(ctx).json {
+		return writeJSONResponse(stdout, payload)
 	}
 	return human(stdout)
 }
 
+// writeJSONResponse marshals payload as JSON, injecting the top-level
+// `_schema` field (hasp-1dg1) when the result is a JSON object. Slice/array
+// or scalar payloads are written as-is so the helper stays a drop-in
+// replacement for json.NewEncoder(...).Encode(...).
+func writeJSONResponse(w io.Writer, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	// Inject "_schema":N as the first key when the payload encodes to a
+	// JSON object. We avoid an unmarshal/marshal round-trip so field order
+	// is preserved for the rest of the payload (helps grep/diff stability).
+	if len(data) > 0 && data[0] == '{' {
+		if len(data) == 2 {
+			// Empty object {}: write a single-key object.
+			if _, err := fmt.Fprintf(w, `{"_schema":%d}`, jsonSchemaVersion); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(w, `{"_schema":%d,`, jsonSchemaVersion); err != nil {
+				return err
+			}
+			if _, err := w.Write(data[1:]); err != nil {
+				return err
+			}
+		}
+	} else {
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(w)
+	return err
+}
+
 func cliWriteStage(out io.Writer, title string, lead string) error {
+	return cliWriteStageOpts(out, title, lead, ui.ColorOptions{})
+}
+
+// cliWriteStageOpts is the opts-aware variant of cliWriteStage. When
+// opts.Quiet is true the stage title and success-lead line are suppressed;
+// only a blank line is emitted so that subsequent bullet output remains
+// correctly spaced.
+func cliWriteStageOpts(out io.Writer, title string, lead string, opts ui.ColorOptions) error {
+	if opts.Quiet {
+		// In quiet mode suppress the title header and success-lead; still
+		// emit a blank line so bullet rows that follow are properly separated.
+		_, err := fmt.Fprintln(out)
+		return err
+	}
 	if _, err := fmt.Fprintln(out, setupStageHeader(out, title)); err != nil {
 		return err
 	}
@@ -34,10 +99,12 @@ func cliWriteStage(out io.Writer, title string, lead string) error {
 }
 
 func cliSuccessLead(out io.Writer, text string) string {
-	return cliLead(out, "1;32", "✓", text)
+	// hasp-41fc: cliLead chooses unicode/ASCII based on the writer.
+	return cliLead(out, "1;32", "✓", "[ok]", text)
 }
 
-func cliLead(out io.Writer, code string, symbol string, text string) string {
+func cliLead(out io.Writer, code string, unicodeSymbol, asciiSymbol, text string) string {
+	symbol := cliGlyph(out, unicodeSymbol, asciiSymbol)
 	if !setupWriterSupportsColor(out) {
 		return symbol + " " + text
 	}
@@ -49,12 +116,24 @@ func cliSection(out io.Writer, title string) error {
 }
 
 func cliWriteKeyValues(out io.Writer, title string, pairs ...[2]string) error {
-	lines := make([]string, 0, len(pairs))
+	// hasp-0kw3: align all values in this block to the longest label
+	// (with a 2-char gap) instead of padding every label to a fixed 24
+	// columns. Short-key blocks no longer have a giant gutter, and a
+	// label longer than 24 no longer pushes its row out of column.
+	keep := make([][2]string, 0, len(pairs))
+	maxLabel := 0
 	for _, pair := range pairs {
 		if strings.TrimSpace(pair[1]) == "" {
 			continue
 		}
-		lines = append(lines, setupSummaryKeyValue(out, pair[0], pair[1]))
+		keep = append(keep, pair)
+		if n := len(pair[0]); n > maxLabel {
+			maxLabel = n
+		}
+	}
+	lines := make([]string, 0, len(keep))
+	for _, pair := range keep {
+		lines = append(lines, setupSummaryKeyValueAligned(out, pair[0], pair[1], maxLabel))
 	}
 	return setupWriteKeyValueBlock(out, title, lines...)
 }
@@ -64,7 +143,8 @@ func cliPair(label string, value string) [2]string {
 }
 
 func cliBullet(out io.Writer, label string, details ...string) string {
-	line := "  " + setupStyle(out, "1;36", "•") + " " + setupSummaryLabel(out, label)
+	bullet := cliGlyph(out, "•", "-")
+	line := "  " + setupStyle(out, "1;36", bullet) + " " + setupSummaryLabel(out, label)
 	filtered := make([]string, 0, len(details))
 	for _, detail := range details {
 		if strings.TrimSpace(detail) == "" {
@@ -106,8 +186,12 @@ func cliPlural(count int, singular string, plural string) string {
 	return plural
 }
 
-func renderSimpleAction(out io.Writer, title string, lead string, pairs ...[2]string) error {
-	if err := cliWriteStage(out, title, lead); err != nil {
+func renderSimpleAction(ctx context.Context, out io.Writer, title string, lead string, pairs ...[2]string) error {
+	// hasp-zm35: honour ambient --quiet by suppressing the stage header and
+	// success-lead line; the key/value details still print so machine-style
+	// callers don't lose the actionable payload.
+	opts := ui.ColorOptions{Quiet: globalFlagsFromContext(ctx).quiet}
+	if err := cliWriteStageOpts(out, title, lead, opts); err != nil {
 		return err
 	}
 	return cliWriteKeyValues(out, "Details", pairs...)
@@ -166,8 +250,9 @@ func renderImportCommandResult(out io.Writer, preview importPreview, result *sto
 		if err := cliSection(out, "Notes"); err != nil {
 			return err
 		}
+		bullet := cliGlyph(out, "•", "-")
 		for _, note := range preview.Notes {
-			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", "•")+" "+note); err != nil {
+			if _, err := fmt.Fprintln(out, "  "+setupStyle(out, "1;36", bullet)+" "+note); err != nil {
 				return err
 			}
 		}
@@ -262,11 +347,21 @@ func renderSecretExposures(out io.Writer, exposures []store.ItemExposure) error 
 }
 
 func renderSecretList(out io.Writer, secrets []secretMetadataView) error {
+	return renderSecretListWithColor(out, secrets, ui.ColorOptions{Interactive: ui.IsInteractiveWriter(out)})
+}
+
+// renderSecretListWithColor adds a per-row state badge (vault-only/shared)
+// using the security-tool palette. Vault-only secrets are green (the
+// cleanest state for a stored secret); secrets bound to one or more repos
+// are yellow (shared — worth a glance to confirm the bindings are
+// intentional). The existing cli_output styling is left intact for the
+// rest of the row so the human-readable layer keeps its contract.
+func renderSecretListWithColor(out io.Writer, secrets []secretMetadataView, opts ui.ColorOptions) error {
 	lead := "No secrets stored in the vault."
 	if len(secrets) > 0 {
 		lead = fmt.Sprintf("%d %s available in the vault.", len(secrets), cliPlural(len(secrets), "secret", "secrets"))
 	}
-	if err := cliWriteStage(out, "Vault secrets", lead); err != nil {
+	if err := cliWriteStageOpts(out, "Vault secrets", lead, opts); err != nil {
 		return err
 	}
 	if len(secrets) == 0 {
@@ -276,19 +371,28 @@ func renderSecretList(out io.Writer, secrets []secretMetadataView) error {
 		return err
 	}
 	for _, secret := range secrets {
+		badge := secretStateBadge(secret, opts)
 		details := []string{
 			setupSummaryValue(out, string(secret.Kind)),
 			cliMuted(out, "("+secret.NamedReference+")"),
 			cliMuted(out, "(updated "+secret.UpdatedAt+")"),
 		}
+		if opts.Verbose && secret.CreatedAt != "" {
+			details = append(details, cliMuted(out, "(created "+secret.CreatedAt+")"))
+		}
 		if len(secret.Exposures) > 0 {
 			details = append(details, cliMuted(out, fmt.Sprintf("(%d %s)", len(secret.Exposures), cliPlural(len(secret.Exposures), "repo exposure", "repo exposures"))))
 		}
-		if _, err := fmt.Fprintln(out, cliBullet(out, fmt.Sprintf("%-22s", secret.Name), details...)); err != nil {
+		label := badge + " " + fmt.Sprintf("%-22s", secret.Name)
+		if _, err := fmt.Fprintln(out, cliBullet(out, label, details...)); err != nil {
 			return err
 		}
 		for _, exposure := range secret.Exposures {
-			if _, err := fmt.Fprintln(out, "    "+exposure.Reference+"  "+cliMuted(out, cliDisplayPath(exposure.ProjectRoot))); err != nil {
+			path := exposure.ProjectRoot
+			if !opts.Verbose {
+				path = cliDisplayPath(path)
+			}
+			if _, err := fmt.Fprintln(out, "    "+exposure.Reference+"  "+cliMuted(out, path)); err != nil {
 				return err
 			}
 		}
@@ -296,17 +400,42 @@ func renderSecretList(out io.Writer, secrets []secretMetadataView) error {
 	return nil
 }
 
+func secretStateBadge(secret secretMetadataView, opts ui.ColorOptions) string {
+	if len(secret.Exposures) == 0 {
+		return ui.Colorize("[vault-only]", ui.ColorOK, opts)
+	}
+	return ui.Colorize("[shared]", ui.ColorWarn, opts)
+}
+
+// secretGetJSONPayload builds the JSON envelope for secret show/reveal/copy.
+//
+// Shape migration (hasp-jx3r): "value" / "value_base64" are now nested inside
+// "secret" rather than sitting at the top level. Consumers: jq -r .secret.value
+// (was: jq -r .value). The "copied" flag remains at the top level as it is
+// operational metadata, not secret content.
 func secretGetJSONPayload(metadata secretMetadataView, copied bool, reveal bool, value []byte) map[string]any {
-	payload := map[string]any{"secret": metadata}
-	if copied {
-		payload["copied"] = true
+	// Build the secret sub-object as a plain map so we can add optional fields
+	// without touching the secretMetadataView struct.
+	secretObj := map[string]any{
+		"name":             metadata.Name,
+		"kind":             metadata.Kind,
+		"created_at":       metadata.CreatedAt,
+		"updated_at":       metadata.UpdatedAt,
+		"exposures":        metadata.Exposures,
+	}
+	if metadata.NamedReference != "" {
+		secretObj["named_reference"] = metadata.NamedReference
 	}
 	if reveal {
 		if utf8.Valid(value) {
-			payload["value"] = string(value)
+			secretObj["value"] = string(value)
 		} else {
-			payload["value_base64"] = base64.StdEncoding.EncodeToString(value)
+			secretObj["value_base64"] = base64.StdEncoding.EncodeToString(value)
 		}
+	}
+	payload := map[string]any{"secret": secretObj}
+	if copied {
+		payload["copied"] = true
 	}
 	return payload
 }
@@ -455,17 +584,17 @@ func renderAppConsumerSummary(out io.Writer, title string, lead string, consumer
 }
 
 func renderAppConsumerList(out io.Writer, consumers []store.AppConsumer) error {
-	lead := "No saved app consumers."
+	lead := "No saved apps."
 	if len(consumers) > 0 {
-		lead = fmt.Sprintf("%d saved %s.", len(consumers), cliPlural(len(consumers), "app consumer", "app consumers"))
+		lead = fmt.Sprintf("%d saved %s.", len(consumers), cliPlural(len(consumers), "app", "apps"))
 	}
-	if err := cliWriteStage(out, "App consumers", lead); err != nil {
+	if err := cliWriteStage(out, "Apps", lead); err != nil {
 		return err
 	}
 	if len(consumers) == 0 {
 		return nil
 	}
-	if err := cliSection(out, "Consumers"); err != nil {
+	if err := cliSection(out, "Apps"); err != nil {
 		return err
 	}
 	for _, consumer := range consumers {
@@ -508,7 +637,7 @@ func renderAgentConsumerList(out io.Writer, consumers []store.AgentConsumer) err
 	if len(consumers) == 0 {
 		return nil
 	}
-	if err := cliSection(out, "Consumers"); err != nil {
+	if err := cliSection(out, "Agents"); err != nil {
 		return err
 	}
 	for _, consumer := range consumers {
@@ -584,7 +713,7 @@ func renderPingResult(out io.Writer, reply runtime.PingResponse) error {
 	return cliWriteKeyValues(out, "Daemon",
 		cliPair("Name", reply.Name),
 		cliPair("Version", reply.Version),
-		cliPair("Server time", reply.ServerTime.Format(timeRFC3339)),
+		cliPair("Server time", reply.ServerTime.Format(secrettypes.TimeRFC3339)),
 	)
 }
 
@@ -609,8 +738,8 @@ func renderSessionResolveResult(out io.Writer, reply runtime.ResolveSessionRespo
 		cliPair("Local user", reply.Session.LocalUser),
 		cliPair("Host label", reply.Session.HostLabel),
 		cliPair("Project root", cliDisplayPath(reply.Session.ProjectRoot)),
-		cliPair("Last seen", reply.Session.LastSeenAt.Format(timeRFC3339)),
-		cliPair("Expires", reply.Session.ExpiresAt.Format(timeRFC3339)),
+		cliPair("Last seen", reply.Session.LastSeenAt.Format(secrettypes.TimeRFC3339)),
+		cliPair("Expires", reply.Session.ExpiresAt.Format(secrettypes.TimeRFC3339)),
 	)
 }
 
@@ -789,33 +918,68 @@ func renderBootstrapProfilesSummary(out io.Writer, listing map[string]any) error
 	return nil
 }
 
-func renderBootstrapProfileListingMaybeHuman(out io.Writer, jsonOutput bool, listing map[string]any) error {
-	return renderJSONOrHuman(out, jsonOutput, listing, func(w io.Writer) error {
+func renderBootstrapProfileListingMaybeHuman(ctx context.Context, out io.Writer, jsonOutput bool, listing map[string]any) error {
+	return renderJSONOrHuman(ctx, out, jsonOutput, listing, func(w io.Writer) error {
 		return renderBootstrapProfilesSummary(w, listing)
 	})
 }
 
-func renderPingJSONOrHuman(out io.Writer, jsonOutput bool, reply runtime.PingResponse) error {
-	return renderJSONOrHuman(out, jsonOutput, reply, func(w io.Writer) error {
+func renderPingJSONOrHuman(ctx context.Context, out io.Writer, jsonOutput bool, reply runtime.PingResponse) error {
+	return renderJSONOrHuman(ctx, out, jsonOutput, reply, func(w io.Writer) error {
 		return renderPingResult(w, reply)
 	})
 }
 
-func renderBootstrapJSONOrHuman(out io.Writer, jsonOutput bool, result bootstrapResult) error {
-	return renderJSONOrHuman(out, jsonOutput, result, func(w io.Writer) error {
+func renderBootstrapJSONOrHuman(ctx context.Context, out io.Writer, jsonOutput bool, result bootstrapResult) error {
+	return renderJSONOrHuman(ctx, out, jsonOutput, result, func(w io.Writer) error {
 		return renderBootstrapSummary(w, result)
 	})
 }
 
-func renderBootstrapDoctorJSONOrHuman(out io.Writer, jsonOutput bool, report bootstrapDoctorResult) error {
-	return renderJSONOrHuman(out, jsonOutput, report, func(w io.Writer) error {
+func renderBootstrapDoctorJSONOrHuman(ctx context.Context, out io.Writer, jsonOutput bool, report bootstrapDoctorResult) error {
+	return renderJSONOrHuman(ctx, out, jsonOutput, report, func(w io.Writer) error {
 		return renderBootstrapDoctorSummary(w, report)
 	})
 }
 
-func renderSecretListJSONOrHuman(out io.Writer, jsonOutput bool, secrets []secretMetadataView) error {
+func renderSecretListJSONOrHuman(ctx context.Context, out io.Writer, jsonOutput bool, secrets []secretMetadataView) error {
+	gf := globalFlagsFromContext(ctx)
+	opts := ui.ColorOptions{Interactive: ui.IsInteractiveWriter(out), Disable: gf.noColor, Quiet: gf.quiet, Verbose: gf.verbose}
+	return renderSecretListJSONOrHumanWithColor(ctx, out, jsonOutput, secrets, opts)
+}
+
+func renderSecretListJSONOrHumanWithColor(ctx context.Context, out io.Writer, jsonOutput bool, secrets []secretMetadataView, opts ui.ColorOptions) error {
 	payload := map[string]any{"secrets": secrets}
-	return renderJSONOrHuman(out, jsonOutput, payload, func(w io.Writer) error {
-		return renderSecretList(w, secrets)
+	return renderJSONOrHuman(ctx, out, jsonOutput, payload, func(w io.Writer) error {
+		return renderSecretListWithColor(w, secrets, opts)
+	})
+}
+
+// renderSecretSearchJSONOrHuman renders a search result with distinct messages
+// for three cases:
+//   - matches found: delegates to renderSecretListWithColor (normal list output)
+//   - vault non-empty but no matches: "no matches for <query>" message
+//   - vault empty: the canonical "No secrets stored in the vault." message
+//
+// The JSON payload always includes total (vault size before filtering) and
+// match_count so callers can distinguish the three cases without parsing text.
+func renderSecretSearchJSONOrHuman(ctx context.Context, out io.Writer, jsonOutput bool, query string, total int, secrets []secretMetadataView, opts ui.ColorOptions) error {
+	payload := map[string]any{
+		"secrets":     secrets,
+		"total":       total,
+		"match_count": len(secrets),
+	}
+	return renderJSONOrHuman(ctx, out, jsonOutput, payload, func(w io.Writer) error {
+		// Matches found — render as a normal list.
+		if len(secrets) > 0 {
+			return renderSecretListWithColor(w, secrets, opts)
+		}
+		// Vault is empty — use the canonical empty-vault message.
+		if total == 0 {
+			return renderSecretListWithColor(w, secrets, opts)
+		}
+		// Vault has items but none matched the query.
+		lead := fmt.Sprintf("No matches for %q in the vault (%d %s searched).", query, total, cliPlural(total, "secret", "secrets"))
+		return cliWriteStageOpts(w, "Vault secrets", lead, opts)
 	})
 }

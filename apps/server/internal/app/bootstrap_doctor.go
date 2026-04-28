@@ -37,10 +37,28 @@ type bootstrapDoctorResult struct {
 	Notes                []string                         `json:"notes,omitempty"`
 }
 
-var bootstrapCanonicalProjectRootFn = store.CanonicalProjectRoot
-var resolveBindingViewBootstrapFn = (*store.Handle).ResolveBindingView
+// bootstrapDeps holds the seams that bootstrap commands need so tests can
+// inject failures (canonical-root lookup, binding-view resolution) without
+// swapping package-level vars under a global mutex. defaultBootstrapDeps()
+// returns the production wiring; tests build a local instance and pass it
+// down explicitly.
+type bootstrapDeps struct {
+	CanonicalProjectRoot func(ctx context.Context, projectRoot string) (string, error)
+	ResolveBindingView   func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
+}
+
+func defaultBootstrapDeps() bootstrapDeps {
+	return bootstrapDeps{
+		CanonicalProjectRoot: store.CanonicalProjectRoot,
+		ResolveBindingView:   (*store.Handle).ResolveBindingView,
+	}
+}
 
 func bootstrapDoctorCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	return bootstrapDoctorCommandWithDeps(ctx, args, stdin, stdout, defaultBootstrapDeps())
+}
+
+func bootstrapDoctorCommandWithDeps(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, deps bootstrapDeps) error {
 	useGeneric := false
 	if len(args) > 0 && args[0] == "generic" {
 		useGeneric = true
@@ -59,15 +77,15 @@ func bootstrapDoctorCommand(ctx context.Context, args []string, stdin io.Reader,
 		}
 	}
 
-	report, err := buildBootstrapDoctor(ctx, target, opts, stdin)
+	report, err := buildBootstrapDoctor(ctx, target, opts, stdin, deps)
 	if err != nil {
 		return err
 	}
-	return renderBootstrapDoctorJSONOrHuman(stdout, opts.JSONOutput, report)
+	return renderBootstrapDoctorJSONOrHuman(ctx, stdout, opts.JSONOutput, report)
 }
 
-func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts bootstrapOptions, stdin io.Reader) (bootstrapDoctorResult, error) {
-	projectCanonicalRoot, err := bootstrapCanonicalProjectRootFn(ctx, opts.ProjectRoot)
+func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts bootstrapOptions, stdin io.Reader, deps bootstrapDeps) (bootstrapDoctorResult, error) {
+	projectCanonicalRoot, err := deps.CanonicalProjectRoot(ctx, opts.ProjectRoot)
 	if err != nil {
 		return bootstrapDoctorResult{}, err
 	}
@@ -136,7 +154,7 @@ func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts boot
 			Detail: "binding view is unavailable until the local vault is initialized",
 		}
 	} else {
-		binding, visible, err := resolveBindingViewBootstrapFn(handle, ctx, opts.ProjectRoot)
+		binding, visible, err := deps.ResolveBindingView(handle, ctx, opts.ProjectRoot)
 		if err != nil {
 			return bootstrapDoctorResult{}, err
 		}
@@ -260,7 +278,7 @@ func bootstrapHookPresent(projectRoot string) bool {
 	return err == nil
 }
 
-func bootstrapAliasContext(ctx context.Context, projectRoot string) (map[string]string, store.Binding, []store.VisibleReference, error) {
+func bootstrapAliasContext(ctx context.Context, projectRoot string, deps bootstrapDeps) (map[string]string, store.Binding, []store.VisibleReference, error) {
 	handle, _, err := previewBootstrapHandle(ctx)
 	if err != nil {
 		return nil, store.Binding{}, nil, err
@@ -268,7 +286,7 @@ func bootstrapAliasContext(ctx context.Context, projectRoot string) (map[string]
 	if handle == nil {
 		return map[string]string{}, store.Binding{}, nil, nil
 	}
-	binding, visible, err := resolveBindingViewBootstrapFn(handle, ctx, projectRoot)
+	binding, visible, err := deps.ResolveBindingView(handle, ctx, projectRoot)
 	if err != nil {
 		return nil, store.Binding{}, nil, err
 	}

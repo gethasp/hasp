@@ -64,7 +64,11 @@ func TestPlaintextGrantLifecycleAndValidation(t *testing.T) {
 	}
 
 	handle.store.audit = nil
-	grant, err = handle.GrantPlaintextUse("session-2", "API_TOKEN", PlaintextCopy, "user", GrantOnce, time.Second)
+	// 30s TTL — under argon2id, store I/O between grant creation and the
+	// PlaintextGrantActive assertion below can exceed a 1s window and cause
+	// false-flake failures; the test isn't validating expiry, just that a
+	// fresh grant is observable as active.
+	grant, err = handle.GrantPlaintextUse("session-2", "API_TOKEN", PlaintextCopy, "user", GrantOnce, 30*time.Second)
 	if err != nil {
 		t.Fatalf("grant plaintext copy with nil audit: %v", err)
 	}

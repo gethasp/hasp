@@ -4,6 +4,17 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.33]
+
+- Land the P0 security hardening pass: peer-UID check on the daemon Unix socket, crash-safe vault envelope writes, encoding-aware byte-range redactor, refusal of argv-delivered plaintext in secret commands, write-env clobber protection, scrubbing of inherited HASP env in spawned children, hardened git shell-outs, per-session inject directories, normalized vault unwrap errors, removal of the `.test-basename` KDF weakening seam, and HMAC-chained audit log entries under a per-vault key.
+- Migrate the vault KDF to argon2id with a backwards-compatible read path, ship `hasp vault rekdf` to upgrade existing vaults in place, and add `hasp vault forget-device` plus a wider `hasp vault lock` surface.
+- Add operator-facing CLI verbs: `hasp secret show / reveal / copy`, `hasp secret search`, `hasp secret diff`, `hasp session list --mine --json`, `hasp audit tail [-n N] [-f]`, `hasp completion <bash|zsh|fish|powershell>`, and inline TTY confirm for agent-safe plaintext reveal/copy.
+- Stabilize the user surface: enforce a strict `--json` contract with structured error envelopes, introduce stable error codes and exit-code buckets, standardise `--env NAME=@REF` grammar across `run` / `write-env` / `app connect`, replace tri-state bool flags with `always|never|ask`, gate auto-expose behind `--expose=ask|always|never`, require explicit `--grant-window` when scope is `window`, accept duration-shaped `--grant-*` values, and deprecate `hasp set` / `hasp capture` / top-level `list`+`get` shortcuts in favor of `hasp secret`.
+- Polish the help and error surfaces: 'did you mean' suggestions for unknown topics and commands, distinct empty-vault vs no-match templates, populated `Hint` fields on key user-facing errors, per-command help bodies that list every FlagSet flag, `--dry-run` implies `--explain`, ASCII glyph fallback under non-UTF-8 locales, and an ambient `--json` / `--quiet` sweep across renderers.
+- Improve daemon and broker robustness: bump daemon-startup deadline to 15s, replace the os.Stat readiness check with `net.Dial`, memoize `gitsafe.TopLevel` and `CanonicalProjectRoot.EvalSymlinks`, surface `randomHex` entropy failures instead of panicking, detect pid reuse during `session ResolveProcess`, and parse global flags from any argv position.
+- Continue the `internal/app` monolith split as foundation work: Stage 1 extracts leaf rendering primitives to `internal/app/ui/`, Stage 2 extracts five cycle-relevant primitives to dedicated subpackages (`internal/app/ttyutil/`, `internal/app/secrettypes/`, `internal/app/auditlog/`, `internal/app/vaultaccess/`, `internal/app/cmddispatch/`) using a closure-indirection pattern that keeps test seams in place with zero test-file churn.
+- Allocate a PTY when `hasp run` detects a TTY on stdout so child programs that probe for an interactive terminal keep working through the broker, and add ANSI-aware streaming redaction so terminal control sequences no longer mask sensitive substrings.
+
 ## [v0.1.32]
 
 - Close the post-v0.1.31 V1 visibility remainder without widening the product: surface the stdin/shell-export rescue path in `hasp import --help`, write a paste-rescue section plus V1 threat-model-limits and licensing-and-usage blocks into the packaged `QUICKSTART.md`, and align `docs/quickstart.md` with the same blocks.

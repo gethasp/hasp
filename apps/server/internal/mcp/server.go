@@ -81,7 +81,7 @@ func dispatch(ctx context.Context, req request) response {
 		return response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "hasp", "version": runtime.Version()},
+			"serverInfo":      map[string]any{"name": "hasp", "version": runtime.VersionString()},
 		}}
 	case "tools/list":
 		return response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": catalog()}}

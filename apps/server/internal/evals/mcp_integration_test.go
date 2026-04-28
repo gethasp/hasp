@@ -157,8 +157,8 @@ func TestMCPFailureEval(t *testing.T) {
 		t.Fatal("mcp run unexpectedly succeeded with revoked token")
 	}
 
-	expiredToken := openRuntimeSession(t, env, env.projectRoot, 1)
-	time.Sleep(2 * time.Second)
+	expiredToken := openRuntimeSessionWithDuration(t, env, env.projectRoot, 50*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	if _, err := runMCPBinaryRequests(t, env, []map[string]any{
 		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{
 			"name": "hasp_list",

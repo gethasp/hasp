@@ -11,6 +11,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/mcp"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -65,7 +66,7 @@ func agentConsumerCommand(ctx context.Context, args []string, stdin io.Reader, s
 	case "list":
 		return agentListCommand(ctx, args[1:], stdout)
 	case "list-supported":
-		return agentListSupportedCommand(args[1:], stdout)
+		return agentListSupportedCommand(ctx, args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown agent subcommand %q", args[0])
 	}
@@ -90,7 +91,7 @@ type agentSupportedProfileView struct {
 	PrintConfig        map[string]string                `json:"print_config"`
 }
 
-func agentListSupportedCommand(args []string, stdout io.Writer) error {
+func agentListSupportedCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent list-supported", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
@@ -124,7 +125,7 @@ func agentListSupportedCommand(args []string, stdout io.Writer) error {
 	}
 	out = append(out, genericAgentSupportedProfileView())
 	payload := map[string]any{"profiles": out}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(tw, "profile\ttier\tcompatibility\tdocs\tconnect")
 		for _, profile := range out {
@@ -195,6 +196,11 @@ func agentConnectCommand(ctx context.Context, args []string, stdout io.Writer) e
 	if strings.TrimSpace(name) == "" || fs.NArg() != 0 {
 		return errors.New("usage: hasp agent connect <agent-id> [--project-root <path>]")
 	}
+	if expandedRoot, expandErr := expandUserPath(strings.TrimSpace(*projectRoot)); expandErr != nil {
+		return fmt.Errorf("--project-root: %w", expandErr)
+	} else {
+		*projectRoot = expandedRoot
+	}
 	agentID := strings.TrimSpace(name)
 	supported := setupSupportedAgents()
 	selected, err := selectSetupAgents(supported, []string{agentID})
@@ -243,8 +249,8 @@ func agentConnectCommand(ctx context.Context, args []string, stdout io.Writer) e
 		"outcome":       "connected",
 	})
 	payload := map[string]any{"consumer": consumer, "config": outcome}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderAgentConsumerSummary(w, "Agent connected", "Saved the agent consumer configuration.", consumer, outcome)
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderAgentConsumerSummary(w, "Agent connected", "Saved the agent configuration.", consumer, outcome)
 	})
 }
 
@@ -286,8 +292,8 @@ func agentDisconnectCommand(ctx context.Context, args []string, stdout io.Writer
 		"outcome":       "disconnected",
 	})
 	payload := map[string]any{"consumer_name": consumer.Name, "outcome": "disconnected"}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderSimpleAction(w, "Agent disconnected", "Removed the saved agent consumer.",
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(ctx, w, "Agent disconnected", "Removed the saved agent.",
 			cliPair("Name", consumer.Name),
 			cliPair("Outcome", "disconnected"),
 		)
@@ -307,7 +313,7 @@ func agentListCommand(ctx context.Context, args []string, stdout io.Writer) erro
 	}
 	consumers := storeListAgentsFn(handle)
 	payload := map[string]any{"consumers": consumers}
-	return renderJSONOrHuman(stdout, *jsonOutput, payload, func(w io.Writer) error {
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return renderAgentConsumerList(w, consumers)
 	})
 }
@@ -337,7 +343,7 @@ func agentLaunchCommand(ctx context.Context, args []string, stdin io.Reader, std
 		consumer = store.AgentConsumer{
 			Name:        name,
 			AgentID:     name,
-			ProjectRoot: strings.TrimSpace(os.Getenv(envAgentProjectRoot)),
+			ProjectRoot: strings.TrimSpace(os.Getenv(secrettypes.EnvAgentProjectRoot)),
 		}
 	} else if err != nil {
 		return err
@@ -371,7 +377,7 @@ func agentLaunchCommand(ctx context.Context, args []string, stdin io.Reader, std
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	if token := envValue(env, envSessionToken); token != "" {
+	if token := envValue(env, secrettypes.EnvSessionToken); token != "" {
 		if err := agentRegisterProcessFn(ctx, starter, token, cmd.Process.Pid); err != nil {
 			_ = cmd.Process.Kill()
 			_, _ = cmd.Process.Wait()
@@ -423,7 +429,7 @@ func agentMCPCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 	if err != nil {
 		return err
 	}
-	if token := envValue(env, envSessionToken); token != "" {
+	if token := envValue(env, secrettypes.EnvSessionToken); token != "" {
 		if err := agentRegisterProcessFn(ctx, starter, token, os.Getppid()); err != nil {
 			return err
 		}
@@ -455,8 +461,8 @@ func buildAgentExecutionEnv(ctx context.Context, handle *store.Handle, consumer 
 	}
 	env := []string{
 		paths.EnvHome + "=" + resolved.HomeDir,
-		envAgentSafeMode + "=1",
-		envAgentConsumer + "=" + consumer.Name,
+		secrettypes.EnvAgentSafeMode + "=1",
+		secrettypes.EnvAgentConsumer + "=" + consumer.Name,
 	}
 	if consumer.ProjectRoot != "" {
 		if _, _, _, err := ensureProjectBindingExplicit(ctx, handle, consumer.ProjectRoot); err != nil {
@@ -472,9 +478,9 @@ func buildAgentExecutionEnv(ctx context.Context, handle *store.Handle, consumer 
 	if err != nil {
 		return nil, err
 	}
-	env = append(env, envSessionToken+"="+reply.SessionToken)
+	env = append(env, secrettypes.EnvSessionToken+"="+reply.SessionToken)
 	if consumer.ProjectRoot != "" {
-		env = append(env, envAgentProjectRoot+"="+consumer.ProjectRoot)
+		env = append(env, secrettypes.EnvAgentProjectRoot+"="+consumer.ProjectRoot)
 	}
 	return env, nil
 }

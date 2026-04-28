@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +28,37 @@ func TestRunFailurePath(t *testing.T) {
 	}
 	if stderr.Len() == 0 {
 		t.Fatal("expected error output")
+	}
+}
+
+func TestRunUnknownCommandReturnsExitCodeOne(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), []string{"does-not-exist"}, bytes.NewBuffer(nil), &stderr, &stderr)
+	if code != 1 {
+		t.Fatalf("unknown command exit code = %d, want 1 (generic)", code)
+	}
+}
+
+func TestRunFailureEmitsStructuredJSONOnStderrInJSONMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"--json", "does-not-exist"}, bytes.NewBuffer(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for unknown command")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout should stay empty in --json error path, got %q", stdout.String())
+	}
+	got := strings.TrimSpace(stderr.String())
+	var decoded map[string]map[string]string
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("expected JSON envelope on stderr, got %q (decode err %v)", got, err)
+	}
+	inner, ok := decoded["error"]
+	if !ok {
+		t.Fatalf("missing 'error' key in envelope: %s", got)
+	}
+	if !strings.Contains(inner["message"], "unknown command") {
+		t.Fatalf("message = %q, want it to mention 'unknown command'", inner["message"])
 	}
 }
 

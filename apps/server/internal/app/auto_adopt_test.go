@@ -238,7 +238,7 @@ func TestEnsureProjectBindingAutoAdoptsGitRepoAndCommandsUseIt(t *testing.T) {
 	var runOut bytes.Buffer
 	if err := runWithStarter(
 		context.Background(),
-		[]string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""},
+		[]string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""},
 		bytes.NewBuffer(nil),
 		&runOut,
 		io.Discard,

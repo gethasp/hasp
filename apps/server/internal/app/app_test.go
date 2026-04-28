@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,22 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
-	os.Exit(m.Run())
+	// Always redirect HASP_HOME to a safe temp dir so no test can accidentally
+	// write to the real ~/.hasp directory even when HASP_HOME is set in the
+	// caller's shell environment.  Individual tests call
+	// t.Setenv("HASP_HOME", t.TempDir()) to get their own isolated dir.
+	dir, err := os.MkdirTemp("", "hasp-test-home-*")
+	if err == nil {
+		os.Setenv("HASP_HOME", dir)
+	}
+	// Signal the paths guard that this is a test context so it refuses any
+	// remaining fallback to the real user home even if HASP_HOME is unset.
+	os.Setenv("HASP_TEST", "1")
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
 }
 
 type fakeStarter struct {
@@ -96,7 +112,7 @@ func TestHelpTopics(t *testing.T) {
 		t.Fatalf("run app connect help: %v", err)
 	}
 	appConnectHelp := stdout.String()
-	if !strings.Contains(appConnectHelp, "Launcher creation is never silent") || !strings.Contains(appConnectHelp, "--install=true") {
+	if !strings.Contains(appConnectHelp, "Launcher creation is never silent") || !strings.Contains(appConnectHelp, "--install=always") {
 		t.Fatalf("unexpected app connect help output: %q", appConnectHelp)
 	}
 
@@ -182,7 +198,7 @@ func TestInitAndImportCommands(t *testing.T) {
 	}
 
 	var captureOut bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"capture", "--name", "session_token", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-write"}, bytes.NewBuffer(nil), &captureOut, &captureOut, starter); err != nil {
+	if err := runWithStarter(context.Background(), []string{"capture", "--name", "session_token", "--value", "top-secret", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m", "--grant-write"}, bytes.NewBuffer(nil), &captureOut, &captureOut, starter); err != nil {
 		t.Fatalf("run capture: %v", err)
 	}
 
@@ -283,9 +299,10 @@ func TestExportAndRestoreBackupCommands(t *testing.T) {
 		t.Fatalf("run set: %v", err)
 	}
 
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
 	backupPath := filepath.Join(t.TempDir(), "hasp.backup.json")
 	var exportOut bytes.Buffer
-	if err := Run(context.Background(), []string{"export-backup", "--output", backupPath, "--recovery-passphrase", "backup-passphrase"}, bytes.NewBuffer(nil), &exportOut, &exportOut); err != nil {
+	if err := Run(context.Background(), []string{"export-backup", "--output", backupPath}, bytes.NewBuffer(nil), &exportOut, &exportOut); err != nil {
 		t.Fatalf("run export-backup: %v", err)
 	}
 
@@ -294,7 +311,7 @@ func TestExportAndRestoreBackupCommands(t *testing.T) {
 	t.Setenv("HASP_MASTER_PASSWORD", "restored-password")
 
 	var restoreOut bytes.Buffer
-	if err := Run(context.Background(), []string{"restore-backup", "--input", backupPath, "--recovery-passphrase", "backup-passphrase"}, bytes.NewBuffer(nil), &restoreOut, &restoreOut); err != nil {
+	if err := Run(context.Background(), []string{"restore-backup", "--input", backupPath}, bytes.NewBuffer(nil), &restoreOut, &restoreOut); err != nil {
 		t.Fatalf("run restore-backup: %v", err)
 	}
 
@@ -344,7 +361,7 @@ func TestRunWriteEnvCheckRepoAndTUICommands(t *testing.T) {
 
 	var runOut bytes.Buffer
 	var runErr bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, bytes.NewBuffer(nil), &runOut, &runErr, starter); err != nil {
+	if err := runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--env", "API_TOKEN=secret_01", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, bytes.NewBuffer(nil), &runOut, &runErr, starter); err != nil {
 		t.Fatalf("run command: %v", err)
 	}
 	if strings.Contains(runOut.String(), "abc123") {
@@ -354,7 +371,7 @@ func TestRunWriteEnvCheckRepoAndTUICommands(t *testing.T) {
 	var writeEnvOut bytes.Buffer
 	var writeEnvErr bytes.Buffer
 	envPath := filepath.Join(projectRoot, ".env.local")
-	if err := runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--output", envPath, "--env", "API_TOKEN=secret_01", "--env", "DATABASE_URL=secret_02", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window"}, bytes.NewBuffer(nil), &writeEnvOut, &writeEnvErr, starter); err != nil {
+	if err := runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--output", envPath, "--env", "API_TOKEN=secret_01", "--env", "DATABASE_URL=secret_02", "--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m"}, bytes.NewBuffer(nil), &writeEnvOut, &writeEnvErr, starter); err != nil {
 		t.Fatalf("write-env command: %v", err)
 	}
 	if _, err := os.Stat(envPath); err != nil {
@@ -391,7 +408,7 @@ func TestCaptureRequiresExplicitWriteGrant(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := runWithStarter(context.Background(), []string{"capture", "--name", "api_token", "--value", "abc123", "--project-root", projectRoot, "--grant-project", "window"}, bytes.NewBuffer(nil), &stdout, &stdout, starter)
+	err := runWithStarter(context.Background(), []string{"capture", "--name", "api_token", "--value", "abc123", "--project-root", projectRoot, "--grant-project", "window", "--grant-window", "15m"}, bytes.NewBuffer(nil), &stdout, &stdout, starter)
 	if err == nil || !strings.Contains(err.Error(), "capture write grant required") {
 		t.Fatalf("expected explicit write grant error, got %v", err)
 	}
@@ -427,6 +444,9 @@ func TestRunRejectsUnknownSessionToken(t *testing.T) {
 func TestInjectCommandWrapper(t *testing.T) {
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 	starter := newDaemonTestStarter(t)
@@ -442,7 +462,7 @@ func TestInjectCommandWrapper(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := injectCommand(context.Background(), []string{"--project-root", projectRoot, "--file", "CERT_PATH=@cert_file", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "cat \"$CERT_PATH\""}, &stdout, &stdout, starter); err != nil {
+	if err := injectCommand(context.Background(), []string{"--project-root", projectRoot, "--file", "CERT_PATH=@cert_file", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "cat \"$CERT_PATH\""}, &stdout, &stdout, starter); err != nil {
 		t.Fatalf("inject command: %v", err)
 	}
 	if strings.Contains(stdout.String(), "certificate-data") {
@@ -453,6 +473,9 @@ func TestInjectCommandWrapper(t *testing.T) {
 func TestRunCommandAcceptsNamedReference(t *testing.T) {
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 	starter := newDaemonTestStarter(t)
@@ -468,7 +491,7 @@ func TestRunCommandAcceptsNamedReference(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := runCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=@api_token", "--grant-project", "window", "--grant-secret", "session", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, &stdout, &stdout, starter); err != nil {
+	if err := runCommand(context.Background(), []string{"--project-root", projectRoot, "--env", "API_TOKEN=@api_token", "--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "sh", "-c", "printf '%s' \"$API_TOKEN\""}, &stdout, &stdout, starter); err != nil {
 		t.Fatalf("run command with named reference: %v", err)
 	}
 	if strings.Contains(stdout.String(), "abc123") {
@@ -626,20 +649,36 @@ func newDaemonTestStarter(t *testing.T) starter {
 
 func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	if err := waitForSocketReady(socketPath, errCh, 5*time.Second); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+// waitForSocketReady polls the listener at socketPath with net.Dial until
+// it accepts, returning nil on first successful dial and an error on
+// timeout. errCh surfaces an early daemon-exit failure so the helper does
+// not silently spin until the deadline.
+//
+// hasp-iwlm: argon2id-driven full-suite load slows the listener-bind
+// step enough that os.Stat sees the socket file before the goroutine is
+// accepting; dial-based readiness eliminates the race.
+func waitForSocketReady(socketPath string, errCh <-chan error, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				t.Fatalf("daemon startup failed: %v", err)
+				return fmt.Errorf("daemon startup failed: %w", err)
 			}
-			t.Fatalf("daemon exited before socket became available")
+			return fmt.Errorf("daemon exited before socket became available")
 		default:
 		}
-		if _, err := os.Stat(socketPath); err == nil {
-			return
+		conn, err := net.DialTimeout("unix", socketPath, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for socket %s", socketPath)
+	return fmt.Errorf("timed out waiting for socket %s", socketPath)
 }

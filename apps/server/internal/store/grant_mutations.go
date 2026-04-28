@@ -13,8 +13,12 @@ func (h *Handle) GrantProjectLease(bindingID string, sessionToken string, scope 
 	if err != nil {
 		return ProjectLease{}, err
 	}
+	id, err := randomHex(10)
+	if err != nil {
+		return ProjectLease{}, fmt.Errorf("mint project lease id: %w", err)
+	}
 	lease := ProjectLease{
-		ID:           randomHex(10),
+		ID:           id,
 		BindingID:    bindingID,
 		SessionToken: sessionToken,
 		Scope:        scope,
@@ -52,8 +56,12 @@ func (h *Handle) GrantSecretUse(bindingID string, sessionToken string, itemName 
 	if err != nil {
 		return SecretGrant{}, err
 	}
+	id, err := randomHex(10)
+	if err != nil {
+		return SecretGrant{}, fmt.Errorf("mint secret grant id: %w", err)
+	}
 	grant := SecretGrant{
-		ID:              randomHex(10),
+		ID:              id,
 		BindingID:       bindingID,
 		ItemName:        itemName,
 		SessionToken:    sessionToken,
@@ -97,8 +105,12 @@ func (h *Handle) GrantConvenience(bindingID string, sessionToken string, destina
 	if !ok || !grantIsActive(lease.Scope, lease.ExpiresAt, lease.RevokedAt, lease.UsedAt, h.store.now()) {
 		return ConvenienceGrant{}, fmt.Errorf("active project lease required for convenience grant")
 	}
+	id, err := randomHex(10)
+	if err != nil {
+		return ConvenienceGrant{}, fmt.Errorf("mint convenience grant id: %w", err)
+	}
 	grant := ConvenienceGrant{
-		ID:                  randomHex(10),
+		ID:                  id,
 		ProjectBindingID:    bindingID,
 		LeaseID:             lease.ID,
 		DestinationPathHash: hashString(destinationPath),
@@ -155,8 +167,12 @@ func (h *Handle) GrantPlaintextUse(sessionToken string, itemName string, action 
 		return PlaintextGrant{}, fmt.Errorf("plaintext grants may not exceed %s", MaxPlaintextGrantTTL)
 	}
 	expiresAt := h.store.now().Add(ttl)
+	id, err := randomHex(10)
+	if err != nil {
+		return PlaintextGrant{}, fmt.Errorf("mint plaintext grant id: %w", err)
+	}
 	grant := PlaintextGrant{
-		ID:           randomHex(10),
+		ID:           id,
 		SessionToken: sessionToken,
 		ItemName:     itemName,
 		Action:       action,
@@ -165,7 +181,7 @@ func (h *Handle) GrantPlaintextUse(sessionToken string, itemName string, action 
 		ExpiresAt:    &expiresAt,
 	}
 	h.state.PlaintextGrants[plaintextGrantKey(sessionToken, itemName, action)] = grant
-	err := h.persist()
+	err = h.persist()
 	if err == nil {
 		h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{
 			"action":           "grant.plaintext",

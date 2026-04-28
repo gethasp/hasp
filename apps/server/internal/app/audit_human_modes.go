@@ -79,7 +79,9 @@ func fmtDetails(safe map[string]any) string {
 
 // auditRenderTimeline writes one line per event in chronological order.
 // Each line contains: timestamp, action, reference, agent, extra details (redacted),
-// and "BLOCKED" when applicable.
+// and "BLOCKED" when applicable. Columns flow through a tabwriter so long
+// action types or references can't push later columns out of alignment
+// (hasp-wbj2).
 func auditRenderTimeline(events []audit.Event, w io.Writer) error {
 	// Sort chronologically (earliest first); stable to preserve tie order.
 	sorted := make([]audit.Event, len(events))
@@ -88,6 +90,7 @@ func auditRenderTimeline(events []audit.Event, w io.Writer) error {
 		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
 	})
 
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, e := range sorted {
 		safe := redactDetailsForHuman(e.Details)
 
@@ -98,21 +101,21 @@ func auditRenderTimeline(events []audit.Event, w io.Writer) error {
 
 		ts := e.Timestamp.UTC().Format("2006-01-02 15:04:05")
 
-		line := fmt.Sprintf("%s  %-16s  %-30s  %s", ts, e.Type, ref, e.Actor)
-
 		extra := fmtDetails(safe)
-		if extra != "" {
-			line += "  " + extra
+		blocked := ""
+		if isBlocked(e.Details) {
+			blocked = "BLOCKED"
 		}
 
-		if isBlocked(e.Details) {
-			line += "  BLOCKED"
-		}
-		if _, err := fmt.Fprintln(w, line); err != nil {
+		// Five tab-separated columns: timestamp, action, ref, agent, then a
+		// trailer that combines extra k=v details and the BLOCKED marker so
+		// neither becomes its own ragged column.
+		trailer := strings.TrimSpace(strings.Join([]string{extra, blocked}, " "))
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ts, e.Type, ref, e.Actor, trailer); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tw.Flush()
 }
 
 // auditRenderTable writes a header row followed by one data row per event.

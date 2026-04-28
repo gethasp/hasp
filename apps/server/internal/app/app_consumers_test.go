@@ -192,8 +192,8 @@ func TestAppConsumerLifecycleAndDeliveryModes(t *testing.T) {
 	if err := Run(context.Background(), []string{
 		"app", "connect", "../bad",
 		"--cmd", "true",
-	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid app consumer name") {
-		t.Fatalf("expected invalid consumer name failure, got %v", err)
+	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid app name") {
+		t.Fatalf("expected invalid app name failure, got %v", err)
 	}
 
 	var disconnectOut bytes.Buffer

@@ -87,7 +87,6 @@ func TestAppConsumerCommandErrorBranches(t *testing.T) {
 	origListApps := storeListAppsFn
 	origUpsertApp := storeUpsertAppFn
 	origDeleteApp := storeDeleteAppFn
-	origExecRun := runnerExecuteFn
 	origEnsureSession := ensureSessionAppFn
 	origGetItem := secretGetItemFn
 	origUpsertItem := secretUpsertItemFn
@@ -107,7 +106,6 @@ func TestAppConsumerCommandErrorBranches(t *testing.T) {
 		storeListAppsFn = origListApps
 		storeUpsertAppFn = origUpsertApp
 		storeDeleteAppFn = origDeleteApp
-		runnerExecuteFn = origExecRun
 		ensureSessionAppFn = origEnsureSession
 		secretGetItemFn = origGetItem
 		secretUpsertItemFn = origUpsertItem

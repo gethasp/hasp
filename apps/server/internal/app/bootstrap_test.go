@@ -111,7 +111,7 @@ func TestBootstrapCommandInitializesBindsAndVerifies(t *testing.T) {
 		t.Fatalf("expected release gate in bootstrap output")
 	}
 
-	if err := setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, io.Discard); err != nil {
+	if err := setCommand(context.Background(), []string{"--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("set item for alias binding: %v", err)
 	}
 	if err := bootstrapCommand(context.Background(), []string{"--profile", "claude-code", "--project-root", projectRoot, "--hooks=false", "--bind-item", "api_token", "--verify=false"}, io.Discard); err != nil {
@@ -318,14 +318,14 @@ func TestEnsureBootstrapHandleAndVerificationHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
-	handle, state, err := ensureBootstrapHandle(context.Background(), vaultStore)
+	handle, state, err := ensureBootstrapHandle(context.Background(), vaultStore, false)
 	if err != nil {
 		t.Fatalf("ensure bootstrap handle: %v", err)
 	}
 	if state != "created" || handle == nil {
 		t.Fatalf("unexpected handle state %q handle=%v", state, handle)
 	}
-	handle, state, err = ensureBootstrapHandle(context.Background(), vaultStore)
+	handle, state, err = ensureBootstrapHandle(context.Background(), vaultStore, false)
 	if err != nil {
 		t.Fatalf("ensure existing bootstrap handle: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestEnsureBootstrapHandleAndVerificationHelpers(t *testing.T) {
 	origOpenVault := openVaultHandleFn
 	defer func() { openVaultHandleFn = origOpenVault }()
 	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault fail") }
-	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore); err == nil || !strings.Contains(err.Error(), "vault fail") {
+	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore, false); err == nil || !strings.Contains(err.Error(), "vault fail") {
 		t.Fatalf("expected non-vault error, got %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestEnsureBootstrapHandleResidualFailures(t *testing.T) {
 		t.Fatalf("seed initialized store: %v", err)
 	}
 	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, store.ErrVaultNotInitialized }
-	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore); err == nil || !errors.Is(err, store.ErrVaultExists) {
+	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore, false); err == nil || !errors.Is(err, store.ErrVaultExists) {
 		t.Fatalf("expected init failure from existing vault, got %v", err)
 	}
 
@@ -434,7 +434,7 @@ func TestEnsureBootstrapHandleResidualFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store for open failure: %v", err)
 	}
-	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore); err == nil || !strings.Contains(err.Error(), "open fail") {
+	if _, _, err := ensureBootstrapHandle(context.Background(), vaultStore, false); err == nil || !strings.Contains(err.Error(), "open fail") {
 		t.Fatalf("expected open store failure, got %v", err)
 	}
 }

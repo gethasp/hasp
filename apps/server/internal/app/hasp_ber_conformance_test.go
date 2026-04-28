@@ -31,14 +31,19 @@ func TestDoctorJSONContainsOnlyAllowlistedKeys(t *testing.T) {
 
 	payload := decodeObject(t, out.Bytes())
 	allowed := map[string]bool{
-		"daemon_running":  true,
-		"vault_state":     true,
-		"binding_state":   true,
-		"hooks_installed": true,
-		"audit_degraded":  true,
-		"version_major":   true,
-		"version_minor":   true,
-		"version_patch":   true,
+		"_schema":             true, // hasp-1dg1: schema-version stamp
+		"daemon_running":      true,
+		"vault_state":         true,
+		"binding_state":       true,
+		"hooks_installed":     true,
+		"audit_degraded":      true,
+		"version_major":       true,
+		"version_minor":       true,
+		"version_patch":       true,
+		"daemon_version":      true, // hasp-8m5h: daemon's reported version (omitempty)
+		"version_mismatch":    true, // hasp-8m5h: warn-level mismatch flag
+		"redactor_min_length": true,
+		"redactor_ansi_aware": true, // hasp-ab5d: ANSI-aware streaming-redaction capability
 	}
 	for key := range payload {
 		if !allowed[key] {
@@ -170,7 +175,7 @@ func TestAuditIncidentBundleRedactsSecretValues(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "API_TOKEN=" + secretValue}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString(secretValue+"\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
@@ -241,12 +246,11 @@ func TestVaultLockCommandRevokesReachableDaemonAndCoversErrors(t *testing.T) {
 	if err := vaultLockCommand(context.Background(), nil, io.Discard, errStarter); err == nil || err.Error() != "lock fail" {
 		t.Fatalf("expected lock failure, got %v", err)
 	}
-	origRevokeAll := revokeAllGrantsFn
-	revokeAllGrantsFn = func(*store.Handle) (int, error) { return 0, errors.New("grant revoke fail") }
-	if err := vaultLockCommand(context.Background(), []string{"--json"}, io.Discard, starter); err == nil || err.Error() != "grant revoke fail" {
+	failingDeps := defaultVaultGrantOpsDeps()
+	failingDeps.RevokeAllGrants = func(*store.Handle) (int, error) { return 0, errors.New("grant revoke fail") }
+	if err := vaultLockCommandWithDeps(context.Background(), []string{"--json"}, io.Discard, starter, failingDeps); err == nil || err.Error() != "grant revoke fail" {
 		t.Fatalf("expected grant revoke failure, got %v", err)
 	}
-	revokeAllGrantsFn = origRevokeAll
 	var help bytes.Buffer
 	if err := vaultCommand(context.Background(), nil, &help, starter); err != nil || !strings.Contains(help.String(), "hasp vault") {
 		t.Fatalf("expected vault help, err=%v out=%s", err, help.String())
@@ -292,12 +296,11 @@ func TestStatusAuditDegradedTimestampAndSessionRevokeAllBranches(t *testing.T) {
 	if err := sessionRevokeCommand(context.Background(), []string{"--all"}, io.Discard, errStarter); err == nil || err.Error() != "revoke all fail" {
 		t.Fatalf("expected revoke all failure, got %v", err)
 	}
-	origRevokeAll := revokeAllGrantsFn
-	revokeAllGrantsFn = func(*store.Handle) (int, error) { return 0, errors.New("grant revoke fail") }
-	if err := sessionRevokeCommand(context.Background(), []string{"--all"}, io.Discard, starter); err == nil || err.Error() != "grant revoke fail" {
+	failingDeps := defaultVaultGrantOpsDeps()
+	failingDeps.RevokeAllGrants = func(*store.Handle) (int, error) { return 0, errors.New("grant revoke fail") }
+	if err := sessionRevokeCommandWithDeps(context.Background(), []string{"--all"}, io.Discard, starter, failingDeps); err == nil || err.Error() != "grant revoke fail" {
 		t.Fatalf("expected grant revoke failure, got %v", err)
 	}
-	revokeAllGrantsFn = origRevokeAll
 }
 
 func TestSecretRotateStatesProviderSideCredentialCaveat(t *testing.T) {
@@ -306,7 +309,7 @@ func TestSecretRotateStatesProviderSideCredentialCaveat(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "API_TOKEN=local-only-value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString("local-only-value\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 
@@ -326,11 +329,11 @@ func TestSecretRotateJSONAndErrorBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "API_TOKEN=local-only-value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString("local-only-value\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 	var out bytes.Buffer
-	if err := Run(context.Background(), []string{"secret", "rotate", "--json", "API_TOKEN=new-local-value"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "rotate", "--json", "API_TOKEN"}, bytes.NewBufferString("new-local-value\n"), &out, io.Discard); err != nil {
 		t.Fatalf("secret rotate json: %v", err)
 	}
 	payload := decodeObject(t, out.Bytes())
@@ -356,13 +359,13 @@ func TestSecretRotateJSONAndErrorBranches(t *testing.T) {
 	secretUpsertItemFn = func(*store.Handle, string, store.ItemKind, []byte, store.ItemMetadata) (store.Item, error) {
 		return store.Item{}, errors.New("upsert fail")
 	}
-	if err := secretRotateCommand(context.Background(), []string{"API_TOKEN=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "upsert fail" {
+	if err := secretRotateCommand(context.Background(), []string{"API_TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "upsert fail" {
 		t.Fatalf("expected upsert failure, got %v", err)
 	}
 	secretUpsertItemFn = origUpsert
 	origRevoke := secretRevokeGrantsForItemFn
 	secretRevokeGrantsForItemFn = func(*store.Handle, string) (int, error) { return 0, errors.New("item revoke fail") }
-	if err := secretRotateCommand(context.Background(), []string{"API_TOKEN=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "item revoke fail" {
+	if err := secretRotateCommand(context.Background(), []string{"API_TOKEN"}, bytes.NewBufferString("value\n"), io.Discard, io.Discard); err == nil || err.Error() != "item revoke fail" {
 		t.Fatalf("expected item revoke failure, got %v", err)
 	}
 	secretRevokeGrantsForItemFn = origRevoke
@@ -392,21 +395,21 @@ func TestAgentListSupportedJSONReportsProfileProofFields(t *testing.T) {
 
 func TestAgentListSupportedHumanAndUsage(t *testing.T) {
 	var out bytes.Buffer
-	if err := agentListSupportedCommand(nil, &out); err != nil {
+	if err := agentListSupportedCommand(context.Background(), nil, &out); err != nil {
 		t.Fatalf("agent list-supported: %v", err)
 	}
 	if !strings.Contains(out.String(), "profile") || !strings.Contains(out.String(), "tier") {
 		t.Fatalf("unexpected human profile output: %s", out.String())
 	}
-	if err := agentListSupportedCommand([]string{"extra"}, io.Discard); err == nil {
+	if err := agentListSupportedCommand(context.Background(), []string{"extra"}, io.Discard); err == nil {
 		t.Fatal("expected list-supported usage error")
 	}
-	if err := agentListSupportedCommand([]string{"--bad"}, io.Discard); err == nil {
+	if err := agentListSupportedCommand(context.Background(), []string{"--bad"}, io.Discard); err == nil {
 		t.Fatal("expected list-supported parse error")
 	}
 	origLoad := agentLoadSupportStatusesFn
 	agentLoadSupportStatusesFn = func() ([]profiles.SupportStatus, error) { return nil, errors.New("profiles fail") }
-	if err := agentListSupportedCommand(nil, io.Discard); err == nil || err.Error() != "profiles fail" {
+	if err := agentListSupportedCommand(context.Background(), nil, io.Discard); err == nil || err.Error() != "profiles fail" {
 		t.Fatalf("expected profile load failure, got %v", err)
 	}
 	agentLoadSupportStatusesFn = origLoad
@@ -418,8 +421,11 @@ func TestSiblingSubRootBindingsRemainIsolatedInsideOneGitWorktree(t *testing.T) 
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "PKG_A_TOKEN=a-value", "PKG_B_TOKEN=b-value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
-		t.Fatalf("secret add: %v", err)
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "PKG_A_TOKEN"}, bytes.NewBufferString("a-value\n"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret add PKG_A_TOKEN: %v", err)
+	}
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "PKG_B_TOKEN"}, bytes.NewBufferString("b-value\n"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret add PKG_B_TOKEN: %v", err)
 	}
 
 	workspace := t.TempDir()
@@ -435,10 +441,10 @@ func TestSiblingSubRootBindingsRemainIsolatedInsideOneGitWorktree(t *testing.T) 
 		t.Fatalf("mkdir pkg-b: %v", err)
 	}
 
-	if err := Run(context.Background(), []string{"project", "bind", "--json", "--hooks=false", "--project-root", pkgA, "--alias", "SERVICE_TOKEN=PKG_A_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "bind", "--json", "--hooks=false", "--allow-non-git", "--project-root", pkgA, "--alias", "SERVICE_TOKEN=PKG_A_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("bind pkg-a sub-root: %v", err)
 	}
-	if err := Run(context.Background(), []string{"project", "bind", "--json", "--hooks=false", "--project-root", pkgB, "--alias", "SERVICE_TOKEN=PKG_B_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "bind", "--json", "--hooks=false", "--allow-non-git", "--project-root", pkgB, "--alias", "SERVICE_TOKEN=PKG_B_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("bind pkg-b sub-root: %v", err)
 	}
 
@@ -492,12 +498,12 @@ func TestHaspBerCommandHelpAndAuditRedactionBranches(t *testing.T) {
 		t.Fatal("expected nil audit details to stay nil")
 	}
 	var auditOut bytes.Buffer
-	if err := auditCommandWithArgs([]string{"--incident-bundle"}, &auditOut); err != nil {
+	if err := auditCommandWithArgs(context.Background(), []string{"--incident-bundle"}, &auditOut); err != nil {
 		t.Fatalf("audit incident human: %v", err)
 	}
 	origEvents := auditEventsFn
 	auditEventsFn = func(*audit.Log) ([]audit.Event, error) { return nil, errors.New("events fail") }
-	if err := auditCommandWithArgs([]string{"--incident-bundle"}, io.Discard); err == nil || err.Error() != "events fail" {
+	if err := auditCommandWithArgs(context.Background(), []string{"--incident-bundle"}, io.Discard); err == nil || err.Error() != "events fail" {
 		t.Fatalf("expected events failure, got %v", err)
 	}
 	auditEventsFn = origEvents
@@ -545,7 +551,7 @@ type appRuntimeService struct {
 }
 
 func (s appRuntimeService) Ping(_ runtime.PingRequest, reply *runtime.PingResponse) error {
-	*reply = runtime.PingResponse{Name: "hasp", Version: runtime.Version(), ServerTime: time.Now().UTC()}
+	*reply = runtime.PingResponse{Name: "hasp", Version: runtime.VersionString(), ServerTime: time.Now().UTC()}
 	return nil
 }
 
