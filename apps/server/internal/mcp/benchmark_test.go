@@ -228,7 +228,9 @@ func startBenchmarkDaemon(b *testing.B) *runtime.Manager {
 			if err != nil {
 				b.Fatalf("daemon exited: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
+			// CI coverage runs leave daemon shutdown contended; widen this
+			// safety cap so a slow scheduler tick doesn't fail the benchmark.
 			b.Fatal("timed out waiting for benchmark daemon shutdown")
 		}
 	})

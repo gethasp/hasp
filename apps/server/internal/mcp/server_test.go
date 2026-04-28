@@ -955,7 +955,13 @@ func startTestDaemon(t *testing.T) *runtime.Manager {
 			if err != nil {
 				t.Fatalf("daemon exited: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
+			// Tight CI coverage runs (internal/app coverage takes 7+ minutes
+			// in the public release lane) leave the runner heavily contended
+			// when this cleanup fires. The original 2s cap was just a safety
+			// guardrail; widen it to 10s so a slow scheduler tick does not
+			// fail an otherwise-clean test, while still bounding any genuine
+			// shutdown deadlock.
 			t.Fatal("timed out waiting for daemon shutdown")
 		}
 	})

@@ -182,7 +182,9 @@ func TestManagerEnsureDaemonStartsServer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("daemon shutdown: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
+			// CI coverage runs leave daemon shutdown contended; widen this
+			// safety cap so a slow scheduler tick doesn't fail a clean test.
 			t.Fatal("timed out waiting for daemon shutdown")
 		}
 	}()

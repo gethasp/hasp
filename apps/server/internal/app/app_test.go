@@ -522,7 +522,10 @@ func TestRunUsesRealRuntimeStarterForPingStatusAndSessions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("daemon exited: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
+			// CI coverage runs leave the daemon shutdown contended; the
+			// 2s cap was just a safety guard. Widen it so a slow scheduler
+			// tick doesn't fail an otherwise-clean test.
 			t.Fatal("timed out waiting for daemon shutdown")
 		}
 	})
