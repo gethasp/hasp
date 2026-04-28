@@ -98,6 +98,19 @@ func TestDaemonCommandStartBranch(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	waitForSocket(t, manager.SocketPath(), make(chan error))
+	// hasp-gvks: net.Dial returns success once the listener is bound; the
+	// daemon writes its pid file *after* listenUnix and chmodFile, so a
+	// dial-only wait can race the pid write.  Poll until the pid file lands
+	// before asking StopDaemon to read it, otherwise CI sees an empty file
+	// and strconv.Atoi("") fails.
+	pidPath := filepath.Join(homeDir, "runtime", "daemon.pid")
+	pidDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(pidDeadline) {
+		if data, err := os.ReadFile(pidPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	if err := manager.StopDaemon(); err != nil {
 		t.Fatalf("stop daemon: %v", err)
 	}

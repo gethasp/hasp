@@ -547,7 +547,12 @@ func TestEnforceSecretPlaintextPolicyConsumeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	if _, err := handle.GrantPlaintextUse(reply.SessionToken, "API_TOKEN", store.PlaintextReveal, "user", store.GrantOnce, time.Second); err != nil {
+	// hasp-gvks: a 1-second grant TTL races CI: by the time chmod-readonly
+	// and enforceSecretPlaintextPolicy run under heavy load, the grant has
+	// already expired, so the policy returns "no grant" instead of the
+	// expected vault-write failure.  A generous TTL keeps the assertion
+	// focused on the persist-failure path.
+	if _, err := handle.GrantPlaintextUse(reply.SessionToken, "API_TOKEN", store.PlaintextReveal, "user", store.GrantOnce, time.Minute); err != nil {
 		t.Fatalf("grant plaintext use: %v", err)
 	}
 	t.Setenv(envSessionToken, reply.SessionToken)

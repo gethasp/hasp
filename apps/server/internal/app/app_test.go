@@ -640,7 +640,12 @@ func newDaemonTestStarter(t *testing.T) starter {
 			if err != nil {
 				t.Fatalf("daemon exited: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
+			// hasp-gvks: a 2-second cap is too tight under heavy CI load;
+			// the daemon goroutine sometimes needs longer to drain its
+			// listener and remove the socket, which surfaced as
+			// "timed out waiting for test daemon shutdown" in the v0.1.33
+			// release CI lane.
 			t.Fatal("timed out waiting for test daemon shutdown")
 		}
 	})

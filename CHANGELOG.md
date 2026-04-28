@@ -4,6 +4,12 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.34]
+
+- Fix the public release CI lane: add `TestMain` HASP_HOME defaults to `apps/server/cmd/hasp` and `apps/server/internal/runner` so the `paths.Resolve` test-isolation guard does not fire on packages that previously relied on a real `~/.hasp` fallback.
+- Make the canonical-root cache invalidation test deterministic on Linux tmpfs by replacing `RemoveAll`+`Mkdir` (which can reuse the same inode immediately) with a sibling-create plus rename, guaranteeing a distinct inode for `os.SameFile`.
+- Stabilize two CI-only flakes: poll for the daemon pid file (not just the socket) before `StopDaemon` in `TestDaemonCommandStartBranch`, and widen the GrantOnce TTL in `TestEnforceSecretPlaintextPolicyConsumeFailure` so the assertion remains focused on the persist-failure path under heavy CI load.
+
 ## [v0.1.33]
 
 - Land the P0 security hardening pass: peer-UID check on the daemon Unix socket, crash-safe vault envelope writes, encoding-aware byte-range redactor, refusal of argv-delivered plaintext in secret commands, write-env clobber protection, scrubbing of inherited HASP env in spawned children, hardened git shell-outs, per-session inject directories, normalized vault unwrap errors, removal of the `.test-basename` KDF weakening seam, and HMAC-chained audit log entries under a per-vault key.

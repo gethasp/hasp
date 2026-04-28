@@ -82,11 +82,20 @@ func TestCanonicalProjectRootInvalidatesWhenDirectoryReplaced(t *testing.T) {
 
 	CanonicalProjectRoot(target)
 
+	// Replace the directory at `target` with a freshly-created one that has a
+	// different inode.  os.RemoveAll + os.Mkdir on Linux tmpfs can reuse the
+	// same inode immediately, which would defeat os.SameFile-based cache
+	// invalidation; allocate the replacement under a sibling path first so its
+	// inode is guaranteed distinct, then rename it into place.
+	replacement := filepath.Join(parent, "proj-next")
+	if err := os.Mkdir(replacement, 0o700); err != nil {
+		t.Fatalf("mkdir replacement: %v", err)
+	}
 	if err := os.RemoveAll(target); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if err := os.Mkdir(target, 0o700); err != nil {
-		t.Fatalf("recreate: %v", err)
+	if err := os.Rename(replacement, target); err != nil {
+		t.Fatalf("rename replacement: %v", err)
 	}
 
 	CanonicalProjectRoot(target)
