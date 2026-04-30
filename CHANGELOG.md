@@ -4,6 +4,12 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.37]
+
+- Make the private markdown link checker portable across runner checkout
+  roots so repo-local absolute links created in one workspace are resolved
+  against the current checkout during CI verification.
+
 ## [v0.1.36]
 
 - Add the setup password formal-assurance lane: finite TLA+ model checking,
