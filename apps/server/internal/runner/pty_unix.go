@@ -25,6 +25,14 @@ import (
 // been scheduled to read them).
 var ptyDrainTimeout = 100 * time.Millisecond
 
+var (
+	ptyStartCommand = pty.Start
+	ptyWaitCommand  = func(cmd *exec.Cmd) error {
+		return cmd.Wait()
+	}
+	ptyAfter = time.After
+)
+
 // executePTY runs cmd attached to a freshly allocated pty pair, copies
 // pty.master ↔ input.Stdin/Stdout, and returns when the child exits and the
 // master→stdout copy has drained.
@@ -41,7 +49,7 @@ var ptyDrainTimeout = 100 * time.Millisecond
 // Build tag: darwin || linux. Other platforms fall through to a stub that
 // returns ErrTTYUnsupported so callers can fall back to the non-TTY path.
 func executePTY(ctx context.Context, cmd *exec.Cmd, input Input) ([]byte, int, error) {
-	ptmx, err := pty.Start(cmd)
+	ptmx, err := ptyStartCommand(cmd)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -66,7 +74,7 @@ func executePTY(ctx context.Context, cmd *exec.Cmd, input Input) ([]byte, int, e
 		}()
 	}
 
-	waitErr := cmd.Wait()
+	waitErr := ptyWaitCommand(cmd)
 	// On Linux the slave end of the pty closes when the child exits, so the
 	// master read returns any buffered bytes followed by EIO/EOF and the
 	// master→dst io.Copy goroutine drains naturally. Wait for that drain
@@ -84,7 +92,7 @@ func executePTY(ctx context.Context, cmd *exec.Cmd, input Input) ([]byte, int, e
 	}()
 	select {
 	case <-drained:
-	case <-time.After(ptyDrainTimeout):
+	case <-ptyAfter(ptyDrainTimeout):
 	}
 	_ = ptmx.Close()
 	<-drained

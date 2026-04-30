@@ -47,7 +47,7 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "setup", summary: "guided machine, repo, and agent setup", group: commandGroupDaily, helpTopic: []string{"setup"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return setupCommand(ctx, args, stdin, stdout, stderr)
 		}},
-		{name: "bootstrap", summary: "configure a repo and an agent profile in one operator-focused flow", group: commandGroupDaily, helpTopic: []string{"bootstrap"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
+		{name: "bootstrap", summary: "configure a repo and an agent profile in one operator-focused flow", group: commandGroupUtility, helpTopic: []string{"bootstrap"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return bootstrapCommandWithInput(ctx, args, stdin, stdout, bootstrapVerification)
 		}},
 		{name: "doctor", summary: "diagnose daemon, vault, binding, hooks, and audit state", group: commandGroupDaily, helpTopic: []string{"doctor"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
@@ -60,10 +60,10 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "agent", summary: "connect an agent once and let it pull through HASP", group: commandGroupDaily, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return agentConsumerCommand(ctx, args, stdin, stdout, stderr)
 		}},
-		{name: "vault", summary: "lock local vault/session material", group: commandGroupDaily, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "vault", summary: "lock local vault/session material", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return vaultCommand(ctx, args, stdout, s)
 		}},
-		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupDaily, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return projectCommandWithStderr(ctx, args, stdout, stderr)
 		}},
 		{name: "run", summary: "run a repo-scoped command through the broker", group: commandGroupDaily, helpTopic: []string{"run"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
@@ -72,22 +72,22 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "inject", summary: "run a command with env or file refs resolved by HASP", group: commandGroupDaily, helpTopic: []string{"inject"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return injectCommand(ctx, args, stdout, stderr, s)
 		}},
-		{name: "write-env", summary: "write a convenience env file on explicit request", group: commandGroupDaily, helpTopic: []string{"write-env"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
+		{name: "write-env", summary: "write a convenience env file on explicit request", group: commandGroupUtility, helpTopic: []string{"write-env"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return writeEnvCommand(ctx, args, stdout, stderr, s)
 		}},
-		{name: "check-repo", summary: "find managed values that leaked into a repo", group: commandGroupDaily, helpTopic: []string{"check-repo"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "check-repo", summary: "find managed values that leaked into a repo", group: commandGroupUtility, helpTopic: []string{"check-repo"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return checkRepoCommand(ctx, args, stdout, stderr)
 		}},
 		{name: "proof", summary: "run the brokered first-proof check (replaces the long quickstart one-liner)", group: commandGroupDaily, helpTopic: []string{"proof"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return proofCommand(ctx, args, stdout, stderr, s)
 		}},
-		{name: "export-backup", summary: "write an encrypted backup", group: commandGroupDaily, helpTopic: []string{"export-backup"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
+		{name: "export-backup", summary: "write an encrypted backup", group: commandGroupUtility, helpTopic: []string{"export-backup"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return exportBackupCommand(ctx, args, stdout)
 		}},
-		{name: "restore-backup", summary: "restore an encrypted backup", group: commandGroupDaily, helpTopic: []string{"restore-backup"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
+		{name: "restore-backup", summary: "restore an encrypted backup", group: commandGroupUtility, helpTopic: []string{"restore-backup"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return restoreBackupCommand(ctx, args, stdout)
 		}},
-		{name: "mcp", summary: "start the MCP server for agents", group: commandGroupDaily, helpTopic: []string{"mcp"}, handler: func(ctx context.Context, _ []string, stdin io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
+		{name: "mcp", summary: "start the MCP server for agents", group: commandGroupUtility, helpTopic: []string{"mcp"}, handler: func(ctx context.Context, _ []string, stdin io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return mcp.Serve(ctx, stdin, stdout)
 		}},
 		{name: "import", summary: "import .env or JSON credentials", group: commandGroupUtility, helpTopic: []string{"import"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {

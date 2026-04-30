@@ -7,6 +7,7 @@ package app
 // the green team delivers the implementation.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ import (
 //   - "commands" list containing at least one entry
 //   - "next_command" that matches setupBrokeredProofCommand once a ref exists
 func TestSetupSummaryVerificationBrokeredProofHasRescueKeys(t *testing.T) {
-	result, err := setupVerifyBrokeredProof(nil, "/tmp/repo", nil) //nolint:staticcheck
+	result, err := setupVerifyBrokeredProof(context.Background(), "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestSetupSummaryVerificationBrokeredProofHasRescueKeys(t *testing.T) {
 // consistent.
 func TestSetupSummaryVerificationRescueNextCommandMatchesBrokeredProof(t *testing.T) {
 	const root = "/tmp/testrepo"
-	result, err := setupVerifyBrokeredProof(nil, root, nil) //nolint:staticcheck
+	result, err := setupVerifyBrokeredProof(context.Background(), root, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestSetupSummaryVerificationHasStateKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := setupVerifyBrokeredProof(nil, tc.projectRoot, nil) //nolint:staticcheck
+			result, err := setupVerifyBrokeredProof(context.Background(), tc.projectRoot, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

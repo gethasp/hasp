@@ -13,8 +13,15 @@ import (
 const envelopePrevSuffix = ".prev"
 
 var (
-	jsonMarshalFn       = json.Marshal
-	jsonMarshalIndentFn = json.MarshalIndent
+	jsonMarshalFn        = json.Marshal
+	jsonMarshalIndentFn  = json.MarshalIndent
+	mkdirEnvelopeDirFn   = os.MkdirAll
+	readEnvelopeFileFn   = os.ReadFile
+	writeEnvelopeFileFn  = os.WriteFile
+	openEnvelopeFileFn   = os.Open
+	statEnvelopeFileFn   = os.Stat
+	renameEnvelopeFn     = os.Rename
+	removeEnvelopeFileFn = os.Remove
 
 	// fsyncFileFn is called on the temp file after writing, before rename.
 	// Tests swap this to verify ordering and simulate failures.
@@ -26,7 +33,7 @@ var (
 )
 
 func defaultFsyncDir(dir string) error {
-	f, err := os.Open(dir)
+	f, err := openEnvelopeFileFn(dir)
 	if err != nil {
 		return err
 	}
@@ -45,7 +52,7 @@ func (s *Store) writeEnvelope(vaultKey []byte, state persistedState, header enve
 // readEnvelopeStrict reads the main envelope file with no .prev fallback.
 // Used by persist() so that a corrupt main file surfaces as an error.
 func (s *Store) readEnvelopeStrict() (fileEnvelope, error) {
-	data, err := os.ReadFile(s.paths.StatePath)
+	data, err := readEnvelopeFileFn(s.paths.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return fileEnvelope{}, ErrVaultNotInitialized
 	}
@@ -62,7 +69,7 @@ func (s *Store) readEnvelopeStrict() (fileEnvelope, error) {
 // readEnvelope reads the main envelope, falling back to .prev when main is
 // missing or corrupt. Used by open operations where crash-safety recovery is desired.
 func (s *Store) readEnvelope() (fileEnvelope, error) {
-	data, err := os.ReadFile(s.paths.StatePath)
+	data, err := readEnvelopeFileFn(s.paths.StatePath)
 	origErr := err
 	var envelope fileEnvelope
 
@@ -79,7 +86,7 @@ func (s *Store) readEnvelope() (fileEnvelope, error) {
 
 	// Attempt fallback to .prev.
 	prevPath := s.paths.StatePath + envelopePrevSuffix
-	prevData, prevErr := os.ReadFile(prevPath)
+	prevData, prevErr := readEnvelopeFileFn(prevPath)
 	if prevErr != nil {
 		// .prev also missing/unreadable — return original error.
 		if errors.Is(origErr, os.ErrNotExist) {
@@ -106,7 +113,7 @@ func (s *Store) readEnvelope() (fileEnvelope, error) {
 }
 
 func (s *Store) writeEnvelopeFile(envelope fileEnvelope) error {
-	if err := os.MkdirAll(filepath.Dir(s.paths.StatePath), 0o700); err != nil {
+	if err := mkdirEnvelopeDirFn(filepath.Dir(s.paths.StatePath), 0o700); err != nil {
 		return fmt.Errorf("create vault dir: %w", err)
 	}
 	data, err := jsonMarshalIndentFn(envelope, "", "  ")
@@ -115,39 +122,39 @@ func (s *Store) writeEnvelopeFile(envelope fileEnvelope) error {
 	}
 
 	tmp := s.paths.StatePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if err := writeEnvelopeFileFn(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write temp vault: %w", err)
 	}
 
 	// Open the temp file to fsync it before rename.
-	f, err := os.Open(tmp)
+	f, err := openEnvelopeFileFn(tmp)
 	if err != nil {
-		_ = os.Remove(tmp)
+		_ = removeEnvelopeFileFn(tmp)
 		return fmt.Errorf("open temp vault for fsync: %w", err)
 	}
 	if err := fsyncFileFn(f); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmp)
+		_ = removeEnvelopeFileFn(tmp)
 		return fmt.Errorf("fsync temp vault: %w", err)
 	}
 	_ = f.Close()
 
 	// Copy current main to .prev before rename (fail-closed if copy fails).
-	if _, statErr := os.Stat(s.paths.StatePath); statErr == nil {
-		existing, readErr := os.ReadFile(s.paths.StatePath)
+	if _, statErr := statEnvelopeFileFn(s.paths.StatePath); statErr == nil {
+		existing, readErr := readEnvelopeFileFn(s.paths.StatePath)
 		if readErr != nil {
-			_ = os.Remove(tmp)
+			_ = removeEnvelopeFileFn(tmp)
 			return fmt.Errorf("read vault for rotation: %w", readErr)
 		}
 		prevPath := s.paths.StatePath + envelopePrevSuffix
-		if writeErr := os.WriteFile(prevPath, existing, 0o600); writeErr != nil {
-			_ = os.Remove(tmp)
+		if writeErr := writeEnvelopeFileFn(prevPath, existing, 0o600); writeErr != nil {
+			_ = removeEnvelopeFileFn(tmp)
 			return fmt.Errorf("write prev vault: %w", writeErr)
 		}
 	}
 
 	// Atomic rename of temp to main.
-	if err := os.Rename(tmp, s.paths.StatePath); err != nil {
+	if err := renameEnvelopeFn(tmp, s.paths.StatePath); err != nil {
 		return fmt.Errorf("rename vault: %w", err)
 	}
 
@@ -196,6 +203,9 @@ func readState(vaultKey []byte, blob sealedBlob) (persistedState, error) {
 	}
 	if state.PlaintextGrants == nil {
 		state.PlaintextGrants = map[string]PlaintextGrant{}
+	}
+	if state.ManifestReviews == nil {
+		state.ManifestReviews = map[string]ManifestReview{}
 	}
 	return state, nil
 }

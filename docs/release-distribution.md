@@ -19,11 +19,7 @@ Public releases ship:
 
 GitHub Releases are the canonical public release asset location.
 
-When the R2 mirror is configured, the hosted release layout is:
-
-```text
-https://downloads.gethasp.com/hasp/releases/<tag>/
-```
+When the [R2 mirror](https://download.gethasp.com/) is configured, the hosted release layout is `https://downloads.gethasp.com/hasp/releases/<tag>/`.
 
 Each GitHub release and each mirrored release directory should include:
 

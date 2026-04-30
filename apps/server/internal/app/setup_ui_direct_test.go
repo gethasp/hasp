@@ -54,6 +54,9 @@ func TestSetupUIHelpersDirect(t *testing.T) {
 	if !strings.Contains(out.String(), "Stage") {
 		t.Fatalf("expected stage output, got %q", out.String())
 	}
+	if !strings.Contains(out.String(), strings.Repeat("-", 56)) {
+		t.Fatalf("expected setup stage separator, got %q", out.String())
+	}
 
 	if got := setupStageLine(&out, "1. item"); !strings.Contains(got, "1.") {
 		t.Fatalf("setupStageLine numeric = %q", got)

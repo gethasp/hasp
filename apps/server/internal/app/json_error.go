@@ -59,10 +59,7 @@ func writeCLIError(stderr io.Writer, err error, jsonMode bool) {
 		fmt.Fprintln(stderr, err.Error())
 		return
 	}
-	envelope, ok := err.(*appError)
-	if !ok {
-		envelope = newAppError("internal_error", err.Error())
-	}
+	envelope := classifyAppError(err)
 	stderr.Write(envelope.jsonBytes())
 	stderr.Write([]byte("\n"))
 }
@@ -77,14 +74,12 @@ func assertSingleJSONDocument(out []byte) error {
 	if err := dec.Decode(&first); err != nil {
 		return fmt.Errorf("first decode: %w", err)
 	}
-	if dec.More() {
-		var rest json.RawMessage
-		_ = dec.Decode(&rest)
-		return fmt.Errorf("expected exactly one JSON document, got more (next=%s)", rest)
-	}
-	tail := bytes.TrimSpace(out[dec.InputOffset():])
-	if len(tail) > 0 {
-		return fmt.Errorf("trailing non-whitespace after JSON document: %q", tail)
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return fmt.Errorf("trailing non-whitespace after JSON document: %w", err)
+		}
+		return fmt.Errorf("expected exactly one JSON document, got more (next=%s)", extra)
 	}
 	return nil
 }

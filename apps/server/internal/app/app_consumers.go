@@ -235,6 +235,7 @@ type appLauncherPlan struct {
 type appConnectConfig struct {
 	Name            string
 	ProjectRoot     string
+	Target          string
 	Command         string
 	DotenvEnv       string
 	InstallLauncher setupOptionalBool
@@ -308,6 +309,9 @@ func resolveAppLauncherInstallChoice(ctx context.Context, name string, explicit 
 }
 
 func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg appConnectConfig, stdin io.Reader, stdout io.Writer, stderr io.Writer) (store.AppConsumer, appPathUpdateResult, error) {
+	if err := applyAppTargetConfig(ctx, handle, &cfg); err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
+	}
 	bindings, err := appConsumerBindings(handle, cfg.EnvMappings, cfg.FileMappings, cfg.DotenvMappings)
 	if err != nil {
 		return store.AppConsumer{}, appPathUpdateResult{}, err
@@ -362,6 +366,74 @@ func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg
 		}
 	}
 	return consumer, pathUpdate, nil
+}
+
+func applyAppTargetConfig(ctx context.Context, handle *store.Handle, cfg *appConnectConfig) error {
+	if cfg == nil || strings.TrimSpace(cfg.Target) == "" {
+		return nil
+	}
+	if strings.TrimSpace(cfg.ProjectRoot) == "" {
+		return errors.New("app connect --target requires a project root")
+	}
+	manifest, err := store.LoadRepoManifest(cfg.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	target, ok := manifest.Target(cfg.Target)
+	if !ok {
+		return fmt.Errorf("unknown manifest target %q", cfg.Target)
+	}
+	if strings.TrimSpace(cfg.Command) == "" && len(target.Command) > 0 {
+		cfg.Command = shellJoinArgs(target.Command)
+	}
+	envMappings := mappingFlag{}
+	fileMappings := mappingFlag{}
+	for _, delivery := range target.Delivery {
+		resolved, err := handle.ResolveReference(ctx, cfg.ProjectRoot, delivery.Ref)
+		if err != nil {
+			return err
+		}
+		switch delivery.As {
+		case store.ManifestDeliveryEnv:
+			envMappings[delivery.Name] = resolved.ItemName
+		case store.ManifestDeliveryFile:
+			fileMappings[delivery.Name] = resolved.ItemName
+		case store.ManifestDeliveryXCConfig:
+			return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", cfg.Target)
+		}
+	}
+	if len(envMappings) > 0 {
+		cfg.EnvMappings = envMappings
+	}
+	if len(fileMappings) > 0 {
+		cfg.FileMappings = fileMappings
+	}
+	if strings.TrimSpace(cfg.Command) == "" {
+		return fmt.Errorf("target %q has no command; pass --cmd to seed an app profile", cfg.Target)
+	}
+	return nil
+}
+
+func shellJoinArgs(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuoteArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if strings.IndexFunc(arg, func(r rune) bool {
+		allowed := r == '_' || r == '-' || r == '.' || r == '/' || r == ':' ||
+			(r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		return !allowed
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }
 
 func normalizeAppConnectArgs(args []string) []string {

@@ -442,8 +442,8 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 		if err != nil {
 			return "", vaultExists, err
 		}
-		password := strings.TrimSpace(string(data))
-		if password == "" {
+		password := string(data)
+		if strings.TrimSpace(password) == "" {
 			return "", vaultExists, errors.New("master password from stdin is empty")
 		}
 		return password, vaultExists, nil
@@ -460,11 +460,11 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 	}
 
 	for {
-		first, err := promptPassword(prompt, "Choose a local HASP master password")
+		first, err := setupPromptRequiredPassword(prompt, "Choose a local HASP master password")
 		if err != nil {
 			return "", vaultExists, err
 		}
-		second, err := promptPassword(prompt, "Confirm master password")
+		second, err := setupPromptRequiredPassword(prompt, "Confirm master password")
 		if err != nil {
 			return "", vaultExists, err
 		}
@@ -474,29 +474,49 @@ func setupResolvePassword(prompt *setupPrompter, opts setupOptions, home string)
 			}
 			continue
 		}
-		if strings.TrimSpace(first) == "" {
-			return "", vaultExists, errors.New("master password is required")
+		if !opts.SkipPasswordPolicy {
+			if err := store.EnforcePasswordPolicy(first); err != nil {
+				if _, writeErr := fmt.Fprintf(prompt.out, "%v Try again.\n", err); writeErr != nil {
+					return "", vaultExists, writeErr
+				}
+				continue
+			}
 		}
 		return first, vaultExists, nil
 	}
 }
 
 func setupPromptExistingVaultPassword(prompt *setupPrompter) (string, error) {
+	return setupPromptRequiredPassword(prompt, "Enter your HASP master password")
+}
+
+func setupPromptRequiredPassword(prompt *setupPrompter, label string) (string, error) {
 	for {
-		password, err := promptPassword(prompt, "Enter your HASP master password")
+		password, emptyEOF, err := promptPasswordAttempt(prompt, label)
 		if err != nil {
 			return "", err
 		}
 		if strings.TrimSpace(password) != "" {
 			return password, nil
 		}
-		if prompt.file == nil || !setupCanHideInputFn(prompt.file) {
-			return "", errors.New("master password is required")
-		}
 		if _, err := fmt.Fprintln(prompt.out, "Master password is required. Try again."); err != nil {
 			return "", err
 		}
+		if emptyEOF && !setupCanRepeatPasswordAfterEOF(prompt) {
+			return "", errors.New("master password is required")
+		}
 	}
+}
+
+func setupCanRepeatPasswordAfterEOF(prompt *setupPrompter) bool {
+	if prompt == nil || prompt.file == nil {
+		return false
+	}
+	info, err := prompt.file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func setupVaultExists(home string) bool {

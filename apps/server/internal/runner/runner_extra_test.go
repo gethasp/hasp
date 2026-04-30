@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -222,5 +223,97 @@ func TestExecutePropagatesCleanupFailureAndEnsureInjectionDirRootBreak(t *testin
 
 	if err := ensureInjectionDir("/", filepath.Join(t.TempDir(), "stop")); err != nil {
 		t.Fatalf("expected ensureInjectionDir root break to succeed, got %v", err)
+	}
+}
+
+func TestRunnerCoverageRemainingBranches(t *testing.T) {
+	lockRunnerSeams(t)
+	origResolve := resolveRunnerPaths
+	origRand := randReadRunner
+	origMkdir := mkdirAllInjection
+	origStat := statInjectedPath
+	origRemoveTree := removeInjectedTree
+	origWait := waitCommand
+	defer func() {
+		resolveRunnerPaths = origResolve
+		randReadRunner = origRand
+		mkdirAllInjection = origMkdir
+		statInjectedPath = origStat
+		removeInjectedTree = origRemoveTree
+		waitCommand = origWait
+	}()
+
+	if got := filterChildEnv([]string{"NO_EQUALS", "HASP_SESSION_TOKEN=secret"}); len(got) != 1 || got[0] != "NO_EQUALS" {
+		t.Fatalf("filterChildEnv = %v", got)
+	}
+
+	randReadRunner = func([]byte) (int, error) { return 0, errors.New("rand") }
+	if _, err := randomRunSuffix(); err == nil {
+		t.Fatal("expected random suffix error")
+	}
+	if _, cleanup, err := prepareRunInjectDir(t.TempDir()); err == nil {
+		t.Fatal("expected prepare random error")
+	} else {
+		cleanup()
+	}
+
+	homeDir := t.TempDir()
+	resolveRunnerPaths = func() (paths.Paths, error) {
+		return paths.Paths{HomeDir: homeDir, RuntimeDir: filepath.Join(homeDir, "runtime")}, nil
+	}
+	if _, err := Execute(context.Background(), Input{Command: []string{"true"}}); err == nil {
+		t.Fatal("expected Execute prepare error")
+	}
+
+	randReadRunner = func(p []byte) (int, error) {
+		for i := range p {
+			p[i] = 1
+		}
+		return len(p), nil
+	}
+	mkdirAllInjection = func(string, os.FileMode) error { return errors.New("mkdir") }
+	if _, cleanup, err := prepareRunInjectDir(t.TempDir()); err == nil {
+		t.Fatal("expected prepare mkdir error")
+	} else {
+		cleanup()
+	}
+	mkdirAllInjection = origMkdir
+
+	waitCommand = func(cmd *exec.Cmd) error {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		return errors.New("wait")
+	}
+	if _, err := Execute(context.Background(), Input{Command: []string{"sh", "-c", "sleep 1"}}); err == nil || !strings.Contains(err.Error(), "wait") {
+		t.Fatalf("expected non-exit wait error, got %v", err)
+	}
+	waitCommand = origWait
+
+	injectDir := t.TempDir()
+	runDir := filepath.Join(injectDir, "run-stale")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	statInjectedPath = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	if err := cleanupStaleInjectedFiles(injectDir); err != nil {
+		t.Fatalf("expected missing run dir stat to be ignored, got %v", err)
+	}
+	statInjectedPath = func(string) (os.FileInfo, error) { return nil, errors.New("stat") }
+	if err := cleanupStaleInjectedFiles(injectDir); err == nil || !strings.Contains(err.Error(), "stat run inject dir") {
+		t.Fatalf("expected stat run dir error, got %v", err)
+	}
+
+	statInjectedPath = origStat
+	old := timeNowRunner().Add(-2 * staleRunDirThreshold)
+	if err := os.Chtimes(runDir, old, old); err != nil {
+		t.Fatalf("chtimes run dir: %v", err)
+	}
+	removeInjectedTree = func(string) error { return errors.New("remove tree") }
+	if err := cleanupStaleInjectedFiles(injectDir); err == nil || !strings.Contains(err.Error(), "cleanup stale run dir") {
+		t.Fatalf("expected stale run dir cleanup error, got %v", err)
+	}
+	removeInjectedTree = func(string) error { return os.ErrNotExist }
+	if err := cleanupStaleInjectedFiles(injectDir); err != nil {
+		t.Fatalf("expected missing stale run dir cleanup to be ignored, got %v", err)
 	}
 }

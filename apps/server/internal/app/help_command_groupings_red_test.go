@@ -11,6 +11,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -67,6 +68,28 @@ func TestSetupInDailyCommandBlock(t *testing.T) {
 
 	if !strings.Contains(dailySection, "setup") {
 		t.Fatalf("'setup' must appear in the Daily commands block; got:\n%s", dailySection)
+	}
+}
+
+func TestRootHelpDoesNotPromoteOperatorCommands(t *testing.T) {
+	lockAppSeams(t)
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+		t.Fatalf("hasp (no args): %v", err)
+	}
+	out := stdout.String()
+	dailyStart := strings.Index(out, "Daily commands")
+	if dailyStart < 0 {
+		t.Fatalf("expected 'Daily commands' section in root help output, got:\n%s", out)
+	}
+	dailySection := out[dailyStart:]
+	if helpStart := strings.Index(dailySection, "Help topics"); helpStart >= 0 {
+		dailySection = dailySection[:helpStart]
+	}
+	for _, hiddenFromFirstScreen := range []string{"bootstrap", "project", "daemon", "session", "write-env", "check-repo"} {
+		if strings.Contains(dailySection, fmt.Sprintf("  %-17s", hiddenFromFirstScreen)) {
+			t.Fatalf("%q should stay out of first-screen daily commands; got:\n%s", hiddenFromFirstScreen, dailySection)
+		}
 	}
 }
 

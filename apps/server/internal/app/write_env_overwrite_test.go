@@ -3,9 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -119,6 +121,65 @@ func TestWriteEnvOverwritesWithForce(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "API_TOKEN=abc123") {
 		t.Fatalf("new env line missing after --force overwrite, got: %q", string(got))
+	}
+}
+
+func TestWriteEnvRefusesSymlinkOutputBeforeMutatingTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on Windows")
+	}
+	lockAppSeams(t)
+	projectRoot := bootstrapVaultForOverwriteTests(t)
+
+	outputDir := t.TempDir()
+	targetPath := filepath.Join(outputDir, "outside.env")
+	original := []byte("DO_NOT_CLOBBER=1\n")
+	if err := os.WriteFile(targetPath, original, 0o600); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	linkPath := filepath.Join(outputDir, "linked.env")
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("create output symlink: %v", err)
+	}
+
+	for _, mode := range []string{"--force", "--append"} {
+		err := writeEnvCommand(context.Background(),
+			writeEnvArgs(projectRoot, linkPath, mode),
+			io.Discard, io.Discard, &fakeStarter{})
+		if err == nil {
+			t.Fatalf("expected %s to reject symlink output", mode)
+		}
+		if !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("expected symlink error for %s, got %q", mode, err.Error())
+		}
+		got, readErr := os.ReadFile(targetPath)
+		if readErr != nil {
+			t.Fatalf("read symlink target after %s: %v", mode, readErr)
+		}
+		if !bytes.Equal(got, original) {
+			t.Fatalf("symlink target mutated after %s: got %q, want %q", mode, got, original)
+		}
+	}
+}
+
+func TestWriteEnvWarnsBeforeWriteFailureInsideProject(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := bootstrapVaultForOverwriteTests(t)
+
+	deps := defaultExecDeps()
+	deps.OpenWriteEnvFile = func(string, int, os.FileMode) (writeEnvFile, error) {
+		return nil, errors.New("open file fail")
+	}
+
+	var stderr bytes.Buffer
+	err := writeEnvCommandWithDeps(context.Background(),
+		writeEnvArgs(projectRoot, filepath.Join(projectRoot, ".env"), "--force"),
+		io.Discard, &stderr, &fakeStarter{}, deps)
+	if err == nil || !strings.Contains(err.Error(), "open file fail") {
+		t.Fatalf("expected open failure, got %v", err)
+	}
+	if !strings.Contains(stderr.String(), "destination is inside the bound project") {
+		t.Fatalf("expected pre-write inside-project warning, got %q", stderr.String())
 	}
 }
 

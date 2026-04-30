@@ -9,6 +9,12 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
+var (
+	managerRunDaemon   = (*runtime.Manager).RunDaemon
+	managerStartDaemon = (*runtime.Manager).StartDaemon
+	managerStopDaemon  = (*runtime.Manager).StopDaemon
+)
+
 func daemonHandler(ctx context.Context, deps Deps, args []string, stdout io.Writer, _ io.Writer) error {
 	isHelp := deps.IsHelpArg
 	if isHelp == nil {
@@ -41,11 +47,11 @@ func daemonHandler(ctx context.Context, deps Deps, args []string, stdout io.Writ
 
 	switch args[0] {
 	case "serve":
-		return manager.RunDaemon(ctx)
+		return managerRunDaemon(manager, ctx)
 	case "start":
-		return manager.StartDaemon(ctx)
+		return managerStartDaemon(manager, ctx)
 	case "stop":
-		if err := manager.StopDaemon(); err != nil {
+		if err := managerStopDaemon(manager); err != nil {
 			if strings.Contains(err.Error(), "process already finished") {
 				if deps.NewInternalError != nil {
 					return deps.NewInternalError("daemon was not running")

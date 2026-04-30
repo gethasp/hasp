@@ -40,3 +40,33 @@ func TestMCPDefaultHelpers(t *testing.T) {
 		t.Fatalf("defaultMCPHostLabel fallback = %q", got)
 	}
 }
+
+func TestMCPOutputCaptureBufferedAndNegativeLimit(t *testing.T) {
+	capture := newMCPToolOutputCapture(nil)
+	capture.WriteBuffered(nil)
+	capture.WriteBuffered([]byte("hello"))
+	capture.Close()
+	if got := capture.String(); got != "hello" {
+		t.Fatalf("capture = %q", got)
+	}
+
+	buf := newCappedBuffer(-1)
+	if n, err := buf.Write([]byte("hidden")); err != nil || n != len("hidden") {
+		t.Fatalf("negative capped write n=%d err=%v", n, err)
+	}
+	if got := buf.String(); got != "" {
+		t.Fatalf("negative limit retained %q", got)
+	}
+	if got := buf.BytesOmitted(); got != int64(len("hidden")) {
+		t.Fatalf("omitted = %d", got)
+	}
+
+	limited := newCappedBuffer(3)
+	_, _ = limited.Write([]byte("abcdef"))
+	if got := limited.String(); got != "abc" {
+		t.Fatalf("limited buffer = %q", got)
+	}
+	if got := limited.BytesOmitted(); got != 3 {
+		t.Fatalf("limited omitted = %d", got)
+	}
+}

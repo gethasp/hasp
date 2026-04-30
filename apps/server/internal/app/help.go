@@ -139,30 +139,37 @@ const rootHelpPrelude = `hasp keeps secrets in one local vault and hands them to
 Core concepts
   vault    encrypted local store of named secrets under HASP_HOME
   repo     a project root you bind so commands run inside it can pull secrets
+  target   a repo-declared delivery subset; never an authority by itself
   agent    a connected app or coding agent that gets brokered access
   grant    short-lived, scoped permission to deliver a secret to one run
 
 Start here
   hasp setup
-  hasp help setup
-  hasp help agent connect
+  hasp secret add
+  hasp agent connect <profile> --project-root .
+  hasp proof --secret <name-or-alias>
 
 For lower-level vocabulary (operator/integrator surface) see: hasp help internals
 `
 
 const rootHelpTopicsSection = `Help topics
+  hasp help setup
   hasp help secret
   hasp help secret add
   hasp help app
   hasp help app connect
   hasp help agent
-  hasp help agent list-supported
-  hasp help doctor
-  hasp help agent shell
-  hasp help project
+  hasp help agent connect
   hasp help run
-  hasp help setup
+  hasp help inject
+  hasp help doctor
+
+Advanced and automation
   hasp help internals
+  hasp help check-repo
+  hasp help write-env
+  hasp help completion
+  hasp help docs
 
 Output
   --json    machine-readable output on stdout for status, list, and mutation commands.
@@ -176,8 +183,6 @@ func renderRootHelpText() string {
 	var builder strings.Builder
 	builder.WriteString(rootHelpPrelude)
 	writeRootHelpCommandSection(&builder, "Daily commands", rootCommandsByGroup(commandGroupDaily))
-	builder.WriteString("\n")
-	writeRootHelpCommandSection(&builder, "Utility commands", rootCommandsByGroup(commandGroupUtility))
 	builder.WriteString("\n")
 	builder.WriteString(rootHelpTopicsSection)
 	return builder.String()
@@ -637,6 +642,10 @@ const appConnectHelpText = `hasp app connect
 Save an app profile that maps vault secrets to env vars, temporary files, or a
 temporary dotenv bundle.
 
+When the repo manifest declares a target, --target can seed the app command and
+env/file mappings into the local app profile. The saved profile remains local
+state after the manifest changes.
+
 Launcher creation is never silent. In interactive use, HASP asks. In scripts,
 set --install=always or --install=never. If you install a launcher and its
 directory is not on PATH, HASP can also patch your shell config, but only after
@@ -652,12 +661,14 @@ during the deprecation window but emits a stderr warning.
 
 Flags
   --file <NAME=@REF>    inject a secret as a temporary file (repeatable)
+  --target <name>       seed command and delivery from a manifest target
   --json                emit machine-readable result on stdout
 
 Examples
   hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=@OPENAI_API_KEY
   hasp app connect myapp --cmd 'python app.py' --env OPENAI_API_KEY=@OPENAI_API_KEY --install=always --add-to-path=always
   hasp app connect web --project-root . --cmd 'npm run dev' --dotenv DATABASE_URL=@DATABASE_URL --dotenv-env ENV_FILE
+  hasp app connect web --project-root . --target web.dev
 `
 
 const appRunHelpText = `hasp app run
@@ -838,7 +849,11 @@ and leak detection.
 Subcommands
   adopt     scan a directory tree and bind matching git repos
   bind      bind one repo and create its initial alias map
+  doctor    audit manifest-backed project-target setup without exposing values
+  examples  check or write placeholder example files from the manifest
+  requirements  list manifest requirements, optionally filtered by target
   status    inspect one bound repo
+  targets   list manifest targets without command argv
   unbind    remove one repo binding
 
 Common flags (all subcommands)
@@ -855,8 +870,17 @@ project bind flags
   --allow-non-git           bind even if the path is not a git working tree
   --alias <alias=item>      add a repo alias mapping (repeatable)
 
+project examples flags
+  --target <name>           limit check/write to one manifest target
+  --check                   report stale or missing generated examples
+  --write                   write missing/stale generated examples
+
 Examples
   hasp project bind --project-root .
+  hasp project requirements --project-root .
+  hasp project targets --project-root . --json
+  hasp project examples --project-root . --target web.dev --check
+  hasp project doctor --project-root . --json
   hasp project status --project-root .
   hasp project adopt --under ~/Work
   hasp project adopt --under ~/Work --preview
@@ -872,6 +896,7 @@ app run when you want a saved app.
 
 Flags
   --project-root <path>          repo root to use for binding and grant checks
+  --target <name>                resolve env/file mappings from one manifest target
   --session-token <token>        use an existing session token instead of
                                  opening a new one
   --grant-project <scope>        project grant scope: window or session
@@ -887,6 +912,7 @@ Flags
 
 Examples
   hasp run --project-root . --env OPENAI_API_KEY=@OPENAI_API_KEY -- npm test
+  hasp run --project-root . --target web.dev --grant-project window --grant-secret session
   hasp run --project-root . --env OPENAI_API_KEY=@OPENAI_API_KEY --explain --dry-run -- pytest tests/
   hasp run --project-root . --grant-window 15m --grant-secret window -- python script.py
 `
@@ -905,6 +931,7 @@ Authorization preview
 
 Examples
   hasp inject --project-root . --file GOOGLE_APPLICATION_CREDENTIALS=@GOOGLE_APPLICATION_CREDENTIALS -- gcloud auth list
+  hasp inject --project-root . --target deploy.production -- ./deploy.sh
 `
 
 const writeEnvHelpText = `hasp write-env
@@ -917,6 +944,7 @@ safer because they avoid leaving values in the repo.
 Flags
   --project-root <path>              repo root to use for grant checks
                                      (default: current directory)
+  --target <name>                    resolve env mappings from one manifest target
   --output <path>                    destination file for the env block
   --env <NAME=@REF>                  inject a secret as an env var (repeatable)
   --json                             emit machine-readable result on stdout
@@ -932,6 +960,7 @@ Flags
 
 Examples
   hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY
+  hasp write-env --project-root . --target macos.debug --grant-convenience window
   hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY --force
   hasp write-env --project-root . --output .env.local --env OPENAI_API_KEY=@OPENAI_API_KEY --append
 `

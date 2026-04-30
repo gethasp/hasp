@@ -64,20 +64,18 @@ func TestHelpTextMentionsEveryFlagDefinedInPackageFlagSets(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, pkgRoot, func(info os.FileInfo) bool { //nolint:staticcheck // deprecated but adequate for this in-package AST sweep
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, parser.AllErrors)
+	pkgs, err := parseNonTestPackageFiles(fset, pkgRoot)
 	if err != nil {
-		t.Fatalf("parser.ParseDir: %v", err)
+		t.Fatalf("parse package files: %v", err)
 	}
-	pkg, ok := pkgs["app"]
+	files, ok := pkgs["app"]
 	if !ok {
 		t.Fatalf("expected package 'app' under %s; got %v", pkgRoot, pkgKeys(pkgs))
 	}
 
 	commands := map[string]*flagDriftCmdEntry{}
 
-	for fname, file := range pkg.Files {
+	for fname, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fn, ok := n.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
@@ -248,7 +246,35 @@ func isFlagNameChar(c byte) bool {
 	return false
 }
 
-func pkgKeys(m map[string]*ast.Package) []string { //nolint:staticcheck // ast.Package is deprecated but parser.ParseDir still returns it
+func parseNonTestPackageFiles(fset *token.FileSet, dir string) (map[string]map[string]*ast.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	pkgs := map[string]map[string]*ast.File{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		file, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
+		if err != nil {
+			return nil, err
+		}
+		pkgName := file.Name.Name
+		if pkgs[pkgName] == nil {
+			pkgs[pkgName] = map[string]*ast.File{}
+		}
+		pkgs[pkgName][path] = file
+	}
+	return pkgs, nil
+}
+
+func pkgKeys(m map[string]map[string]*ast.File) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

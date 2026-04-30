@@ -352,14 +352,51 @@ func TestSetupResolvePasswordAdditionalCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("new vault empty prompts retry", func(t *testing.T) {
+		var out bytes.Buffer
+		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("\n\ncorrect horse battery staple\ncorrect horse battery staple\n"), &out), setupOptions{}, t.TempDir())
+		if err != nil || exists || password != "correct horse battery staple" {
+			t.Fatalf("expected empty prompts to retry until password success, got password=%q exists=%v err=%v", password, exists, err)
+		}
+		if got := strings.Count(out.String(), "Master password is required. Try again."); got != 2 {
+			t.Fatalf("expected two empty-password retry messages, got %d in %q", got, out.String())
+		}
+	})
+
+	t.Run("existing vault visible empty prompt retries", func(t *testing.T) {
+		home := t.TempDir()
+		if err := os.WriteFile(filepath.Join(home, "vault.json.enc"), []byte("x"), 0o600); err != nil {
+			t.Fatalf("write fake vault: %v", err)
+		}
+		var out bytes.Buffer
+		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("\nexisting-password\n"), &out), setupOptions{}, home)
+		if err != nil || !exists || password != "existing-password" {
+			t.Fatalf("expected visible empty existing-vault password retry success, got %q exists=%v err=%v", password, exists, err)
+		}
+		if !strings.Contains(out.String(), "Master password is required. Try again.") {
+			t.Fatalf("expected empty existing-vault retry message, got %q", out.String())
+		}
+	})
+
 	t.Run("new vault mismatch retries in place", func(t *testing.T) {
 		var out bytes.Buffer
-		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("one\ntwo\nfinal-pass\nfinal-pass\n"), &out), setupOptions{}, t.TempDir())
-		if err != nil || exists || password != "final-pass" {
+		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("one\ntwo\nfinal-password\nfinal-password\n"), &out), setupOptions{}, t.TempDir())
+		if err != nil || exists || password != "final-password" {
 			t.Fatalf("expected retry success, got password=%q exists=%v err=%v", password, exists, err)
 		}
 		if !strings.Contains(out.String(), "did not match") {
 			t.Fatalf("expected mismatch retry message, got %q", out.String())
+		}
+	})
+
+	t.Run("new vault weak password retries in place", func(t *testing.T) {
+		var out bytes.Buffer
+		password, exists, err := setupResolvePassword(newSetupPrompter(bytes.NewBufferString("short\nshort\ncorrect horse battery staple\ncorrect horse battery staple\n"), &out), setupOptions{}, t.TempDir())
+		if err != nil || exists || password != "correct horse battery staple" {
+			t.Fatalf("expected weak password retry success, got password=%q exists=%v err=%v", password, exists, err)
+		}
+		if !strings.Contains(out.String(), "master password must be at least") || !strings.Contains(out.String(), "Try again.") {
+			t.Fatalf("expected weak password retry message, got %q", out.String())
 		}
 	})
 

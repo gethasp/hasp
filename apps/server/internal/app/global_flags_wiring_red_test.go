@@ -130,6 +130,7 @@ func TestGlobalNoColorFlagPropagated(t *testing.T) {
 	}
 
 	// And with Disable=false + Interactive=true, it DOES add ANSI.
+	t.Setenv("NO_COLOR", "")
 	opts2 := ui.ColorOptions{Interactive: true, Disable: false}
 	got2 := ui.Colorize("hello", ui.ColorOK, opts2)
 	if !strings.Contains(got2, "\x1b[") {

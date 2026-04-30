@@ -32,101 +32,125 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		usageAndExit()
+	signExit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+var (
+	signRandReader io.Reader = rand.Reader
+	signReadFile             = os.ReadFile
+	signWriteFile            = os.WriteFile
+	signExit                 = os.Exit
+)
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) < 1 {
+		return usage(stderr)
 	}
-	switch os.Args[1] {
+	switch args[0] {
 	case "keygen":
-		cmdKeygen(os.Args[2:])
+		return cmdKeygen(args[1:], stderr)
 	case "tarball", "keys", "sign":
-		cmdSign(os.Args[2:])
+		return cmdSign(args[1:], stderr)
 	case "pubkey":
-		cmdPubkey(os.Args[2:])
+		return cmdPubkey(args[1:], stdout, stderr)
 	default:
-		usageAndExit()
+		return usage(stderr)
 	}
 }
 
-func usageAndExit() {
-	fmt.Fprintln(os.Stderr, "usage: sign keygen|tarball|keys|pubkey [flags]")
-	os.Exit(2)
+func usage(stderr io.Writer) int {
+	fmt.Fprintln(stderr, "usage: sign keygen|tarball|keys|pubkey [flags]")
+	return 2
 }
 
-func cmdKeygen(args []string) {
-	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
+func cmdKeygen(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	out := fs.String("out", "", "path for the new private key (required)")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	if *out == "" {
-		fmt.Fprintln(os.Stderr, "keygen: --out is required")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "keygen: --out is required")
+		return 2
 	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(signRandReader)
 	if err != nil {
-		die("keygen: %v", err)
+		return die(stderr, "keygen: %v", err)
 	}
-	if err := os.WriteFile(*out, priv, 0o600); err != nil {
-		die("write key: %v", err)
+	if err := signWriteFile(*out, priv, 0o600); err != nil {
+		return die(stderr, "write key: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "wrote private key (mode 0600): %s\npublic key (embed via -ldflags): %s\n",
+	fmt.Fprintf(stderr, "wrote private key (mode 0600): %s\npublic key (embed via -ldflags): %s\n",
 		*out, hex.EncodeToString(pub))
+	return 0
 }
 
-func cmdSign(args []string) {
-	fs := flag.NewFlagSet("sign", flag.ExitOnError)
+func cmdSign(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	keyPath := fs.String("key", "", "path to the Ed25519 private key (required)")
 	inPath := fs.String("in", "", "file to sign (required)")
 	outPath := fs.String("out", "", "signature output (default: <in>.sig)")
-	_ = fs.Parse(args)
-	if *keyPath == "" || *inPath == "" {
-		fmt.Fprintln(os.Stderr, "sign: --key and --in are required")
-		os.Exit(2)
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-	priv, err := os.ReadFile(*keyPath)
+	if *keyPath == "" || *inPath == "" {
+		fmt.Fprintln(stderr, "sign: --key and --in are required")
+		return 2
+	}
+	priv, err := signReadFile(*keyPath)
 	if err != nil {
-		die("read key: %v", err)
+		return die(stderr, "read key: %v", err)
 	}
 	if len(priv) != ed25519.PrivateKeySize {
-		die("key must be %d raw bytes, got %d", ed25519.PrivateKeySize, len(priv))
+		return die(stderr, "key must be %d raw bytes, got %d", ed25519.PrivateKeySize, len(priv))
 	}
-	body, err := os.ReadFile(*inPath)
+	body, err := signReadFile(*inPath)
 	if err != nil {
-		die("read input: %v", err)
+		return die(stderr, "read input: %v", err)
 	}
 	sig := ed25519.Sign(ed25519.PrivateKey(priv), body)
 	dst := *outPath
 	if dst == "" {
 		dst = *inPath + ".sig"
 	}
-	if err := os.WriteFile(dst, sig, 0o644); err != nil {
-		die("write sig: %v", err)
+	if err := signWriteFile(dst, sig, 0o644); err != nil {
+		return die(stderr, "write sig: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "wrote signature: %s (%d bytes)\n", dst, len(sig))
+	fmt.Fprintf(stderr, "wrote signature: %s (%d bytes)\n", dst, len(sig))
+	return 0
 }
 
-func cmdPubkey(args []string) {
-	fs := flag.NewFlagSet("pubkey", flag.ExitOnError)
+func cmdPubkey(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pubkey", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	keyPath := fs.String("key", "", "path to the Ed25519 private key (required)")
-	_ = fs.Parse(args)
-	if *keyPath == "" {
-		fmt.Fprintln(os.Stderr, "pubkey: --key is required")
-		os.Exit(2)
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-	priv, err := os.ReadFile(*keyPath)
+	if *keyPath == "" {
+		fmt.Fprintln(stderr, "pubkey: --key is required")
+		return 2
+	}
+	priv, err := signReadFile(*keyPath)
 	if err != nil {
-		die("read key: %v", err)
+		return die(stderr, "read key: %v", err)
 	}
 	if len(priv) != ed25519.PrivateKeySize {
-		die("key must be %d raw bytes, got %d", ed25519.PrivateKeySize, len(priv))
+		return die(stderr, "key must be %d raw bytes, got %d", ed25519.PrivateKeySize, len(priv))
 	}
 	pub := ed25519.PrivateKey(priv).Public().(ed25519.PublicKey)
-	fmt.Println(hex.EncodeToString(pub))
+	fmt.Fprintln(stdout, hex.EncodeToString(pub))
+	return 0
 }
 
-func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+func die(stderr io.Writer, format string, args ...any) int {
+	fmt.Fprintf(stderr, format+"\n", args...)
+	return 1
 }

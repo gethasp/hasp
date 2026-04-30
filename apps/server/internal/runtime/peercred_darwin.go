@@ -33,6 +33,16 @@ const (
 	localPeerPID  = 0x002
 )
 
+var (
+	peercredSyscallConn = func(conn *net.UnixConn) (syscall.RawConn, error) {
+		return conn.SyscallConn()
+	}
+	peercredRawControl = func(raw syscall.RawConn, f func(uintptr)) error {
+		return raw.Control(f)
+	}
+	peercredSyscall6 = syscall.Syscall6
+)
+
 // realPeerUID returns the effective UID of the peer connected on conn using
 // LOCAL_PEERCRED (Darwin). conn must be a *net.UnixConn; any other type is
 // rejected fail-closed.
@@ -46,18 +56,18 @@ func realPeerUID(conn net.Conn) (uint32, error) {
 	if !ok {
 		return 0, fmt.Errorf("peer credential lookup: not a unix socket")
 	}
-	raw, err := uc.SyscallConn()
+	raw, err := peercredSyscallConn(uc)
 	if err != nil {
 		return 0, fmt.Errorf("peer credential lookup: SyscallConn: %w", err)
 	}
 	var uid uint32
 	var credErr error
-	ctrlErr := raw.Control(func(fd uintptr) {
+	ctrlErr := peercredRawControl(raw, func(fd uintptr) {
 		var cred xucred
 		size := uint32(unsafe.Sizeof(cred))
 		// syscall.Getsockopt is not exported in a form that accepts a raw
 		// pointer, so we call the underlying syscall directly.
-		_, _, errno := syscall.Syscall6(
+		_, _, errno := peercredSyscall6(
 			syscall.SYS_GETSOCKOPT,
 			fd,
 			uintptr(solLocal),
@@ -89,16 +99,16 @@ func realPeerPID(conn net.Conn) (uint32, error) {
 	if !ok {
 		return 0, fmt.Errorf("peer credential lookup: not a unix socket")
 	}
-	raw, err := uc.SyscallConn()
+	raw, err := peercredSyscallConn(uc)
 	if err != nil {
 		return 0, fmt.Errorf("peer credential lookup: SyscallConn: %w", err)
 	}
 	var pid uint32
 	var pidErr error
-	ctrlErr := raw.Control(func(fd uintptr) {
+	ctrlErr := peercredRawControl(raw, func(fd uintptr) {
 		var value uint32
 		size := uint32(unsafe.Sizeof(value))
-		_, _, errno := syscall.Syscall6(
+		_, _, errno := peercredSyscall6(
 			syscall.SYS_GETSOCKOPT,
 			fd,
 			uintptr(solLocal),

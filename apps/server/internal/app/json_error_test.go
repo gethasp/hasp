@@ -65,8 +65,8 @@ func TestWriteCLIErrorJSONWhenJSON(t *testing.T) {
 	if decoded["error"]["message"] != "plain failure" {
 		t.Fatalf("message = %q, want 'plain failure'", decoded["error"]["message"])
 	}
-	if decoded["error"]["code"] != "internal_error" {
-		t.Fatalf("default code = %q, want 'internal_error'", decoded["error"]["code"])
+	if decoded["error"]["code"] != errCodeInternal {
+		t.Fatalf("default code = %q, want %q", decoded["error"]["code"], errCodeInternal)
 	}
 }
 

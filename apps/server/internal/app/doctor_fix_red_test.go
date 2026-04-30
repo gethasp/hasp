@@ -106,3 +106,17 @@ func TestDoctorWithoutFixDoesNotMutateState(t *testing.T) {
 		t.Fatalf("doctor without --fix should not remove stale socket; got err=%v", err)
 	}
 }
+
+func TestDoctorWithoutFixDoesNotStartDaemon(t *testing.T) {
+	stub := &noStartStub{}
+	var stdout bytes.Buffer
+	if err := doctorCommand(context.Background(), []string{}, &stdout, stub); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if stub.ensureCalled {
+		t.Fatal("doctor without --fix called EnsureDaemon")
+	}
+	if !strings.Contains(stdout.String(), "daemon") {
+		t.Fatalf("expected doctor output, got %q", stdout.String())
+	}
+}

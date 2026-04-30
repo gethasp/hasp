@@ -31,19 +31,15 @@ func TestDoctorJSONContainsOnlyAllowlistedKeys(t *testing.T) {
 
 	payload := decodeObject(t, out.Bytes())
 	allowed := map[string]bool{
-		"_schema":             true, // hasp-1dg1: schema-version stamp
-		"daemon_running":      true,
-		"vault_state":         true,
-		"binding_state":       true,
-		"hooks_installed":     true,
-		"audit_degraded":      true,
-		"version_major":       true,
-		"version_minor":       true,
-		"version_patch":       true,
-		"daemon_version":      true, // hasp-8m5h: daemon's reported version (omitempty)
-		"version_mismatch":    true, // hasp-8m5h: warn-level mismatch flag
-		"redactor_min_length": true,
-		"redactor_ansi_aware": true, // hasp-ab5d: ANSI-aware streaming-redaction capability
+		"_schema":         true, // schema-version envelope metadata
+		"daemon_running":  true,
+		"vault_state":     true,
+		"binding_state":   true,
+		"hooks_installed": true,
+		"audit_degraded":  true,
+		"version_major":   true,
+		"version_minor":   true,
+		"version_patch":   true,
 	}
 	for key := range payload {
 		if !allowed[key] {
@@ -544,6 +540,7 @@ func auditEventForTest(details map[string]any) audit.Event {
 
 type appRuntimeService struct {
 	status       runtime.StatusResponse
+	pingErr      error
 	revokeAll    runtime.RevokeAllSessionsResponse
 	revokeAllErr error
 	lock         runtime.LockVaultResponse
@@ -551,6 +548,9 @@ type appRuntimeService struct {
 }
 
 func (s appRuntimeService) Ping(_ runtime.PingRequest, reply *runtime.PingResponse) error {
+	if s.pingErr != nil {
+		return s.pingErr
+	}
 	*reply = runtime.PingResponse{Name: "hasp", Version: runtime.VersionString(), ServerTime: time.Now().UTC()}
 	return nil
 }

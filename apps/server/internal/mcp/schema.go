@@ -13,12 +13,20 @@ func catalog() []tool {
 		{Name: "hasp_check", Description: "Scan the project for managed secret leaks", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Bound project root"),
 		})},
+		{Name: "hasp_targets", Description: "List sanitized manifest targets for a project. Returns target names, refs, delivery kinds, and prerequisite status, never values or repo-controlled command argv.", InputSchema: schema(map[string]any{
+			"project_root": stringSchema("Bound project root"),
+		})},
+		{Name: "hasp_target_explain", Description: "Explain one manifest target using sanitized refs, delivery kinds, destination names, and manifest identity. Never returns secret values or repo-controlled command argv.", InputSchema: schema(map[string]any{
+			"project_root": stringSchema("Bound project root"),
+			"target":       stringSchema("Manifest target name"),
+		}, "target")},
 		{Name: "hasp_run", Description: "Run a command with brokered secret access. Prefer this over raw secret inspection. Reference values may be opaque repo aliases like secret_01 or named refs like @OPENAI_API_KEY.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": stringSchema("Optional daemon-backed session token"),
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 			"grant_project": grantSchema(),
 			"grant_secret":  grantSchema(),
+			"target":        stringSchema("Optional manifest target to expand into env/file refs. Command argv is still explicit."),
 			"env":           mapSchema("Environment variable to reference mappings. Values may be opaque repo refs like secret_01 or named refs like @OPENAI_API_KEY."),
 			"command":       stringArraySchema("Command argv"),
 		}, "command")},
@@ -28,9 +36,10 @@ func catalog() []tool {
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 			"grant_project": grantSchema(),
 			"grant_secret":  grantSchema(),
+			"target":        stringSchema("Optional manifest target to expand into file refs. Command argv is still explicit."),
 			"files":         mapSchema("Environment variable to file reference mappings. Values may be opaque repo refs like file_01 or named refs like @GOOGLE_APPLICATION_CREDENTIALS."),
 			"command":       stringArraySchema("Command argv"),
-		}, "files", "command")},
+		}, "command")},
 		{Name: "hasp_capture", Description: "Capture a new unmanaged candidate secret into HASP", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": stringSchema("Optional daemon-backed session token"),

@@ -26,6 +26,19 @@ var ErrUnsafeTarball = errors.New("tarball contains an unsafe entry")
 // before this code runs, but we still cap as defence in depth).
 const MaxBinarySize int64 = 256 * 1024 * 1024
 
+type writeCloser interface {
+	io.Writer
+	Close() error
+}
+
+var (
+	openInstallFile = func(name string, flag int, perm os.FileMode) (writeCloser, error) {
+		return os.OpenFile(name, flag, perm)
+	}
+	removeInstallFile = os.Remove
+	chmodInstallFile  = os.Chmod
+)
+
 // ExtractBinary reads tarballGzip, finds an entry whose base name
 // equals binaryName, and writes its content to dst with mode 0755.
 // dst must be on the same filesystem as the eventual install target
@@ -61,27 +74,23 @@ func ExtractBinary(tarballGzip []byte, binaryName, dst string) error {
 		if strings.Contains(hdr.Name, "..") {
 			return fmt.Errorf("%w: %q contains parent traversal", ErrUnsafeTarball, hdr.Name)
 		}
-		f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		f, err := openInstallFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", dst, err)
 		}
-		written, err := io.CopyN(f, tr, hdr.Size)
+		_, err = io.CopyN(f, tr, hdr.Size)
 		closeErr := f.Close()
 		if err != nil {
-			_ = os.Remove(dst)
+			_ = removeInstallFile(dst)
 			return fmt.Errorf("extract %s: %w", dst, err)
 		}
-		if written != hdr.Size {
-			_ = os.Remove(dst)
-			return fmt.Errorf("%w: wrote %d, expected %d", ErrUnsafeTarball, written, hdr.Size)
-		}
 		if closeErr != nil {
-			_ = os.Remove(dst)
+			_ = removeInstallFile(dst)
 			return fmt.Errorf("close %s: %w", dst, closeErr)
 		}
 		// Belt-and-braces chmod: O_CREATE honoured umask.
-		if err := os.Chmod(dst, 0o755); err != nil {
-			_ = os.Remove(dst)
+		if err := chmodInstallFile(dst, 0o755); err != nil {
+			_ = removeInstallFile(dst)
 			return fmt.Errorf("chmod %s: %w", dst, err)
 		}
 		return nil

@@ -6,50 +6,51 @@ This guide is for the most common starting point:
 - you already ran `brew install hasp`
 - you want HASP working with your coding agent today
 
-If that is you, follow these steps in order.
-
-If you want the simple path first, start with:
+If that is you, start with the guided setup:
 
 ```bash
 hasp setup
 ```
 
-That guided flow now walks through:
+`hasp setup` is the normal path after Homebrew. It can:
 
 - where local encrypted HASP data lives on this machine
 - machine defaults for automatic project protection
 - which coding agents should be configured for MCP, or whether to skip that for now
 - whether you want to add a vault secret and connect one app before setup ends
+- repo binding and broker proof when you run it inside a project
 - a final review step before HASP writes local changes
 
-You do not have to manually onboard every repo up front anymore.
+You should not have to manually run `hasp init`, hand-edit MCP JSON, or
+bootstrap every repo before HASP is useful. Those lower-level commands still
+exist for scripts, recovery, and exact control.
 
 After machine setup, HASP can automatically adopt a project the first time you
 use HASP inside it. Repo-scoped bindings still exist under the hood, but they
 are created for you from machine defaults instead of requiring manual setup
 first.
 
-The rest of this page is the manual flow and the troubleshooting fallback.
+The rest of this page is the manual flow and troubleshooting fallback.
 
-## Design Direction
+## The normal path is guided
 
-The current Homebrew guide still shows the existing broker runtime and
-bootstrap flow.
-
-The target model is simpler:
+The Homebrew path is designed around one guided command followed by normal
+work. The product model is:
 
 - one personal vault
 - connect apps once
 - connect agents once
 - run apps and agents normally afterward
 
-In other words, the desired long-term UX is:
+That means the common day-to-day surface should look like:
 
 - `hasp secret add`
 - `hasp app connect <name>`
 - `hasp agent connect <name>`
 
-not repeated command wrapping or repeated repo/bootstrap thinking.
+not repeated command wrapping or repeated repo/bootstrap thinking. Use the
+manual sections below only when you want to inspect one layer, automate a
+specific step, or recover from a failed setup.
 
 ## 1. Confirm the install
 
@@ -308,7 +309,7 @@ HASP helps a lot, but do not expect magic.
 - It reduces common local leaks.
 - It does not protect you from a malicious same-user local process.
 - It does not make pasted secrets magically safe after the fact.
-- `write-env` is explicit convenience. Once you write a real file, that file is a real file.
+- `write-env` is explicit convenience. Once you write a real file, that file is truly real: the OS, editors, backups, and git hooks can all see it.
 
 ## 11. If something is broken
 

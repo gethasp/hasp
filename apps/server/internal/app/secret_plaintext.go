@@ -22,6 +22,8 @@ import (
 // (`Grant 60s plaintext ... [y/N]`) does not drift from the underlying grant.
 const secretPlaintextInteractiveTTL = 60 * time.Second
 
+var grantPlaintextUseFn = (*store.Handle).GrantPlaintextUse
+
 // secretPlaintextDeps captures the side-effecting hooks the interactive
 // plaintext policy enforcement needs. Construction is explicit at the call
 // site (production gets defaultSecretPlaintextDeps; tests pass tighter
@@ -98,7 +100,7 @@ func enforceSecretPlaintextPolicyInteractive(ctx context.Context, handle *store.
 	if confirmErr != nil || !confirmed {
 		return err
 	}
-	if _, gerr := handle.GrantPlaintextUse(policy.SessionToken, itemName, action, "user", store.GrantOnce, secretPlaintextInteractiveTTL); gerr != nil {
+	if _, gerr := grantPlaintextUseFn(handle, policy.SessionToken, itemName, action, "user", store.GrantOnce, secretPlaintextInteractiveTTL); gerr != nil {
 		return gerr
 	}
 	return enforceSecretPlaintextPolicy(ctx, handle, itemName, action)

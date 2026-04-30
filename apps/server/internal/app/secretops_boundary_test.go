@@ -15,7 +15,6 @@ import (
 	"bytes"
 	"context"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"io"
 	"os"
@@ -64,10 +63,11 @@ func TestSecretBoundaryUnknownSubcommand(t *testing.T) {
 //     that define flag.NewFlagSet calls that the parent scanner won't see.
 //
 // When the GREEN team lands secretops production code they must either:
-//   a) extend the drift scanner to also walk internal/app/secretops/, or
-//   b) make the secretops FlagSet registrations visible inside package app
-//      (e.g. by calling them from app-level command bodies that the scanner
-//      already walks), and delete/modify this test accordingly.
+//
+//	a) extend the drift scanner to also walk internal/app/secretops/, or
+//	b) make the secretops FlagSet registrations visible inside package app
+//	   (e.g. by calling them from app-level command bodies that the scanner
+//	   already walks), and delete/modify this test accordingly.
 func TestSecretopsFlagDriftCoverageGap(t *testing.T) {
 	pkgRoot, err := os.Getwd()
 	if err != nil {
@@ -76,11 +76,9 @@ func TestSecretopsFlagDriftCoverageGap(t *testing.T) {
 
 	// Confirm the existing scanner only covers "app", not sub-packages.
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, pkgRoot, func(info os.FileInfo) bool { //nolint:staticcheck
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, parser.AllErrors)
+	pkgs, err := parseNonTestPackageFiles(fset, pkgRoot)
 	if err != nil {
-		t.Fatalf("parser.ParseDir: %v", err)
+		t.Fatalf("parse package files: %v", err)
 	}
 	if _, ok := pkgs["app"]; !ok {
 		t.Fatalf("expected package 'app' at %s; got %v", pkgRoot, pkgKeys(pkgs))
@@ -95,15 +93,13 @@ func TestSecretopsFlagDriftCoverageGap(t *testing.T) {
 	}
 
 	secretopsFset := token.NewFileSet()
-	secretopsPkgs, err := parser.ParseDir(secretopsFset, secretopsDir, func(info os.FileInfo) bool { //nolint:staticcheck
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, parser.AllErrors)
+	secretopsPkgs, err := parseNonTestPackageFiles(secretopsFset, secretopsDir)
 	if err != nil {
-		t.Fatalf("parser.ParseDir secretops: %v", err)
+		t.Fatalf("parse secretops package files: %v", err)
 	}
 
-	for _, pkg := range secretopsPkgs {
-		for _, file := range pkg.Files {
+	for _, files := range secretopsPkgs {
+		for _, file := range files {
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -112,10 +108,10 @@ func TestSecretopsFlagDriftCoverageGap(t *testing.T) {
 				if _, ok := newFlagSetPath(call); ok {
 					// Found a FlagSet in secretops that the parent scanner won't see.
 					t.Errorf(
-						"internal/app/secretops/ contains flag.NewFlagSet call(s) that are "+
-							"invisible to TestHelpTextMentionsEveryFlagDefinedInPackageFlagSets. "+
-							"GREEN team must extend the drift scanner to cover secretops/ or "+
-							"route FlagSet registrations through package app. "+
+						"internal/app/secretops/ contains flag.NewFlagSet call(s) that are " +
+							"invisible to TestHelpTextMentionsEveryFlagDefinedInPackageFlagSets. " +
+							"GREEN team must extend the drift scanner to cover secretops/ or " +
+							"route FlagSet registrations through package app. " +
 							"See TestSecretopsFlagDriftCoverageGap in secretops_boundary_test.go.",
 					)
 					return false

@@ -81,6 +81,7 @@ func runWithStarter(ctx context.Context, args []string, stdin io.Reader, stdout 
 		debugLogFn = func(format string, a ...any) {
 			fmt.Fprintf(stderr, "hasp [debug] "+format+"\n", a...)
 		}
+		debugLogFn("debug logging enabled")
 		defer func() { debugLogFn = prev }()
 	}
 

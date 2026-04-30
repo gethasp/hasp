@@ -21,6 +21,7 @@ import (
 )
 
 func TestSecretListShowsVaultOnlyBadgeGreenWhenColored(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	secrets := []secretMetadataView{
 		{
 			Name:           "API_TOKEN",
@@ -44,6 +45,7 @@ func TestSecretListShowsVaultOnlyBadgeGreenWhenColored(t *testing.T) {
 }
 
 func TestSecretListShowsSharedBadgeYellowWhenExposed(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	secrets := []secretMetadataView{
 		{
 			Name:           "API_TOKEN",

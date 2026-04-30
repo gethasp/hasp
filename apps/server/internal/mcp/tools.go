@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
+	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -36,6 +39,7 @@ const (
 	mcpEnvSessionToken     = "HASP_SESSION_TOKEN"
 	mcpEnvAgentProjectRoot = "HASP_AGENT_PROJECT_ROOT"
 	mcpEnvAgentConsumer    = "HASP_AGENT_CONSUMER"
+	mcpToolOutputByteLimit = 64 << 10
 )
 
 func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
@@ -48,6 +52,10 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 		return callList(ctx, handle, call)
 	case "hasp_check":
 		return callCheck(ctx, handle, call)
+	case "hasp_targets":
+		return callTargets(ctx, handle, call)
+	case "hasp_target_explain":
+		return callTargetExplain(ctx, call)
 	case "hasp_run", "hasp_inject":
 		return callExecute(ctx, handle, call)
 	case "hasp_capture":
@@ -112,33 +120,83 @@ func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[st
 	if err != nil {
 		return nil, err
 	}
-	items := handle.ListItems()
-	matches := make([]map[string]string, 0)
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() && d.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		if d.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			if len(item.Value) > 0 && strings.Contains(string(data), string(item.Value)) {
-				matches = append(matches, map[string]string{"path": path, "item_name": item.Name})
-			}
-		}
-		return nil
-	})
+	result, err := reposcan.Scan(ctx, root, handle.ListItems(), reposcan.DefaultMaxFileBytes, reposcan.DefaultDeps())
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"matches": matches}, nil
+	return map[string]any{"matches": result.Matches, "skipped": result.Skipped, "walker": result.Walker}, nil
+}
+
+func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	manifest, identity, err := store.LoadRepoManifestWithIdentity(root)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]map[string]any, 0, len(manifest.Targets))
+	for _, target := range manifest.Targets {
+		refs := make([]string, 0, len(target.Delivery))
+		kinds := make([]string, 0, len(target.Delivery))
+		prereqs := make([]map[string]any, 0, len(target.Delivery))
+		for _, delivery := range target.Delivery {
+			refs = append(refs, delivery.Ref)
+			kinds = append(kinds, delivery.As)
+			_, err := handle.ResolveReference(ctx, root, delivery.Ref)
+			prereqs = append(prereqs, map[string]any{
+				"ref":     delivery.Ref,
+				"kind":    delivery.As,
+				"present": err == nil,
+			})
+		}
+		targets = append(targets, map[string]any{
+			"name":           target.Name,
+			"description":    sanitizeMCPDescription(target.Description),
+			"refs":           uniqueStrings(refs),
+			"delivery_kinds": uniqueStrings(kinds),
+			"prerequisites":  prereqs,
+		})
+	}
+	return map[string]any{"manifest_hash": identity, "targets": targets}, nil
+}
+
+func callTargetExplain(ctx context.Context, call toolCall) (map[string]any, error) {
+	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	targetName := strings.TrimSpace(stringArg(call.Arguments, "target", ""))
+	if targetName == "" {
+		return nil, errors.New("target is required")
+	}
+	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	expansion, err := store.ExpandManifestTarget(root, targetName)
+	if err != nil {
+		return nil, err
+	}
+	kinds := make([]string, 0, 3)
+	if len(expansion.Env) > 0 {
+		kinds = append(kinds, store.ManifestDeliveryEnv)
+	}
+	if len(expansion.Files) > 0 {
+		kinds = append(kinds, store.ManifestDeliveryFile)
+	}
+	if len(expansion.XCConfig) > 0 {
+		kinds = append(kinds, store.ManifestDeliveryXCConfig)
+	}
+	return map[string]any{
+		"target":                expansion.TargetName,
+		"target_root":           expansion.TargetRoot,
+		"manifest_hash":         expansion.ManifestHash,
+		"refs":                  expansion.Refs,
+		"destinations":          expansion.Destinations,
+		"delivery_kinds":        kinds,
+		"has_command":           len(expansion.Command) > 0,
+		"has_workspace_outputs": len(expansion.Outputs) > 0,
+	}, nil
 }
 
 func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
@@ -155,6 +213,26 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	secretGrant := parseScope(stringArg(call.Arguments, "grant_secret", ""))
 	envRefs := stringMapArg(call.Arguments["env"])
 	fileRefs := stringMapArg(call.Arguments["files"])
+	target := strings.TrimSpace(stringArg(call.Arguments, "target", ""))
+	expansion := store.ManifestTargetExpansion{}
+	if target != "" {
+		if len(envRefs) > 0 || len(fileRefs) > 0 {
+			return nil, errors.New("target cannot be combined with explicit env or files mappings")
+		}
+		root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		expansion, err = store.ExpandManifestTarget(root, target)
+		if err != nil {
+			return nil, err
+		}
+		if len(expansion.XCConfig) > 0 || len(expansion.Outputs) > 0 {
+			return nil, fmt.Errorf("target %q contains workspace-visible delivery; MCP run/inject refuses generated outputs", target)
+		}
+		envRefs = expansion.Env
+		fileRefs = expansion.Files
+	}
 	if call.Name == "hasp_inject" && len(fileRefs) == 0 {
 		return nil, errors.New("files are required for hasp_inject")
 	}
@@ -184,19 +262,41 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 		files[envName] = item.Value
 		items = append(items, item)
 	}
-	runResult, err := runnerExecuteMCPFn(ctx, runner.Input{ProjectRoot: projectRoot, Command: command, Env: env, Files: files})
+	stdoutCapture := newMCPToolOutputCapture(items)
+	stderrCapture := newMCPToolOutputCapture(items)
+	runResult, err := runnerExecuteMCPFn(ctx, runner.Input{
+		ProjectRoot: expansion.ExecutionRoot(projectRoot),
+		Command:     command,
+		Env:         env,
+		Files:       files,
+		Stdout:      stdoutCapture.Writer(),
+		Stderr:      stderrCapture.Writer(),
+	})
 	if err != nil {
 		return nil, err
 	}
-	stdout := redactor.Apply(runResult.Stdout, items)
-	stderr := redactor.Apply(runResult.Stderr, items)
-	return map[string]any{
-		"exit_code":  runResult.ExitCode,
-		"stdout":     string(stdout.Output),
-		"stderr":     string(stderr.Output),
-		"redacted":   stdout.Redacted || stderr.Redacted,
-		"suppressed": stdout.Suppressed || stderr.Suppressed,
-	}, nil
+	stdoutCapture.WriteBuffered(runResult.Stdout)
+	stderrCapture.WriteBuffered(runResult.Stderr)
+	stdoutCapture.Close()
+	stderrCapture.Close()
+	stdoutStats := stdoutCapture.Stats()
+	stderrStats := stderrCapture.Stats()
+	response := map[string]any{
+		"exit_code":            runResult.ExitCode,
+		"stdout":               stdoutCapture.String(),
+		"stderr":               stderrCapture.String(),
+		"stdout_truncated":     stdoutCapture.Truncated(),
+		"stderr_truncated":     stderrCapture.Truncated(),
+		"stdout_bytes_omitted": stdoutCapture.BytesOmitted(),
+		"stderr_bytes_omitted": stderrCapture.BytesOmitted(),
+		"redacted":             stdoutStats.Redacted || stderrStats.Redacted,
+		"suppressed":           false,
+	}
+	if target != "" {
+		response["target"] = expansion.TargetName
+		response["manifest_hash"] = expansion.ManifestHash
+	}
+	return response, nil
 }
 
 func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
@@ -246,6 +346,36 @@ func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	}, nil
 }
 
+func sanitizeMCPDescription(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.ReplaceAll(value, "<", "")
+	value = strings.ReplaceAll(value, ">", "")
+	value = strings.TrimSpace(value)
+	if len(value) > 240 {
+		return value[:240]
+	}
+	return value
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	sort.Strings(values)
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
 func openHandle(ctx context.Context) (*store.Handle, error) {
 	password := os.Getenv("HASP_MASTER_PASSWORD")
 	vaultStore, err := newVaultStoreFn(defaultKeyringFn())
@@ -279,6 +409,86 @@ func defaultMCPHostLabel(call toolCall) string {
 		defaultLabel = "agent:" + consumer
 	}
 	return stringArg(call.Arguments, "host_label", defaultLabel)
+}
+
+type mcpToolOutputCapture struct {
+	buffer *cappedBuffer
+	stream *redactor.StreamingWriter
+}
+
+func newMCPToolOutputCapture(items []store.Item) *mcpToolOutputCapture {
+	buffer := newCappedBuffer(mcpToolOutputByteLimit)
+	return &mcpToolOutputCapture{
+		buffer: buffer,
+		stream: redactor.NewStreamingWriter(buffer, items),
+	}
+}
+
+func (c *mcpToolOutputCapture) Writer() io.Writer {
+	return c.stream
+}
+
+func (c *mcpToolOutputCapture) WriteBuffered(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	_, _ = c.stream.Write(data)
+}
+
+func (c *mcpToolOutputCapture) Close() {
+	_ = c.stream.Flush()
+}
+
+func (c *mcpToolOutputCapture) String() string {
+	return c.buffer.String()
+}
+
+func (c *mcpToolOutputCapture) Truncated() bool {
+	return c.buffer.BytesOmitted() > 0
+}
+
+func (c *mcpToolOutputCapture) BytesOmitted() int64 {
+	return c.buffer.BytesOmitted()
+}
+
+func (c *mcpToolOutputCapture) Stats() redactor.Stats {
+	return c.stream.Stats()
+}
+
+type cappedBuffer struct {
+	limit   int
+	buf     []byte
+	omitted int64
+}
+
+func newCappedBuffer(limit int) *cappedBuffer {
+	return &cappedBuffer{limit: limit}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.limit < 0 {
+		b.limit = 0
+	}
+	remaining := b.limit - len(b.buf)
+	if remaining > 0 {
+		if len(p) <= remaining {
+			b.buf = append(b.buf, p...)
+			return len(p), nil
+		}
+		b.buf = append(b.buf, p[:remaining]...)
+		b.omitted += int64(len(p) - remaining)
+		return len(p), nil
+	}
+	b.omitted += int64(len(p))
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	return string(b.buf)
+}
+
+func (b *cappedBuffer) BytesOmitted() int64 {
+	return b.omitted
 }
 
 func appendAuditApproval(bindingID string, itemName string) {

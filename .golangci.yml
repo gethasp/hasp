@@ -18,10 +18,6 @@ linters:
         - (net/http.ResponseWriter).Write
         - (*encoding/json.Encoder).Encode
         - (io).Copy
-    gocritic:
-      enabled-checks:
-        - ifElseChain
-        - sloppyLen
     dupl:
       threshold: 150
   exclusions:

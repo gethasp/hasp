@@ -4,8 +4,53 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.36]
+
+- Add the setup password formal-assurance lane: finite TLA+ model checking,
+  generated Go conformance traces, abstract fuzz/property coverage, targeted
+  mutation evidence, and the published assurance artifact for CONF-SETUP-002.
+- Automate the Unix PTY Ctrl+C setup-password smoke so interrupted setup stops
+  before vault creation.
+- Document adjacent assurance boundaries for keychain/convenience unlock,
+  daemon/session behavior, import/binding side effects, and whole-program
+  release gates without widening the setup password proof.
+- Refresh logo concept assets used by the public brand surface.
+
+## [v0.1.35]
+
+- Ship value-free repo requirements and target-scoped delivery in
+  `.hasp.manifest.json`: strict schema validation, safe project inspection,
+  placeholder example generation, and project doctor diagnostics for stale
+  examples, unavailable commands, unignored generated outputs, workspace-visible
+  secret delivery, kind mismatches, and manifest drift without exposing values
+  or repo-controlled command output.
+- Add target expansion to `hasp run`, `hasp inject`, and `hasp write-env` while
+  preserving normal binding, grant, redaction, audit, and convenience
+  materialization rules. Target expansion now records local review state and
+  warns when command argv, refs, delivery sets, or output paths drift after
+  review.
+- Add target-aware app and MCP surfaces: `hasp app connect --target`,
+  `hasp_targets`, `hasp_target_explain`, and target-aware MCP run/inject. Agent
+  target listing and explain omit command argv and raw values.
+- Update public docs and the web docs surface with repo-target guidance, a
+  regenerated CLI reference, and status/conformance entries for the shipped
+  target-manifest contract.
+
 ## [v0.1.34]
 
+- Close the staff-review hardening backlog before publication: strict doctor
+  JSON allowlist enforcement, documented E_* error classification for plain
+  CLI failures, read-only doctor diagnostics by default, symlink-safe
+  `write-env`, inherited backup-passphrase stripping for brokered children,
+  shared CLI/MCP repository scanning, capped MCP tool output, and narrower
+  first-screen CLI help.
+- Downgrade release-trust claims to match the real packaged artifacts:
+  signatures still verify, while SBOM, provenance, code-signing status, and
+  reproducible-build status are documented as local metadata sidecars rather
+  than remote attestation.
+- Add large-vault, large-output, MCP, and repo-scan benchmark smoke coverage so
+  future hardening work has performance evidence instead of relying on small
+  fixtures.
 - Fix the public release CI lane: add `TestMain` HASP_HOME defaults to `apps/server/cmd/hasp` and `apps/server/internal/runner` so the `paths.Resolve` test-isolation guard does not fire on packages that previously relied on a real `~/.hasp` fallback.
 - Make the canonical-root cache invalidation test deterministic on Linux tmpfs by replacing `RemoveAll`+`Mkdir` (which can reuse the same inode immediately) with a sibling-create plus rename, guaranteeing a distinct inode for `os.SameFile`.
 - Stabilize two CI-only flakes: poll for the daemon pid file (not just the socket) before `StopDaemon` in `TestDaemonCommandStartBranch`, and widen the GrantOnce TTL in `TestEnforceSecretPlaintextPolicyConsumeFailure` so the assertion remains focused on the persist-failure path under heavy CI load.

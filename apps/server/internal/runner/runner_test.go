@@ -44,6 +44,29 @@ func TestExecuteInjectsFileOutsideProjectAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestExecuteRunsCommandInsideProjectRoot(t *testing.T) {
+	baseDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	projectRoot := filepath.Join(baseDir, "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("make project root: %v", err)
+	}
+
+	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
+	result, err := Execute(context.Background(), Input{
+		ProjectRoot: projectRoot,
+		Command:     []string{"pwd", "-P"},
+	})
+	if err != nil {
+		t.Fatalf("execute runner: %v", err)
+	}
+	if got := strings.TrimSpace(string(result.Stdout)); got != projectRoot {
+		t.Fatalf("cwd = %q, want %q", got, projectRoot)
+	}
+}
+
 func TestExecuteFailsForSymlinkedInjectionDir(t *testing.T) {
 	baseDir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

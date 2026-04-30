@@ -11,11 +11,9 @@ package app
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -30,20 +28,18 @@ func TestSessionopsFlagDriftCoverage(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, sessionopsDir, func(info os.FileInfo) bool { //nolint:staticcheck // ast.Package deprecated but parser.ParseDir returns it
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, parser.AllErrors)
+	pkgs, err := parseNonTestPackageFiles(fset, sessionopsDir)
 	if err != nil {
-		t.Fatalf("parser.ParseDir(%s): %v", sessionopsDir, err)
+		t.Fatalf("parse package files %s: %v", sessionopsDir, err)
 	}
-	pkg, ok := pkgs["sessionops"]
+	files, ok := pkgs["sessionops"]
 	if !ok {
 		t.Fatalf("expected package 'sessionops' under %s; got %v", sessionopsDir, pkgKeys(pkgs))
 	}
 
 	commands := map[string]*flagDriftCmdEntry{}
 
-	for fname, file := range pkg.Files {
+	for fname, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fn, ok := n.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {

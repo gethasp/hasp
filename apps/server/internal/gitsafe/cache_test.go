@@ -2,6 +2,7 @@ package gitsafe
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,6 +113,61 @@ func TestCacheTopLevelDoesNotCacheErrors(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("error path must run the subprocess each time; got %d invocations (want 2)", got)
+	}
+}
+
+func TestTopLevelCachedUsesDefaultCache(t *testing.T) {
+	repo := setupGitLikeDir(t)
+	var calls atomic.Int32
+	restoreGit := stubGitSubprocess(repo, &calls)
+	defer restoreGit()
+	origCache := defaultCache
+	defaultCache = NewCache()
+	defer func() { defaultCache = origCache }()
+
+	for i := 0; i < 2; i++ {
+		got, err := TopLevelCached(context.Background(), repo)
+		if err != nil {
+			t.Fatalf("TopLevelCached #%d: %v", i, err)
+		}
+		if got != repo {
+			t.Fatalf("TopLevelCached = %q, want %q", got, repo)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected one git invocation, got %d", got)
+	}
+}
+
+func TestCacheKeyForFailuresAndStoreWithoutConfig(t *testing.T) {
+	origAbs := cacheAbsPath
+	origStat := cacheStatPath
+	defer func() {
+		cacheAbsPath = origAbs
+		cacheStatPath = origStat
+	}()
+
+	cacheAbsPath = func(string) (string, error) { return "", errors.New("abs") }
+	if _, _, ok := cacheKeyFor("x"); ok {
+		t.Fatal("cacheKeyFor should reject abs errors")
+	}
+
+	cacheAbsPath = origAbs
+	cacheStatPath = func(string) (os.FileInfo, error) { return nil, errors.New("stat") }
+	if _, _, ok := cacheKeyFor("x"); ok {
+		t.Fatal("cacheKeyFor should reject stat errors")
+	}
+
+	cacheStatPath = origStat
+	dir := t.TempDir()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	cache := NewCache()
+	cache.store("key", info, filepath.Join(dir, "no-config"))
+	if _, ok := cache.entries["key"]; ok {
+		t.Fatal("store should skip entries without .git/config")
 	}
 }
 

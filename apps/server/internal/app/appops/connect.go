@@ -18,6 +18,7 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", "", "")
+	target := fs.String("target", "", "")
 	command := fs.String("cmd", "", "")
 	dotenvEnv := fs.String("dotenv-env", "", "")
 	var installLauncher OptionalBool
@@ -54,6 +55,12 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 		deps.WarnBareEnvRefs(ctx, stderr, dotenvMappings, "app connect", "--dotenv")
 	}
 
+	if strings.TrimSpace(*target) != "" && strings.TrimSpace(*projectRoot) == "" {
+		*projectRoot = "."
+	}
+	if strings.TrimSpace(*target) != "" && (len(envMappings) > 0 || len(fileMappings) > 0 || len(dotenvMappings) > 0) {
+		return errors.New("--target cannot be combined with explicit app delivery mappings")
+	}
 	if deps.ExpandUserPath != nil && strings.TrimSpace(*projectRoot) != "" {
 		if expandedRoot, expandErr := deps.ExpandUserPath(strings.TrimSpace(*projectRoot)); expandErr != nil {
 			return fmt.Errorf("--project-root: %w", expandErr)
@@ -64,6 +71,7 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 
 	cfg := AppConnectConfig{
 		Name:            strings.TrimSpace(name),
+		Target:          strings.TrimSpace(*target),
 		Command:         strings.TrimSpace(*command),
 		DotenvEnv:       strings.TrimSpace(*dotenvEnv),
 		InstallLauncher: installLauncher,
@@ -84,7 +92,7 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 	if strings.TrimSpace(cfg.Name) == "" {
 		return errors.New("usage: hasp app connect <name> --cmd <command> [--project-root <path>] [--env APP_ENV=SECRET] [--file APP_ENV=SECRET] [--dotenv KEY=SECRET --dotenv-env APP_ENV] [--install]")
 	}
-	if strings.TrimSpace(cfg.Command) == "" {
+	if strings.TrimSpace(cfg.Command) == "" && strings.TrimSpace(cfg.Target) == "" {
 		return errors.New("app connect requires --cmd")
 	}
 	if deps.ValidateAppConsumerName != nil {

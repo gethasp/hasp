@@ -18,25 +18,25 @@ import (
 )
 
 type doctorJSONReport struct {
-	DaemonRunning      bool     `json:"daemon_running"`
-	VaultState         string   `json:"vault_state"`
-	BindingState       string   `json:"binding_state"`
-	HooksInstalled     bool     `json:"hooks_installed"`
-	AuditDegraded      bool     `json:"audit_degraded"`
-	VersionMajor       int      `json:"version_major"`
-	VersionMinor       int      `json:"version_minor"`
-	VersionPatch       int      `json:"version_patch"`
-	DaemonVersion      string   `json:"daemon_version"`
-	VersionMismatch    bool     `json:"version_mismatch"`
-	RedactorMinLength  int      `json:"redactor_min_length"`
-	RedactorANSIAware  bool     `json:"redactor_ansi_aware"`
-	FixesAttempted     []string `json:"fixes_attempted,omitempty"`
-	FixesSucceeded     []string `json:"fixes_succeeded,omitempty"`
-	FixesFailed        []string `json:"fixes_failed,omitempty"`
+	DaemonRunning  bool   `json:"daemon_running"`
+	VaultState     string `json:"vault_state"`
+	BindingState   string `json:"binding_state"`
+	HooksInstalled bool   `json:"hooks_installed"`
+	AuditDegraded  bool   `json:"audit_degraded"`
+	VersionMajor   int    `json:"version_major"`
+	VersionMinor   int    `json:"version_minor"`
+	VersionPatch   int    `json:"version_patch"`
 }
 
 type doctorReport struct {
 	doctorJSONReport
+	DaemonVersion         string
+	VersionMismatch       bool
+	RedactorMinLength     int
+	RedactorANSIAware     bool
+	FixesAttempted        []string
+	FixesSucceeded        []string
+	FixesFailed           []string
 	daemonDetail          string
 	vaultDetail           string
 	bindingDetail         string
@@ -63,7 +63,7 @@ func doctorCommand(ctx context.Context, args []string, stdout io.Writer, s start
 	*projectRoot = expandedRoot
 	report := buildDoctorReport(ctx, *projectRoot, s)
 	if *fix {
-		applyDoctorFixes(&report)
+		applyDoctorFixes(ctx, &report, s)
 	}
 	if *jsonOutput || globalFlagsFromContext(ctx).json {
 		return writeJSONResponse(stdout, report.doctorJSONReport)
@@ -81,7 +81,7 @@ func doctorCommand(ctx context.Context, args []string, stdout io.Writer, s start
 // FixesSucceeded; on failure in FixesFailed. The helpers are deliberately
 // conservative — they only touch files the daemon owns and never silently
 // rewrite secret material.
-func applyDoctorFixes(report *doctorReport) {
+func applyDoctorFixes(ctx context.Context, report *doctorReport, s starter) {
 	homeDir := os.Getenv("HASP_HOME")
 	if homeDir == "" {
 		report.FixesAttempted = append(report.FixesAttempted, "tighten_hasp_home_perms")
@@ -100,6 +100,19 @@ func applyDoctorFixes(report *doctorReport) {
 			report.FixesFailed = append(report.FixesFailed, "remove_stale_sockets: "+removeErr.Error())
 		} else {
 			report.FixesSucceeded = append(report.FixesSucceeded, fmt.Sprintf("remove_stale_sockets:%d", removed))
+		}
+	}
+	if s != nil && !report.DaemonRunning {
+		report.FixesAttempted = append(report.FixesAttempted, "start_daemon")
+		if err := s.EnsureDaemon(ctx); err != nil {
+			report.FixesFailed = append(report.FixesFailed, "start_daemon: "+err.Error())
+		} else {
+			report.FixesSucceeded = append(report.FixesSucceeded, "start_daemon")
+			if status, ok := doctorRuntimeStatusFn(ctx, s); ok {
+				report.DaemonRunning = true
+				report.AuditDegraded = status.AuditDegraded
+				report.daemonDetail = "daemon is running"
+			}
 		}
 	}
 }
@@ -121,11 +134,7 @@ func removeStaleSocketsIn(dir string) (int, error) {
 		if !strings.HasSuffix(e.Name(), ".sock") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.Mode()&os.ModeSocket != 0 {
+		if info, err := e.Info(); err == nil && info.Mode()&os.ModeSocket != 0 {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
@@ -146,21 +155,21 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 	major, minor, patch := parseVersionParts(runtime.VersionString())
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{
-			DaemonRunning:     false,
-			VaultState:        "missing",
-			BindingState:      "unknown",
-			HooksInstalled:    false,
-			AuditDegraded:     false,
-			VersionMajor:      major,
-			VersionMinor:      minor,
-			VersionPatch:      patch,
-			RedactorMinLength: redactor.MinRedactLen,
-			RedactorANSIAware: redactor.ANSIAwareAvailable(),
+			DaemonRunning:  false,
+			VaultState:     "missing",
+			BindingState:   "unknown",
+			HooksInstalled: false,
+			AuditDegraded:  false,
+			VersionMajor:   major,
+			VersionMinor:   minor,
+			VersionPatch:   patch,
 		},
-		daemonDetail:  "daemon is not reachable; run hasp daemon start or retry the command",
-		vaultDetail:   "vault is not initialized or cannot be unlocked",
-		bindingDetail: "project binding was not checked",
-		auditDetail:   "audit subsystem reports healthy or unknown state",
+		RedactorMinLength: redactor.MinRedactLen,
+		RedactorANSIAware: redactor.ANSIAwareAvailable(),
+		daemonDetail:      "daemon is not reachable; run hasp daemon start or retry the command",
+		vaultDetail:       "vault is not initialized or cannot be unlocked",
+		bindingDetail:     "project binding was not checked",
+		auditDetail:       "audit subsystem reports healthy or unknown state",
 	}
 
 	if status, ok := doctorRuntimeStatusFn(ctx, s); ok {
@@ -203,9 +212,6 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 
 func doctorRuntimeStatus(ctx context.Context, s starter) (runtime.StatusResponse, bool) {
 	if s == nil {
-		return runtime.StatusResponse{}, false
-	}
-	if err := s.EnsureDaemon(ctx); err != nil {
 		return runtime.StatusResponse{}, false
 	}
 	client, err := s.Connect(ctx)

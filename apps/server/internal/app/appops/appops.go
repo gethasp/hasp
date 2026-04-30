@@ -46,6 +46,7 @@ type OptionalBool struct {
 type AppConnectConfig struct {
 	Name            string
 	ProjectRoot     string
+	Target          string
 	Command         string
 	DotenvEnv       string
 	InstallLauncher OptionalBool

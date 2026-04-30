@@ -143,6 +143,7 @@ func defaultAppDeps() appops.Deps {
 			private := &appConnectConfig{
 				Name:            cfg.Name,
 				Command:         cfg.Command,
+				Target:          cfg.Target,
 				DotenvEnv:       cfg.DotenvEnv,
 				InstallLauncher: setupOptionalBool{set: cfg.InstallLauncher.Set, value: cfg.InstallLauncher.Value},
 				AddToPath:       setupOptionalBool{set: cfg.AddToPath.Set, value: cfg.AddToPath.Value},
@@ -156,6 +157,7 @@ func defaultAppDeps() appops.Deps {
 			// Copy results back.
 			cfg.Name = private.Name
 			cfg.Command = private.Command
+			cfg.Target = private.Target
 			cfg.DotenvEnv = private.DotenvEnv
 			cfg.InstallLauncher = appops.OptionalBool{Set: private.InstallLauncher.set, Value: private.InstallLauncher.value}
 			cfg.AddToPath = appops.OptionalBool{Set: private.AddToPath.set, Value: private.AddToPath.value}
@@ -173,6 +175,7 @@ func defaultAppDeps() appops.Deps {
 			private := appConnectConfig{
 				Name:            cfg.Name,
 				ProjectRoot:     cfg.ProjectRoot,
+				Target:          cfg.Target,
 				Command:         cfg.Command,
 				DotenvEnv:       cfg.DotenvEnv,
 				InstallLauncher: setupOptionalBool{set: cfg.InstallLauncher.Set, value: cfg.InstallLauncher.Value},

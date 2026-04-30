@@ -16,6 +16,10 @@ import (
 	goexec "os/exec"
 )
 
+var agentWaitCommand = func(cmd *goexec.Cmd) error {
+	return cmd.Wait()
+}
+
 func agentLaunchHandler(ctx context.Context, deps Deps, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, shellMode bool) error {
 	name, remaining := consumerNameAndArgs(args)
 	commandName := "agent launch"
@@ -82,7 +86,7 @@ func agentLaunchHandler(ctx context.Context, deps Deps, args []string, stdin io.
 			return err
 		}
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := agentWaitCommand(cmd); err != nil {
 		var exitErr *goexec.ExitError
 		if errors.As(err, &exitErr) {
 			return fmt.Errorf("command exited with code %d", exitErr.ExitCode())

@@ -27,6 +27,28 @@ func TestIsInteractiveWriterFalseForByteBuffer(t *testing.T) {
 	}
 }
 
+func TestIsInteractiveWriterHandlesFileStatCases(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open dev null: %v", err)
+	}
+	defer devNull.Close()
+	if !IsInteractiveWriter(devNull) {
+		t.Fatal("expected os.DevNull to report as a character device")
+	}
+
+	closed, err := os.CreateTemp(t.TempDir(), "closed")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+	if IsInteractiveWriter(closed) {
+		t.Fatal("closed file should not be interactive")
+	}
+}
+
 func TestColorizeReturnsPlainForNonInteractive(t *testing.T) {
 	got := Colorize("ok", ColorOK, ColorOptions{Interactive: false})
 	if got != "ok" {
@@ -84,5 +106,11 @@ func TestShouldPageOnlyWhenInteractiveAndOverThreshold(t *testing.T) {
 	}
 	if !ShouldPage(PagerOptions{Interactive: true, Lines: 100, Threshold: 25}) {
 		t.Fatal("over threshold should page")
+	}
+	if ShouldPage(PagerOptions{Interactive: true, Lines: 25}) {
+		t.Fatal("default threshold should not page at 25 lines")
+	}
+	if !ShouldPage(PagerOptions{Interactive: true, Lines: 26}) {
+		t.Fatal("default threshold should page over 25 lines")
 	}
 }

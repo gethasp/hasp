@@ -102,9 +102,7 @@ func renderSessionListWithColor(w io.Writer, sessions []runtime.SessionView, opt
 	if opts.Verbose {
 		header = "STATE\tID\tUSER\tHOST\tPROJECT\tCONSUMER\tAGENT_SAFE\tLAST_SEEN\tEXPIRES"
 	}
-	if _, err := fmt.Fprintln(tw, header); err != nil {
-		return err
-	}
+	fmt.Fprintln(tw, header)
 	now := time.Now()
 	for _, sv := range sessions {
 		consumer := sv.ConsumerName
@@ -112,24 +110,20 @@ func renderSessionListWithColor(w io.Writer, sessions []runtime.SessionView, opt
 			consumer = "-"
 		}
 		badge := sessionStateBadge(sv, now, opts)
-		var err error
 		if opts.Verbose {
 			user := sv.LocalUser
 			if user == "" {
 				user = "-"
 			}
-			_, err = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
 				badge, sv.ID, user, sv.HostLabel, sv.ProjectRoot, consumer, sv.AgentSafe,
 				sv.LastSeenAt.Format(secrettypes.TimeRFC3339), sv.ExpiresAt.Format(secrettypes.TimeRFC3339),
 			)
 		} else {
-			_, err = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
 				badge, sv.ID, sv.HostLabel, sv.ProjectRoot, consumer, sv.AgentSafe,
 				sv.LastSeenAt.Format(secrettypes.TimeRFC3339), sv.ExpiresAt.Format(secrettypes.TimeRFC3339),
 			)
-		}
-		if err != nil {
-			return err
 		}
 	}
 	return tw.Flush()

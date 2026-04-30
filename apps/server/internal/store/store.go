@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"os"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -23,15 +22,11 @@ var (
 	ErrInvalidPassword     = errors.New("invalid master password")
 	ErrItemNotFound        = errors.New("item not found")
 	ErrKeyringUnavailable  = errors.New("keyring convenience unlock unavailable")
-	// passwordIterations is selected once at startup. The build-time default
-	// (defaultPasswordIterations) holds production cost in release builds and
-	// is downgraded only under the explicit hasp_test_fastkdf build tag — never
-	// based on the binary's name, which a previous version did and which let
-	// any binary renamed `*.test` permanently weaken every vault it then init'd.
-	// HASP_KDF_ITERATIONS lets operators override upward; values below
-	// minPasswordIterations panic at startup so a misconfiguration is loud
-	// rather than silently weakening the vault.
-	passwordIterations = resolvePasswordIterations(os.Getenv("HASP_KDF_ITERATIONS"), defaultPasswordIterations, minPasswordIterations)
+	// passwordIterations is retained only for PBKDF2 metadata/backward-
+	// compatibility reporting. New vaults use argon2id parameters below.
+	// Do not read HASP_KDF_ITERATIONS at package init: even `hasp --help`
+	// must survive a bad shell environment.
+	passwordIterations = defaultPasswordIterations
 )
 
 // FormatVersion returns the on-disk envelope format version every freshly
@@ -47,11 +42,10 @@ func FormatVersion() int { return formatVersion }
 // pbkdf2-sha256 still opens existing vaults via the dispatch in deriveFromSpec.
 func DefaultKDFName() string { return kdfNameArgon2id }
 
-// DefaultKDFIterations returns the PBKDF2 iteration count resolved at startup
-// from HASP_KDF_ITERATIONS, the build-time default, and the hasp_test_fastkdf
-// build tag. Retained for backwards-compat with `hasp version --json`
-// consumers; with argon2id as the new default it no longer drives new vaults
-// and is reported alongside DefaultKDFTime/Memory/Parallelism.
+// DefaultKDFIterations returns the legacy PBKDF2 iteration count retained for
+// backwards-compatible diagnostics. With argon2id as the new default it no
+// longer drives new vaults and is reported alongside
+// DefaultKDFTime/Memory/Parallelism.
 func DefaultKDFIterations() int { return passwordIterations }
 
 // DefaultKDFTime returns the argon2id `t` parameter (number of passes) the
@@ -163,6 +157,7 @@ type persistedState struct {
 	PlaintextGrants   map[string]PlaintextGrant   `json:"plaintext_grants"`
 	AppConsumers      map[string]AppConsumer      `json:"app_consumers"`
 	AgentConsumers    map[string]AgentConsumer    `json:"agent_consumers"`
+	ManifestReviews   map[string]ManifestReview   `json:"manifest_reviews,omitempty"`
 }
 
 type fileEnvelope struct {

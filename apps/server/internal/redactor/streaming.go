@@ -142,8 +142,7 @@ func (sw *StreamingWriter) flushSafe() error {
 	if sw.ansiAware {
 		return sw.flushSafeANSI()
 	}
-	n := len(sw.pending)
-	safeOrigLen := n - sw.lookbackSize
+	safeOrigLen := len(sw.pending) - sw.lookbackSize
 
 	// Find all needle match positions in pending before running replacement.
 	// We need this to map original position safeOrigLen to its position in the
@@ -196,9 +195,6 @@ func (sw *StreamingWriter) flushSafe() error {
 	origCursor := 0
 	actualSafeOrigLen := safeOrigLen // may be reduced if a match straddles
 	for _, m := range matches {
-		if m.end > n {
-			break
-		}
 		// Skip matches already consumed (overlapping with a prior match).
 		if m.start < origCursor {
 			continue
@@ -209,7 +205,7 @@ func (sw *StreamingWriter) flushSafe() error {
 		if m.end <= actualSafeOrigLen {
 			// Fully within safe region: account for the replacement.
 			redactedOffset += (m.start - origCursor) // plain bytes before match
-			redactedOffset += m.markerLen             // marker replaces needle
+			redactedOffset += m.markerLen            // marker replaces needle
 			origCursor = m.end
 		} else {
 			// Straddles: the needle starts in safe but ends in retained. We
@@ -225,10 +221,7 @@ func (sw *StreamingWriter) flushSafe() error {
 		redactedOffset += actualSafeOrigLen - origCursor
 	}
 
-	safeRedactedLen := redactedOffset
-	if safeRedactedLen > len(redacted) {
-		safeRedactedLen = len(redacted)
-	}
+	safeRedactedLen := min(redactedOffset, len(redacted))
 
 	if safeRedactedLen > 0 {
 		if _, err := sw.dst.Write(redacted[:safeRedactedLen]); err != nil {

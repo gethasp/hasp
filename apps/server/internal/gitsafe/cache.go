@@ -36,6 +36,11 @@ func NewCache() *Cache {
 
 var defaultCache = NewCache()
 
+var (
+	cacheAbsPath  = filepath.Abs
+	cacheStatPath = os.Stat
+)
+
 // TopLevelCached is TopLevel with a process-wide memoization. Hits avoid the
 // 5-50ms git subprocess startup cost; entries invalidate when the directory
 // is replaced (different inode) or the resolved repo's .git/config mtime
@@ -65,12 +70,12 @@ func (c *Cache) TopLevel(ctx context.Context, dir string) (string, error) {
 }
 
 func cacheKeyFor(dir string) (string, os.FileInfo, bool) {
-	abs, err := filepath.Abs(dir)
+	abs, err := cacheAbsPath(dir)
 	if err != nil {
 		return "", nil, false
 	}
 	clean := filepath.Clean(abs)
-	info, err := os.Stat(clean)
+	info, err := cacheStatPath(clean)
 	if err != nil {
 		return "", nil, false
 	}
@@ -88,7 +93,7 @@ func (c *Cache) tryHit(key string, info os.FileInfo) (string, bool) {
 		c.evict(key)
 		return "", false
 	}
-	configInfo, err := os.Stat(filepath.Join(entry.topLevel, ".git", "config"))
+	configInfo, err := cacheStatPath(filepath.Join(entry.topLevel, ".git", "config"))
 	if err != nil || !configInfo.ModTime().Equal(entry.configMtime) {
 		c.evict(key)
 		return "", false
@@ -97,7 +102,7 @@ func (c *Cache) tryHit(key string, info os.FileInfo) (string, bool) {
 }
 
 func (c *Cache) store(key string, info os.FileInfo, topLevel string) {
-	configInfo, err := os.Stat(filepath.Join(topLevel, ".git", "config"))
+	configInfo, err := cacheStatPath(filepath.Join(topLevel, ".git", "config"))
 	if err != nil {
 		return
 	}

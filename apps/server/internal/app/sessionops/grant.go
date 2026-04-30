@@ -17,6 +17,10 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
+var confirmPlaintextGrantReadString = func(r *bufio.Reader, delim byte) (string, error) {
+	return r.ReadString(delim)
+}
+
 func sessionGrantPlaintext(ctx context.Context, deps Deps, args []string, stdout io.Writer, localDeps *LocalDeps) error {
 	fs := flag.NewFlagSet("session grant-plaintext", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -163,7 +167,7 @@ func ConfirmPlaintextGrantWithDeps(session runtime.SessionView, itemName string,
 		if _, err := fmt.Fprintf(os.Stdout, "Approve one-time %s of %s for %s\nProject: %s\nType %q to approve: ", action, itemName, session.HostLabel, projectRoot, phrase); err != nil {
 			return err
 		}
-		answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		answer, err := confirmPlaintextGrantReadString(bufio.NewReader(os.Stdin), '\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}

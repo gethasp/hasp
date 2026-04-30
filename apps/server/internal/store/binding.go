@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,14 +25,51 @@ type Binding struct {
 }
 
 type RepoManifest struct {
-	Version              string              `json:"version"`
-	References           []ManifestReference `json:"references"`
-	DefaultCapturePolicy SecretPolicy        `json:"default_capture_policy,omitempty"`
+	Version              string                `json:"version"`
+	Project              ManifestProject       `json:"project,omitempty"`
+	References           []ManifestReference   `json:"references"`
+	Requirements         []ManifestRequirement `json:"requirements,omitempty"`
+	Targets              []ManifestTarget      `json:"targets,omitempty"`
+	DefaultCapturePolicy SecretPolicy          `json:"default_capture_policy,omitempty"`
+}
+
+type ManifestProject struct {
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type ManifestReference struct {
 	Alias string `json:"alias"`
 	Item  string `json:"item"`
+}
+
+type ManifestRequirement struct {
+	Ref            string   `json:"ref"`
+	Kind           ItemKind `json:"kind"`
+	Required       bool     `json:"required"`
+	Classification string   `json:"classification"`
+	Description    string   `json:"description,omitempty"`
+}
+
+type ManifestTarget struct {
+	Name        string             `json:"name"`
+	Description string             `json:"description,omitempty"`
+	Root        string             `json:"root,omitempty"`
+	Command     []string           `json:"command,omitempty"`
+	Delivery    []ManifestDelivery `json:"delivery,omitempty"`
+	Examples    []ManifestExample  `json:"examples,omitempty"`
+}
+
+type ManifestDelivery struct {
+	As     string `json:"as"`
+	Name   string `json:"name"`
+	Ref    string `json:"ref"`
+	Output string `json:"output,omitempty"`
+}
+
+type ManifestExample struct {
+	Format string `json:"format"`
+	Path   string `json:"path"`
 }
 
 type VisibleReference struct {
@@ -236,16 +272,8 @@ func CanonicalProjectPath(projectPath string) (string, error) {
 }
 
 func LoadRepoManifest(root string) (RepoManifest, error) {
-	path := filepath.Join(root, manifestFilename)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return RepoManifest{}, err
-	}
-	var manifest RepoManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return RepoManifest{}, fmt.Errorf("decode repo manifest: %w", err)
-	}
-	return manifest, nil
+	manifest, _, err := LoadRepoManifestWithIdentity(root)
+	return manifest, err
 }
 
 func GenerateNeutralAlias(kind ItemKind, existing map[string]string) string {

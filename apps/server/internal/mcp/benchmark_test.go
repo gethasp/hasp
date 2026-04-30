@@ -152,7 +152,7 @@ func setupBenchmarkMCPState(b *testing.B) string {
 	b.Helper()
 	baseDir := b.TempDir()
 	b.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
-	b.Setenv(paths.EnvSocket, filepath.Join("/tmp", "hasp-bench.sock"))
+	b.Setenv(paths.EnvSocket, filepath.Join(os.TempDir(), fmt.Sprintf("hasp-bench-%d.sock", time.Now().UnixNano())))
 	b.Setenv("HASP_MASTER_PASSWORD", "secret-password")
 
 	vaultStore, err := store.New(store.NewDefaultKeyring())
@@ -249,7 +249,9 @@ func waitForBenchmarkSocket(b *testing.B, socketPath string, errCh <-chan error)
 			b.Fatal("daemon exited before socket became available")
 		default:
 		}
-		if _, err := os.Stat(socketPath); err == nil {
+		client, err := runtime.Dial(context.Background(), socketPath)
+		if err == nil {
+			client.Close()
 			return
 		}
 		time.Sleep(25 * time.Millisecond)

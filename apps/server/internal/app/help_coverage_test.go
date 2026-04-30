@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -74,12 +75,23 @@ func TestHelpTopicsCoverPublishedTopics(t *testing.T) {
 
 func TestRootCommandInventoryStaysInSyncWithHelp(t *testing.T) {
 	rootHelp := renderRootHelpText()
+	dailySection := rootHelp
+	if start := strings.Index(rootHelp, "Daily commands"); start >= 0 {
+		dailySection = rootHelp[start:]
+	}
+	if end := strings.Index(dailySection, "Help topics"); end >= 0 {
+		dailySection = dailySection[:end]
+	}
 	for _, spec := range rootCommandInventory() {
 		if spec.group != commandGroupDaily && spec.group != commandGroupUtility {
 			t.Fatalf("unexpected command group for %s: %s", spec.name, spec.group)
 		}
-		if !spec.hidden && !strings.Contains(rootHelp, spec.name) {
-			t.Fatalf("root help missing command %q", spec.name)
+		commandRow := fmt.Sprintf("  %-17s", spec.name)
+		if spec.group == commandGroupDaily && !spec.hidden && !strings.Contains(dailySection, commandRow) {
+			t.Fatalf("root help missing daily command %q", spec.name)
+		}
+		if spec.group == commandGroupUtility && !spec.hidden && strings.Contains(dailySection, commandRow) {
+			t.Fatalf("root help should not promote utility command %q; use explicit help/completion instead", spec.name)
 		}
 		if len(spec.helpTopic) == 0 {
 			continue

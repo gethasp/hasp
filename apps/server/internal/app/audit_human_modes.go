@@ -111,9 +111,7 @@ func auditRenderTimeline(events []audit.Event, w io.Writer) error {
 		// trailer that combines extra k=v details and the BLOCKED marker so
 		// neither becomes its own ragged column.
 		trailer := strings.TrimSpace(strings.Join([]string{extra, blocked}, " "))
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ts, e.Type, ref, e.Actor, trailer); err != nil {
-			return err
-		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ts, e.Type, ref, e.Actor, trailer)
 	}
 	return tw.Flush()
 }

@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+var releaseGOOS = runtime.GOOS
+
+var newReleaseRequest = http.NewRequestWithContext
+
 // DefaultReleaseHost is the canonical host for hasp release artifacts.
 // Downloads from any other host are refused — a MitM that redirects
 // the URL has to either land on github.com (where signatures still
@@ -26,7 +30,7 @@ const DefaultReleaseURLBase = "https://github.com/gethasp/hasp/releases/download
 // MaxArtifactBytes caps each download. The tarball cap is generous;
 // signature and KEYS files are tiny and will hit MaxSmallArtifactBytes.
 const (
-	MaxTarballBytes      int64 = 256 * 1024 * 1024
+	MaxTarballBytes       int64 = 256 * 1024 * 1024
 	MaxSmallArtifactBytes int64 = 64 * 1024
 )
 
@@ -53,7 +57,7 @@ func KEYSName(version string) string {
 // On Windows it would be "hasp.exe", but Windows is unsupported in
 // v1 (rename-over-running-binary doesn't work without extra work).
 func PlatformBinaryName() string {
-	if runtime.GOOS == "windows" {
+	if releaseGOOS == "windows" {
 		return "hasp.exe"
 	}
 	return "hasp"
@@ -80,7 +84,7 @@ func DefaultHTTPGet(ctx context.Context, rawURL string, maxBytes int64) ([]byte,
 	if parsed.Host != DefaultReleaseHost {
 		return nil, fmt.Errorf("%w: %q is on %q, expected %q", ErrUntrustedHost, rawURL, parsed.Host, DefaultReleaseHost)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := newReleaseRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}

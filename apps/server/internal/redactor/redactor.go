@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -173,9 +172,6 @@ func encodeDoublePercent(b []byte) string {
 func encodeUnicodeEscape(b []byte) string {
 	var sb strings.Builder
 	for _, r := range string(b) {
-		if r > utf8.MaxRune {
-			continue
-		}
 		fmt.Fprintf(&sb, "\\u%04X", r)
 	}
 	return sb.String()

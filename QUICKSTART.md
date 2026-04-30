@@ -132,11 +132,16 @@ scripts/hasp-uninstall-release.sh ~/.local/share/hasp/hasp_<version>_<os>_<arch>
 The default uninstall path removes only the installed release tree. It does not
 remove `HASP_HOME` or repo hooks unless you pass explicit cleanup flags.
 
-## Boundaries to remember
+## Known limits of v1
 
-- V1 is local-first and reduces accidental exposure on a normal developer
-  machine.
-- V1 is not strong same-user local isolation.
-- brokered flows are safer than direct exports or pasted values.
-- convenience materialization is an explicit operator tradeoff, not the default
-  trust model.
+- V1 is local-first. There is no hosted control plane.
+- V1 reduces accidental exposure on a normal developer machine. It does not provide strong same-user local isolation.
+- HASP does not manage your PATH by default. App launchers and PATH edits require explicit consent.
+- Pasted values and shell exports become managed only after you import or capture them.
+- `hasp write-env`, `hasp secret reveal`, and `hasp secret copy` put plaintext back in human-visible places. Use them when that tradeoff is intentional.
+
+## Where to go next
+
+- Read the [mental model](docs/mental-model.md) to understand vaults, bindings, grants, and brokered delivery.
+- Use the [command guide](docs/command-guide.md) when you know the job but not the command.
+- Keep the [glossary](docs/glossary.md) nearby when command output uses a term you do not recognize.

@@ -3,11 +3,14 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +19,8 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
+	"github.com/gethasp/hasp/apps/server/internal/reposcan"
+	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -411,6 +416,220 @@ func TestHaspCheckAndUnsupportedToolHelpers(t *testing.T) {
 	}
 	if boolArg(map[string]any{"grant_write": "yes"}, "grant_write", false) {
 		t.Fatal("expected boolArg to ignore non-bool values")
+	}
+}
+
+func TestHaspCheckUsesSharedScannerMetadata(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
+	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
+
+	vaultStore, err := store.New(store.NewDefaultKeyring())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(context.Background(), "secret-password"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := vaultStore.OpenWithPassword(context.Background(), "secret-password")
+	if err != nil {
+		t.Fatalf("open handle: %v", err)
+	}
+	projectRoot := filepath.Join(baseDir, "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if _, err := handle.UpsertItem("api_token", store.ItemKindKV, []byte("abc123secret"), store.ItemMetadata{}); err != nil {
+		t.Fatalf("upsert item: %v", err)
+	}
+	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+	mustGit(t, projectRoot, "init")
+	if err := os.WriteFile(filepath.Join(projectRoot, ".gitignore"), []byte("ignored.txt\n"), 0o600); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "raw.txt"), []byte("abc123secret"), 0o600); err != nil {
+		t.Fatalf("write raw leak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "b64.txt"), []byte(base64.StdEncoding.EncodeToString([]byte("abc123secret"))), 0o600); err != nil {
+		t.Fatalf("write b64 leak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "hex.txt"), []byte(hex.EncodeToString([]byte("abc123secret"))), 0o600); err != nil {
+		t.Fatalf("write hex leak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "url.txt"), []byte("token=abc123secret%21"), 0o600); err != nil {
+		t.Fatalf("write url leak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "ignored.txt"), []byte("abc123secret"), 0o600); err != nil {
+		t.Fatalf("write ignored leak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "huge.bin"), bytes.Repeat([]byte("x"), int(reposcan.DefaultMaxFileBytes)+1), 0o600); err != nil {
+		t.Fatalf("write huge file: %v", err)
+	}
+
+	result, err := callCheck(context.Background(), handle, toolCall{
+		Name:      "hasp_check",
+		Arguments: map[string]any{"project_root": projectRoot},
+	})
+	if err != nil {
+		t.Fatalf("callCheck: %v", err)
+	}
+
+	body := mustJSONMap(t, result)
+	for _, name := range []string{"raw.txt", "b64.txt", "hex.txt", "url.txt"} {
+		if !strings.Contains(body, name) {
+			t.Fatalf("expected %s match in %s", name, body)
+		}
+	}
+	if strings.Contains(body, "ignored.txt") {
+		t.Fatalf("expected .gitignore to suppress ignored.txt, got %s", body)
+	}
+	if !strings.Contains(body, "\"walker\":\"git-ls-files\"") {
+		t.Fatalf("expected git-ls-files walker, got %s", body)
+	}
+	if !strings.Contains(body, "\"path\":\"huge.bin\"") || !strings.Contains(body, "\"reason\":\"over_max_bytes\"") {
+		t.Fatalf("expected huge.bin skipped metadata, got %s", body)
+	}
+}
+
+func TestHaspCheckFallsBackOutsideGit(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
+	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
+
+	vaultStore, err := store.New(store.NewDefaultKeyring())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(context.Background(), "secret-password"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := vaultStore.OpenWithPassword(context.Background(), "secret-password")
+	if err != nil {
+		t.Fatalf("open handle: %v", err)
+	}
+	projectRoot := filepath.Join(baseDir, "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if _, err := handle.UpsertItem("api_token", store.ItemKindKV, []byte("abc123secret"), store.ItemMetadata{}); err != nil {
+		t.Fatalf("upsert item: %v", err)
+	}
+	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "leak.txt"), []byte("abc123secret"), 0o600); err != nil {
+		t.Fatalf("write leak: %v", err)
+	}
+
+	result, err := callCheck(context.Background(), handle, toolCall{
+		Name:      "hasp_check",
+		Arguments: map[string]any{"project_root": projectRoot},
+	})
+	if err != nil {
+		t.Fatalf("callCheck: %v", err)
+	}
+	body := mustJSONMap(t, result)
+	if !strings.Contains(body, "\"walker\":\"walkdir\"") {
+		t.Fatalf("expected walkdir fallback, got %s", body)
+	}
+	if !strings.Contains(body, "leak.txt") {
+		t.Fatalf("expected leak.txt match, got %s", body)
+	}
+}
+
+func TestCallExecuteCapsAndRedactsStreamingOutput(t *testing.T) {
+	lockMCPSeams(t)
+	origEnsureSession := ensureSessionFn
+	origResolveBinding := resolveBindingViewMCPFn
+	origAuthorizeRef := authorizeReferenceMCPFn
+	origRunnerExecute := runnerExecuteMCPFn
+	defer func() {
+		ensureSessionFn = origEnsureSession
+		resolveBindingViewMCPFn = origResolveBinding
+		authorizeReferenceMCPFn = origAuthorizeRef
+		runnerExecuteMCPFn = origRunnerExecute
+	}()
+
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
+	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
+	vaultStore, err := store.New(store.NewDefaultKeyring())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(context.Background(), "secret-password"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := vaultStore.OpenWithPassword(context.Background(), "secret-password")
+	if err != nil {
+		t.Fatalf("open handle: %v", err)
+	}
+	projectRoot := filepath.Join(baseDir, "project")
+	if _, err := handle.UpsertItem("api_token", store.ItemKindKV, []byte("abc123secret"), store.ItemMetadata{Policy: store.PolicySession}); err != nil {
+		t.Fatalf("upsert item: %v", err)
+	}
+	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+	ensureSessionFn = func(context.Context, string, string, string) (brokerops.Session, error) {
+		return brokerops.Session{Token: "session-token"}, nil
+	}
+	resolveBindingViewMCPFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{ID: "binding-id"}, nil, nil
+	}
+	authorizeReferenceMCPFn = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+		return store.Item{Name: "api_token", Value: []byte("abc123secret")}, nil
+	}
+	runnerExecuteMCPFn = func(_ context.Context, input runner.Input) (runner.Result, error) {
+		if input.Stdout == nil || input.Stderr == nil {
+			t.Fatalf("expected streaming writers to be provided to runner")
+		}
+		chunk := strings.Repeat("abc123secret\n", mcpToolOutputByteLimit)
+		if _, err := io.WriteString(input.Stdout, chunk); err != nil {
+			return runner.Result{}, err
+		}
+		if _, err := io.WriteString(input.Stderr, chunk); err != nil {
+			return runner.Result{}, err
+		}
+		return runner.Result{ExitCode: 0}, nil
+	}
+
+	result, err := callExecute(context.Background(), handle, toolCall{
+		Name: "hasp_run",
+		Arguments: map[string]any{
+			"project_root": projectRoot,
+			"env":          map[string]any{"API_TOKEN": "secret_01"},
+			"command":      []any{"true"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("callExecute: %v", err)
+	}
+
+	stdout := result["stdout"].(string)
+	stderr := result["stderr"].(string)
+	if strings.Contains(stdout, "abc123secret") || strings.Contains(stderr, "abc123secret") {
+		t.Fatalf("expected redaction, got stdout=%q stderr=%q", stdout, stderr)
+	}
+	if len(stdout) > mcpToolOutputByteLimit || len(stderr) > mcpToolOutputByteLimit {
+		t.Fatalf("expected capped output <= %d bytes, got stdout=%d stderr=%d", mcpToolOutputByteLimit, len(stdout), len(stderr))
+	}
+	if truncated, ok := result["stdout_truncated"].(bool); !ok || !truncated {
+		t.Fatalf("expected stdout_truncated=true, got %v", result["stdout_truncated"])
+	}
+	if truncated, ok := result["stderr_truncated"].(bool); !ok || !truncated {
+		t.Fatalf("expected stderr_truncated=true, got %v", result["stderr_truncated"])
+	}
+	if omitted, ok := result["stdout_bytes_omitted"].(int64); !ok || omitted <= 0 {
+		t.Fatalf("expected stdout_bytes_omitted>0, got %#v", result["stdout_bytes_omitted"])
+	}
+	if omitted, ok := result["stderr_bytes_omitted"].(int64); !ok || omitted <= 0 {
+		t.Fatalf("expected stderr_bytes_omitted>0, got %#v", result["stderr_bytes_omitted"])
+	}
+	if redacted, ok := result["redacted"].(bool); !ok || !redacted {
+		t.Fatalf("expected redacted=true, got %v", result["redacted"])
 	}
 }
 
@@ -986,4 +1205,12 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for socket %s", socketPath)
+}
+
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
 }

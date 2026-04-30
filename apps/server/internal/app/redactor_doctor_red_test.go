@@ -1,16 +1,11 @@
 package app
 
-// RED tests for hasp-ohub — surface redactor_min_length in hasp doctor --json.
+// RED tests for hasp-ohub — surface redactor_min_length in human doctor only.
 //
 // Contract pinned (not yet implemented):
-//   - `hasp doctor --json` output includes a top-level field
-//     "redactor_min_length" with value 6 (the current minRedactLen constant).
-//   - The field is present regardless of daemon / vault state so operators
-//     always know the active threshold without reading source code.
-//
-// These tests are intentionally RED: doctorJSONReport does not yet carry this
-// field. GREEN phase must add RedactorMinLength to doctorJSONReport and wire it
-// through buildDoctorReport / doctorCommand.
+//   - `hasp doctor --json` remains strict agent-safe schema output and does
+//     not expose redactor tuning details.
+//   - Human doctor output may include redactor diagnostics for operators.
 
 import (
 	"bytes"
@@ -20,7 +15,7 @@ import (
 	"testing"
 )
 
-func TestDoctorJSONIncludesRedactorMinLength(t *testing.T) {
+func TestDoctorJSONOmitsRedactorMinLength(t *testing.T) {
 	lockAppSeams(t)
 	homeDir := t.TempDir()
 	t.Setenv("HASP_HOME", homeDir)
@@ -37,19 +32,8 @@ func TestDoctorJSONIncludesRedactorMinLength(t *testing.T) {
 		t.Fatalf("unmarshal doctor JSON: %v (output: %s)", err, stdout.String())
 	}
 
-	raw, ok := out["redactor_min_length"]
-	if !ok {
-		t.Fatalf("doctor --json missing field 'redactor_min_length'; got keys: %v", mapKeys(out))
-	}
-
-	// JSON numbers unmarshal as float64.
-	val, ok := raw.(float64)
-	if !ok {
-		t.Fatalf("expected 'redactor_min_length' to be a number, got %T (%v)", raw, raw)
-	}
-	const wantMinLen = 6
-	if int(val) != wantMinLen {
-		t.Fatalf("expected redactor_min_length=%d, got %v", wantMinLen, val)
+	if _, ok := out["redactor_min_length"]; ok {
+		t.Fatalf("doctor --json must not expose redactor_min_length; got keys: %v", mapKeys(out))
 	}
 }
 

@@ -17,6 +17,8 @@ import (
 type explainPayload struct {
 	Command          string            `json:"command"`
 	ProjectRoot      string            `json:"project_root"`
+	Target           string            `json:"target,omitempty"`
+	ManifestHash     string            `json:"manifest_hash,omitempty"`
 	ProjectScope     string            `json:"project_lease"`
 	SecretScope      string            `json:"secret_grant"`
 	ConvenienceScope string            `json:"convenience_grant,omitempty"`
@@ -32,11 +34,8 @@ type explainPayload struct {
 func writeExplainPayload(w io.Writer, payload explainPayload, format string) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "json":
-		out, err := json.MarshalIndent(payload, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, string(out))
+		out, _ := json.MarshalIndent(payload, "", "  ")
+		_, err := fmt.Fprintln(w, string(out))
 		return err
 	case "text", "":
 		return writeExplainText(w, payload)
@@ -54,6 +53,12 @@ func writeExplainText(w io.Writer, payload explainPayload) error {
 	b.WriteString(header)
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  project_root:    %s\n", payload.ProjectRoot)
+	if payload.Target != "" {
+		fmt.Fprintf(&b, "  target:          %s\n", payload.Target)
+	}
+	if payload.ManifestHash != "" {
+		fmt.Fprintf(&b, "  manifest_hash:   %s\n", payload.ManifestHash)
+	}
 	fmt.Fprintf(&b, "  project_lease:   %s\n", explainScope(payload.ProjectScope))
 	fmt.Fprintf(&b, "  secret_grant:    %s\n", explainScope(payload.SecretScope))
 	if payload.ConvenienceScope != "" {

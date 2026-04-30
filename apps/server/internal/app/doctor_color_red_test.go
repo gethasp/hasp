@@ -43,6 +43,7 @@ func TestRenderDoctorPlainHasNoAnsiSequences(t *testing.T) {
 }
 
 func TestRenderDoctorColorWrapsHealthyStatesGreen(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{
 			DaemonRunning: true,
@@ -67,6 +68,7 @@ func TestRenderDoctorColorWrapsHealthyStatesGreen(t *testing.T) {
 }
 
 func TestRenderDoctorColorMarksDegradedStates(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{
 			DaemonRunning: false,
@@ -119,10 +121,10 @@ func TestDoctorCommandReadsNoColorFromGlobalFlagsContext(t *testing.T) {
 func TestRenderDoctorColorRespectsDisableFlag(t *testing.T) {
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{DaemonRunning: true, VaultState: "unlocked", BindingState: "bound"},
-		daemonDetail:    "daemon running",
-		vaultDetail:     "vault unlocked",
-		bindingDetail:   "binding ok",
-		auditDetail:     "audit ok",
+		daemonDetail:     "daemon running",
+		vaultDetail:      "vault unlocked",
+		bindingDetail:    "binding ok",
+		auditDetail:      "audit ok",
 	}
 	var buf bytes.Buffer
 	if err := renderDoctorHumanWithColor(&buf, report, ui.ColorOptions{Interactive: true, Disable: true}); err != nil {

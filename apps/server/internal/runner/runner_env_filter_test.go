@@ -33,6 +33,7 @@ func TestExecuteStripsHaspSessionTokenFromInheritedEnv(t *testing.T) {
 	bootstrapEnvFilterTest(t)
 	t.Setenv("HASP_SESSION_TOKEN", "leaked-bearer")
 	t.Setenv("HASP_MASTER_PASSWORD", "leaked-master")
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "leaked-backup")
 
 	lines := childEnvLines(t, Input{Command: []string{"/usr/bin/env"}})
 
@@ -42,6 +43,9 @@ func TestExecuteStripsHaspSessionTokenFromInheritedEnv(t *testing.T) {
 		}
 		if line == "HASP_MASTER_PASSWORD=leaked-master" {
 			t.Fatalf("HASP_MASTER_PASSWORD=leaked-master found in child env; runner must strip it")
+		}
+		if line == "HASP_BACKUP_PASSPHRASE=leaked-backup" {
+			t.Fatalf("HASP_BACKUP_PASSPHRASE=leaked-backup found in child env; runner must strip it")
 		}
 	}
 }

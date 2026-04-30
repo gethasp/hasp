@@ -23,6 +23,7 @@ import (
 )
 
 func TestSessionListShowsActiveBadgeGreenWhenColored(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	sessions := []runtime.SessionView{
 		{
 			ID:          "sess-1",
@@ -46,6 +47,7 @@ func TestSessionListShowsActiveBadgeGreenWhenColored(t *testing.T) {
 }
 
 func TestSessionListShowsExpiredBadgeRedWhenColored(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	sessions := []runtime.SessionView{
 		{
 			ID:          "sess-2",

@@ -58,6 +58,9 @@ var (
 	}
 	randReadRunner = rand.Read
 	timeNowRunner  = time.Now
+	waitCommand    = func(cmd *exec.Cmd) error {
+		return cmd.Wait()
+	}
 )
 
 // Input describes a brokered execution request. Env entries override any
@@ -145,6 +148,9 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 
 	cmd := exec.CommandContext(ctx, input.Command[0], input.Command[1:]...)
 	cmd.Env = env
+	if strings.TrimSpace(input.ProjectRoot) != "" {
+		cmd.Dir = input.ProjectRoot
+	}
 
 	// PTY path: short-circuits stdin/stdout/stderr wiring and runs its own
 	// Start/Wait pair. Stderr is merged into Stdout because PTYs do not
@@ -183,7 +189,11 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 	if err = cmd.Start(); err != nil {
 		return Result{}, err
 	}
-	err = cmd.Wait()
+	err = waitCommand(cmd)
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		return Result{}, err
+	}
 
 	// Populate legacy fields only when internal buffers were used.
 	result := Result{}
@@ -197,12 +207,8 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 	if err == nil {
 		return result, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		result.ExitCode = exitErr.ExitCode()
-		return result, nil
-	}
-	return Result{}, err
+	result.ExitCode = exitErr.ExitCode()
+	return result, nil
 }
 
 // strippedChildEnvNames lists env vars that hold HASP-internal secrets and must
@@ -210,8 +216,9 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 // readable by any same-UID observer; explicit input.Env mappings still win
 // because they are appended after this filter.
 var strippedChildEnvNames = map[string]struct{}{
-	"HASP_SESSION_TOKEN":   {},
-	"HASP_MASTER_PASSWORD": {},
+	"HASP_SESSION_TOKEN":     {},
+	"HASP_MASTER_PASSWORD":   {},
+	"HASP_BACKUP_PASSPHRASE": {},
 }
 
 func filterChildEnv(parent []string) []string {
@@ -288,14 +295,14 @@ func randomRunSuffix() (string, error) {
 // guard uses to compare project root against the inject dir without being
 // fooled by a planted symlink.
 func resolveCanonicalPath(path string) (string, error) {
-	if abs, err := runnerAbsPath(path); err == nil {
-		if resolved, evalErr := runnerEvalSymlinks(abs); evalErr == nil {
-			return resolved, nil
-		}
-		return abs, nil
-	} else {
+	abs, err := runnerAbsPath(path)
+	if err != nil {
 		return "", err
 	}
+	if resolved, err := runnerEvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return abs, nil
 }
 
 func writeInjectedFile(injectDir string, projectRoot string, envName string, contents []byte) (string, error) {
@@ -317,20 +324,24 @@ func writeInjectedFile(injectDir string, projectRoot string, envName string, con
 	if err != nil {
 		return "", fmt.Errorf("create injected file: %w", err)
 	}
+	removeFile := true
+	defer func() {
+		if removeFile {
+			_ = os.Remove(file.Name())
+		}
+	}()
 	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		_ = os.Remove(file.Name())
+		_ = file.Close()
 		return "", fmt.Errorf("chmod injected file: %w", err)
 	}
 	if _, err := file.Write(contents); err != nil {
-		file.Close()
-		_ = os.Remove(file.Name())
+		_ = file.Close()
 		return "", fmt.Errorf("write injected file: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(file.Name())
 		return "", fmt.Errorf("close injected file: %w", err)
 	}
+	removeFile = false
 	return file.Name(), nil
 }
 
@@ -347,11 +358,12 @@ func cleanupStaleInjectedFiles(injectDir string) error {
 	cutoff := timeNowRunner().Add(-staleRunDirThreshold)
 	for _, entry := range entries {
 		name := entry.Name()
+		path := filepath.Join(injectDir, name)
 		if entry.IsDir() {
 			if !strings.HasPrefix(name, runDirPrefix) {
 				continue
 			}
-			info, err := statInjectedPath(filepath.Join(injectDir, name))
+			info, err := statInjectedPath(path)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue
@@ -361,7 +373,7 @@ func cleanupStaleInjectedFiles(injectDir string) error {
 			if info.ModTime().After(cutoff) {
 				continue
 			}
-			if err := removeInjectedTree(filepath.Join(injectDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeInjectedTree(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("cleanup stale run dir: %w", err)
 			}
 			continue
@@ -369,7 +381,7 @@ func cleanupStaleInjectedFiles(injectDir string) error {
 		if !strings.HasPrefix(name, legacyInjectedFilePrefix) {
 			continue
 		}
-		if err := removeInjectedPath(filepath.Join(injectDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeInjectedPath(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("cleanup stale injected file: %w", err)
 		}
 	}

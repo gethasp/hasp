@@ -190,6 +190,52 @@ func waitForEvalSocket(t *testing.T, socketPath string) {
 	t.Fatalf("timed out waiting for daemon socket %s", socketPath)
 }
 
+func waitForEvalDaemonReady(t *testing.T, e evalEnv) runtime.StatusResponse {
+	t.Helper()
+	if strings.TrimSpace(e.socket) == "" {
+		t.Fatal("eval socket path is empty")
+	}
+
+	pidPath := filepath.Join(e.home, "runtime", "daemon.pid")
+	deadline := time.Now().Add(15 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		pidData, err := os.ReadFile(pidPath)
+		if err != nil {
+			lastErr = err
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		pidValue, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+		if err != nil || pidValue <= 0 {
+			lastErr = fmt.Errorf("daemon pid file %s contains %q", pidPath, strings.TrimSpace(string(pidData)))
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+
+		client, err := runtime.Dial(context.Background(), e.socket)
+		if err != nil {
+			lastErr = err
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		status, err := client.Status(context.Background())
+		_ = client.Close()
+		if err != nil {
+			lastErr = err
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		if status.PID == pidValue && status.SocketPath == e.socket {
+			return status
+		}
+		lastErr = fmt.Errorf("daemon status pid=%d socket=%q, want pid=%d socket=%q", status.PID, status.SocketPath, pidValue, e.socket)
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for daemon readiness on %s: %v", e.socket, lastErr)
+	return runtime.StatusResponse{}
+}
+
 func parseJSONMap(t *testing.T, raw string) map[string]any {
 	t.Helper()
 	var out map[string]any
@@ -219,14 +265,9 @@ func openRuntimeSessionWithDuration(t *testing.T, e evalEnv, projectRoot string,
 		t.Fatalf("start daemon: %v", err)
 	}
 	// `daemon start` spawns the broker asynchronously and returns before the
-	// socket has been bound; poll until the socket file appears so the dial
-	// below sees a ready broker instead of ENOENT.
-	waitForEvalSocket(t, e.socket)
-	manager, err := runtime.NewManager()
-	if err != nil {
-		t.Fatalf("new manager: %v", err)
-	}
-	client, err := runtime.Dial(context.Background(), manager.SocketPath())
+	// pid file is populated and before the socket necessarily accepts RPCs.
+	waitForEvalDaemonReady(t, e)
+	client, err := runtime.Dial(context.Background(), e.socket)
 	if err != nil {
 		t.Fatalf("dial daemon: %v", err)
 	}
@@ -374,9 +415,9 @@ func TestStopEvalDaemonStopsDetachedDaemon(t *testing.T) {
 	if _, _, err := runHasp(t, env, "", "daemon", "start"); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}
-	// Wait for the daemon to bind its socket before we read pid state and
-	// invoke cleanup; otherwise the verify path can't talk to the broker.
-	waitForEvalSocket(t, env.socket)
+	// Wait for the daemon to bind its socket and publish its pid before
+	// cleanup verification reads daemon state.
+	status := waitForEvalDaemonReady(t, env)
 
 	pidPath := filepath.Join(env.home, "runtime", "daemon.pid")
 	pidData, err := os.ReadFile(pidPath)
@@ -386,6 +427,9 @@ func TestStopEvalDaemonStopsDetachedDaemon(t *testing.T) {
 	pidValue, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
 	if err != nil || pidValue <= 0 {
 		t.Fatalf("expected valid daemon pid, got %q err=%v", strings.TrimSpace(string(pidData)), err)
+	}
+	if pidValue != status.PID {
+		t.Fatalf("pid file = %d, daemon status pid = %d", pidValue, status.PID)
 	}
 
 	stopEvalDaemon(t, env)

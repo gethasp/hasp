@@ -625,7 +625,7 @@ func run(name string, args ...string) ([]byte, error) {
 func newDaemonTestStarter(t *testing.T) starter {
 	t.Helper()
 
-	t.Setenv("HASP_SOCKET", filepath.Join("/tmp", fmt.Sprintf("hasp-app-%d.sock", time.Now().UnixNano())))
+	t.Setenv("HASP_SOCKET", shortSocketPath(t, fmt.Sprintf("hasp-app-%d.sock", time.Now().UnixNano())))
 	manager, err := runtime.NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)

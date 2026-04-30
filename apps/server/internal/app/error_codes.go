@@ -1,5 +1,12 @@
 package app
 
+import (
+	"errors"
+	"strings"
+
+	"github.com/gethasp/hasp/apps/server/internal/store"
+)
+
 // hasp-a7xd: stable error-code registry. Codes are surfaced in the
 // structured-error envelope (--json mode) and mapped to documented exit-code
 // buckets so scripts can branch on machine-readable failure.
@@ -55,17 +62,60 @@ func AppErrorExitCode(err error) int {
 }
 
 // appErrorExitCode returns the documented exit-code bucket for err.
-// nil → 0, plain errors → 1 (generic), unknown codes → 1.
+// nil -> 0, classified plain errors -> their bucket, unknown codes -> 1.
 func appErrorExitCode(err error) int {
 	if err == nil {
 		return exitOK
 	}
-	envelope, ok := err.(*appError)
-	if !ok {
-		return exitGeneric
-	}
+	envelope := classifyAppError(err)
 	if bucket, known := errCodeExitBuckets[envelope.Code]; known {
 		return bucket
 	}
 	return exitGeneric
+}
+
+func classifyAppError(err error) *appError {
+	if err == nil {
+		return nil
+	}
+	var envelope *appError
+	if errors.As(err, &envelope) {
+		return envelope
+	}
+	message := err.Error()
+	switch {
+	case errors.Is(err, store.ErrVaultNotInitialized):
+		return newAppError(errCodeVaultLocked, message).withHint("run hasp setup or set HASP_MASTER_PASSWORD")
+	case errors.Is(err, store.ErrInvalidPassword):
+		return newAppError(errCodePasswordWrong, message)
+	case errors.Is(err, store.ErrItemNotFound):
+		return newAppError(errCodeNotFound, message)
+	case looksLikeUserInputError(message):
+		return newAppError(errCodeUserInput, message)
+	case looksLikeDaemonError(message):
+		return newAppError(errCodeDaemonUnreachable, message)
+	default:
+		return newAppError(errCodeInternal, message)
+	}
+}
+
+func looksLikeUserInputError(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.HasPrefix(lower, "unknown command") ||
+		strings.HasPrefix(lower, "usage:") ||
+		strings.Contains(lower, "flag provided but not defined") ||
+		strings.Contains(lower, "invalid value") ||
+		strings.Contains(lower, "requires ") ||
+		strings.Contains(lower, "missing ") ||
+		strings.Contains(lower, "not in a git repository") ||
+		strings.Contains(lower, "refusing to overwrite")
+}
+
+func looksLikeDaemonError(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "daemon") &&
+		(strings.Contains(lower, "not reachable") ||
+			strings.Contains(lower, "unreachable") ||
+			strings.Contains(lower, "connection refused") ||
+			strings.Contains(lower, "dial unix"))
 }

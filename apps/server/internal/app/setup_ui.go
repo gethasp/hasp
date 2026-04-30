@@ -194,6 +194,9 @@ func setupWriteIntro(out io.Writer) error {
 }
 
 func setupWriteStage(out io.Writer, title string, lines ...string) error {
+	if err := setupWriteStepBoundary(out); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(out, setupStageHeader(out, title)); err != nil {
 		return err
 	}
@@ -212,6 +215,13 @@ func setupWriteStage(out io.Writer, title string, lines ...string) error {
 		}
 	}
 	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupWriteStepBoundary(out io.Writer) error {
+	if _, err := fmt.Fprintln(out, setupStyle(out, "2", strings.Repeat("-", 56))); err != nil {
 		return err
 	}
 	return nil
@@ -535,6 +545,9 @@ func parseSetupAgentMenuSelection(supported []setupAgentSpec, value string) ([]s
 }
 
 func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
+	if err := setupWriteStepBoundary(out); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(out, setupStageHeader(out, "Review before apply")); err != nil {
 		return err
 	}
@@ -627,31 +640,37 @@ func setupEnabledDisabled(value bool) string {
 }
 
 func promptString(prompt *setupPrompter, label string, defaultValue string) (string, error) {
-	return promptStringWithDisplayDefault(prompt, label, defaultValue, defaultValue)
+	value, _, err := promptStringWithEOF(prompt, label, defaultValue, defaultValue)
+	return value, err
 }
 
 func promptStringWithDisplayDefault(prompt *setupPrompter, label string, defaultValue string, displayDefault string) (string, error) {
+	value, _, err := promptStringWithEOF(prompt, label, defaultValue, displayDefault)
+	return value, err
+}
+
+func promptStringWithEOF(prompt *setupPrompter, label string, defaultValue string, displayDefault string) (string, bool, error) {
 	if defaultValue != "" {
 		if _, err := fmt.Fprintf(prompt.out, "%s [%s]: ", label, displayDefault); err != nil {
-			return "", err
+			return "", false, err
 		}
 	} else {
 		if _, err := fmt.Fprintf(prompt.out, "%s: ", label); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	line, err := prompt.reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+		return "", false, err
 	}
 	if _, err := fmt.Fprintln(prompt.out); err != nil {
-		return "", err
+		return "", false, err
 	}
 	value := strings.TrimSpace(line)
 	if value == "" {
-		return defaultValue, nil
+		return defaultValue, errors.Is(err, io.EOF) && line == "", nil
 	}
-	return value, nil
+	return value, false, nil
 }
 
 func promptBool(prompt *setupPrompter, label string, defaultValue bool) (bool, error) {
@@ -676,14 +695,19 @@ func promptBool(prompt *setupPrompter, label string, defaultValue bool) (bool, e
 }
 
 func promptPassword(prompt *setupPrompter, label string) (string, error) {
+	password, _, err := promptPasswordAttempt(prompt, label)
+	return password, err
+}
+
+func promptPasswordAttempt(prompt *setupPrompter, label string) (string, bool, error) {
 	if prompt.file == nil || !setupCanHideInputFn(prompt.file) {
-		return promptString(prompt, label+" (input is visible)", "")
+		return promptStringAttempt(prompt, label+" (input is visible)", "")
 	}
 	if _, err := fmt.Fprintf(prompt.out, "%s: ", label); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := setupSttyFn(prompt.file, "-echo"); err != nil {
-		return promptString(prompt, label+" (input is visible)", "")
+		return promptStringAttempt(prompt, label+" (input is visible)", "")
 	}
 	defer func() {
 		_ = setupSttyFn(prompt.file, "echo")
@@ -691,7 +715,12 @@ func promptPassword(prompt *setupPrompter, label string) (string, error) {
 	}()
 	line, err := prompt.reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+		return "", false, err
 	}
-	return strings.TrimSpace(line), nil
+	return strings.TrimSpace(line), errors.Is(err, io.EOF) && line == "", nil
+}
+
+func promptStringAttempt(prompt *setupPrompter, label string, defaultValue string) (string, bool, error) {
+	value, emptyEOF, err := promptStringWithEOF(prompt, label, defaultValue, defaultValue)
+	return value, emptyEOF, err
 }

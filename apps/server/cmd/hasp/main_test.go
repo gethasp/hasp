@@ -48,11 +48,11 @@ func TestRunFailurePath(t *testing.T) {
 	}
 }
 
-func TestRunUnknownCommandReturnsExitCodeOne(t *testing.T) {
+func TestRunUnknownCommandReturnsUserInputExitCode(t *testing.T) {
 	var stderr bytes.Buffer
 	code := run(context.Background(), []string{"does-not-exist"}, bytes.NewBuffer(nil), &stderr, &stderr)
-	if code != 1 {
-		t.Fatalf("unknown command exit code = %d, want 1 (generic)", code)
+	if code != 2 {
+		t.Fatalf("unknown command exit code = %d, want 2 (user input)", code)
 	}
 }
 
@@ -76,6 +76,9 @@ func TestRunFailureEmitsStructuredJSONOnStderrInJSONMode(t *testing.T) {
 	}
 	if !strings.Contains(inner["message"], "unknown command") {
 		t.Fatalf("message = %q, want it to mention 'unknown command'", inner["message"])
+	}
+	if inner["code"] != "E_USER_INPUT" {
+		t.Fatalf("code = %q, want E_USER_INPUT", inner["code"])
 	}
 }
 

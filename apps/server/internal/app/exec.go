@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
+	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -29,22 +31,22 @@ import (
 // can drive a single failure branch without holding the process-wide
 // app-seam mutex.
 type execDeps struct {
-	AuthorizeReference  func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
-	AuthorizeItem       func(handle *store.Handle, bindingID, sessionToken string, item store.Item, op store.Operation, projScope, secScope store.GrantScope, window time.Duration) (store.Item, error)
-	RunnerExecute       func(ctx context.Context, input runner.Input) (runner.Result, error)
-	ResolveBindingView  func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
-	ResolveReference    func(handle *store.Handle, ctx context.Context, projectRoot, reference string) (store.ResolvedReference, error)
-	GetItem             func(handle *store.Handle, name string) (store.Item, error)
-	GrantProjectLease   func(handle *store.Handle, bindingID, sessionToken string, scope store.GrantScope, window time.Duration) (store.ProjectLease, error)
-	GrantConvenience    func(handle *store.Handle, bindingID, sessionToken, dest string, items []string, principal string, scope store.GrantScope, window time.Duration) (store.ConvenienceGrant, error)
-	WalkProjectDir      func(root string, fn fs.WalkDirFunc) error
-	AbsPath             func(path string) (string, error)
-	EvalSymlinks        func(path string) (string, error)
-	OpenWriteEnvFile    func(path string, flag int, perm os.FileMode) (writeEnvFile, error)
-	GitLsFiles          func(ctx context.Context, root string) ([]string, error)
+	AuthorizeReference func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
+	AuthorizeItem      func(handle *store.Handle, bindingID, sessionToken string, item store.Item, op store.Operation, projScope, secScope store.GrantScope, window time.Duration) (store.Item, error)
+	RunnerExecute      func(ctx context.Context, input runner.Input) (runner.Result, error)
+	ResolveBindingView func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
+	ResolveReference   func(handle *store.Handle, ctx context.Context, projectRoot, reference string) (store.ResolvedReference, error)
+	GetItem            func(handle *store.Handle, name string) (store.Item, error)
+	GrantProjectLease  func(handle *store.Handle, bindingID, sessionToken string, scope store.GrantScope, window time.Duration) (store.ProjectLease, error)
+	GrantConvenience   func(handle *store.Handle, bindingID, sessionToken, dest string, items []string, principal string, scope store.GrantScope, window time.Duration) (store.ConvenienceGrant, error)
+	WalkProjectDir     func(root string, fn fs.WalkDirFunc) error
+	AbsPath            func(path string) (string, error)
+	EvalSymlinks       func(path string) (string, error)
+	OpenWriteEnvFile   func(path string, flag int, perm os.FileMode) (writeEnvFile, error)
+	GitLsFiles         func(ctx context.Context, root string) ([]string, error)
 	// RunnerStdin is the io.Reader forwarded to the child process as its stdin.
 	// When nil, os.Stdin is used in production and nil (no stdin) in tests.
-	RunnerStdin         io.Reader
+	RunnerStdin io.Reader
 }
 
 func defaultExecDeps() execDeps {
@@ -57,13 +59,11 @@ func defaultExecDeps() execDeps {
 		GetItem:            (*store.Handle).GetItem,
 		GrantProjectLease:  (*store.Handle).GrantProjectLease,
 		GrantConvenience:   (*store.Handle).GrantConvenience,
-		WalkProjectDir: filepath.WalkDir,
-		AbsPath:      filepath.Abs,
-		EvalSymlinks: filepath.EvalSymlinks,
-		RunnerStdin:  os.Stdin,
-		OpenWriteEnvFile: func(path string, flag int, perm os.FileMode) (writeEnvFile, error) {
-			return os.OpenFile(path, flag, perm)
-		},
+		WalkProjectDir:     filepath.WalkDir,
+		AbsPath:            filepath.Abs,
+		EvalSymlinks:       filepath.EvalSymlinks,
+		RunnerStdin:        os.Stdin,
+		OpenWriteEnvFile:   openWriteEnvFile,
 		GitLsFiles: func(ctx context.Context, root string) ([]string, error) {
 			cmd := gitsafe.BuildCommand(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 			out, err := cmd.Output()
@@ -88,12 +88,27 @@ func defaultExecDeps() execDeps {
 // cap are reported under "skipped" so the operator knows they were not
 // scanned. The default is 4 MiB, which comfortably covers normal source
 // files while cutting off LFS pointer-replaced binaries.
-var checkRepoMaxBytes int64 = 4 << 20
+var checkRepoMaxBytes int64 = reposcan.DefaultMaxFileBytes
 
 type writeEnvFile interface {
 	WriteString(string) (int, error)
 	Close() error
 }
+
+type writeEnvTempFile interface {
+	Write([]byte) (int, error)
+	Close() error
+}
+
+var (
+	openWriteEnvTempFileFn = func(path string, flag int, perm os.FileMode) (writeEnvTempFile, error) {
+		return os.OpenFile(path, flag, perm)
+	}
+	removeWriteEnvTempFileFn = os.Remove
+	renameWriteEnvFileFn     = os.Rename
+	manifestTargetDriftFn    = (*store.Handle).ManifestTargetDrift
+	recordManifestReviewFn   = (*store.Handle).RecordManifestTargetReview
+)
 
 type mappingFlag map[string]string
 
@@ -136,6 +151,7 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	projectRoot := fs.String("project-root", ".", "")
+	targetName := fs.String("target", "", "")
 	sessionToken := fs.String("session-token", "", "")
 	projectGrant := fs.String("grant-project", "", "")
 	secretGrant := fs.String("grant-secret", "", "")
@@ -156,18 +172,36 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	}
 	*projectRoot = expandedRoot
 	command := fs.Args()
-	if len(command) == 0 && !*dryRun {
-		return errors.New("usage: hasp run --project-root <path> [--session-token <token>] [--env NAME=REF] [--file NAME=REF] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-window 15m] [--explain [--dry-run]] -- <command>")
-	}
-	if injectOnly && len(fileRefs) == 0 {
-		return errors.New("inject requires at least one --file NAME=REFERENCE mapping (use hasp run for env-only delivery)")
-	}
 	if *dryRun && !*explain {
 		*explain = true
 	}
 	commandLabel := "run"
 	if injectOnly {
 		commandLabel = "inject"
+	}
+	targetExpansion := store.ManifestTargetExpansion{}
+	if strings.TrimSpace(*targetName) != "" {
+		if len(envRefs) > 0 || len(fileRefs) > 0 {
+			return errors.New("--target cannot be combined with explicit --env or --file mappings")
+		}
+		targetExpansion, err = store.ExpandManifestTarget(*projectRoot, *targetName)
+		if err != nil {
+			return err
+		}
+		if len(targetExpansion.XCConfig) > 0 || len(targetExpansion.Outputs) > 0 {
+			return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", *targetName)
+		}
+		envRefs = mappingFlag(targetExpansion.Env)
+		fileRefs = mappingFlag(targetExpansion.Files)
+		if len(command) == 0 && len(targetExpansion.Command) > 0 {
+			command = slices.Clone(targetExpansion.Command)
+		}
+	}
+	if len(command) == 0 && !*dryRun {
+		return errors.New("usage: hasp run --project-root <path> [--target <name>|--env NAME=REF] [--file NAME=REF] [--session-token <token>] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-window 15m] [--explain [--dry-run]] -- <command>")
+	}
+	if injectOnly && len(fileRefs) == 0 {
+		return errors.New("inject requires at least one --file NAME=REFERENCE mapping (use hasp run for env-only delivery)")
 	}
 	warnBareEnvRefs(ctx, stderr, envRefs, commandLabel, "--env")
 	warnBareEnvRefs(ctx, stderr, fileRefs, commandLabel, "--file")
@@ -190,6 +224,8 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		if err := writeExplainPayload(stderr, explainPayload{
 			Command:        commandLabel,
 			ProjectRoot:    *projectRoot,
+			Target:         strings.TrimSpace(*targetName),
+			ManifestHash:   targetExpansion.ManifestHash,
 			ProjectScope:   string(projScope),
 			SecretScope:    string(secScope),
 			GrantWindow:    effectiveWindow,
@@ -222,6 +258,9 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		return err
 	}
 	if err := requireProjectBinding(binding, *projectRoot); err != nil {
+		return err
+	}
+	if err := warnTargetDrift(stderr, handle, *projectRoot, targetExpansion); err != nil {
 		return err
 	}
 	items := make([]store.Item, 0, len(envRefs)+len(fileRefs))
@@ -261,7 +300,7 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	swErr := redactor.NewStreamingWriter(stderr, items)
 
 	result, err := deps.RunnerExecute(ctx, runner.Input{
-		ProjectRoot: *projectRoot,
+		ProjectRoot: targetExpansion.ExecutionRoot(*projectRoot),
 		Command:     command,
 		Env:         env,
 		Files:       files,
@@ -289,16 +328,23 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	statsErr := swErr.Stats()
 
 	if statsOut.Redacted || statsErr.Redacted {
-		appendAudit(audit.EventRedact, "user", map[string]any{
+		details := map[string]any{
 			"project_root":   *projectRoot,
 			"redacted":       true,
 			"suppressed":     false,
 			"redacted_items": mergeRedactedItems(statsOut.MatchedItems, statsErr.MatchedItems),
-		})
+		}
+		addTargetAuditFields(details, targetExpansion)
+		appendAudit(audit.EventRedact, "user", details)
 	}
-	appendAudit(audit.EventRun, "user", map[string]any{"project_root": *projectRoot, "exit_code": result.ExitCode, "args": command})
+	runAudit := map[string]any{"project_root": *projectRoot, "exit_code": result.ExitCode, "args": command}
+	addTargetAuditFields(runAudit, targetExpansion)
+	appendAudit(audit.EventRun, "user", runAudit)
 	if result.ExitCode != 0 {
 		return fmt.Errorf("command exited with code %d", result.ExitCode)
+	}
+	if err := recordManifestReviewFn(handle, *projectRoot, targetExpansion); err != nil {
+		return err
 	}
 	return nil
 }
@@ -317,6 +363,7 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
+	targetName := fs.String("target", "", "")
 	sessionToken := fs.String("session-token", "", "")
 	outputPath := fs.String("output", "", "")
 	appendMode := fs.Bool("append", false, "")
@@ -330,14 +377,47 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *outputPath == "" || len(envRefs) == 0 {
-		return errors.New("usage: hasp write-env --project-root <path> [--session-token <token>] --output <file> --env NAME=REF [--append] [--force] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-convenience once|window|<duration>]")
-	}
 	expandedRoot, err := expandUserPath(strings.TrimSpace(*projectRoot))
 	if err != nil {
 		return fmt.Errorf("--project-root: %w", err)
 	}
 	*projectRoot = expandedRoot
+	targetExpansion := store.ManifestTargetExpansion{}
+	lineSeparator := "="
+	if strings.TrimSpace(*targetName) != "" {
+		if len(envRefs) > 0 {
+			return errors.New("--target cannot be combined with explicit --env mappings")
+		}
+		targetExpansion, err = store.ExpandManifestTarget(*projectRoot, *targetName)
+		if err != nil {
+			return err
+		}
+		if len(targetExpansion.Files) > 0 {
+			return fmt.Errorf("target %q contains safe file delivery; use hasp inject --target", *targetName)
+		}
+		if len(targetExpansion.Env) > 0 && len(targetExpansion.XCConfig) > 0 {
+			return fmt.Errorf("target %q mixes env and xcconfig delivery for write-env", *targetName)
+		}
+		if len(targetExpansion.XCConfig) > 0 {
+			envRefs = mappingFlag(targetExpansion.XCConfig)
+			lineSeparator = " = "
+			if strings.TrimSpace(*outputPath) == "" {
+				output, err := singleTargetOutput(targetExpansion)
+				if err != nil {
+					return err
+				}
+				if !filepath.IsAbs(output) {
+					output = filepath.Join(*projectRoot, output)
+				}
+				*outputPath = output
+			}
+		} else {
+			envRefs = mappingFlag(targetExpansion.Env)
+		}
+	}
+	if *outputPath == "" || len(envRefs) == 0 {
+		return errors.New("usage: hasp write-env --project-root <path> [--target <name>|--env NAME=REF] [--session-token <token>] --output <file> [--append] [--force] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-convenience once|window|<duration>]")
+	}
 	expandedOutput, err := expandUserPath(strings.TrimSpace(*outputPath))
 	if err != nil {
 		return fmt.Errorf("--output: %w", err)
@@ -345,6 +425,13 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 	*outputPath = expandedOutput
 	if *forceMode && *appendMode {
 		return errors.New("--force and --append are mutually exclusive")
+	}
+	warning, err := preflightWriteEnvDestination(ctx, *projectRoot, *outputPath, *appendMode, deps)
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		_, _ = fmt.Fprintln(stderr, warning)
 	}
 	if !*jsonOutput {
 		warnBareEnvRefs(ctx, stderr, envRefs, "write-env", "--env")
@@ -384,6 +471,9 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 		return err
 	}
 	if err := requireProjectBinding(binding, *projectRoot); err != nil {
+		return err
+	}
+	if err := warnTargetDrift(stderr, handle, *projectRoot, targetExpansion); err != nil {
 		return err
 	}
 	// Overwrite guard: when neither --force nor --append, refuse if file exists.
@@ -442,7 +532,7 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 		if err != nil {
 			return err
 		}
-		lines = append(lines, envName+"="+string(item.Value))
+		lines = append(lines, envName+lineSeparator+string(item.Value))
 	}
 	if *appendMode {
 		// Block-splice append: read existing, insert/replace hasp block.
@@ -488,12 +578,27 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 
 		// Write atomically: tmp file then rename.
 		tmpPath := *outputPath + ".tmp"
-		if err := os.WriteFile(tmpPath, output, 0o600); err != nil {
+		tmpFile, err := openWriteEnvTempFileFn(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
 			return err
 		}
-		if err := os.Rename(tmpPath, *outputPath); err != nil {
+		removeTmp := true
+		defer func() {
+			if removeTmp {
+				_ = removeWriteEnvTempFileFn(tmpPath)
+			}
+		}()
+		if _, err := tmpFile.Write(output); err != nil {
+			_ = tmpFile.Close()
 			return err
 		}
+		if err := tmpFile.Close(); err != nil {
+			return err
+		}
+		if err := renameWriteEnvFileFn(tmpPath, *outputPath); err != nil {
+			return err
+		}
+		removeTmp = false
 	} else {
 		// Non-append mode (new file or --force overwrite): truncate and write.
 		file, err := deps.OpenWriteEnvFile(*outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -505,14 +610,17 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 			return err
 		}
 	}
-	warning := ""
-	root, err := store.CanonicalProjectRoot(ctx, *projectRoot)
-	if err == nil && pathInsideProject(*outputPath, root) {
-		warning = "destination is inside the bound project and outside the agent-safe guarantee"
-		_, _ = fmt.Fprintln(stderr, warning)
-	}
-	appendAudit(audit.EventWriteEnv, "user", map[string]any{"project_root": *projectRoot, "output_path": *outputPath, "entries": len(lines), "warning": warning})
+	writeAudit := map[string]any{"project_root": *projectRoot, "output_path": *outputPath, "entries": len(lines), "warning": warning}
+	addTargetAuditFields(writeAudit, targetExpansion)
+	appendAudit(audit.EventWriteEnv, "user", writeAudit)
 	payload := map[string]any{"output_path": *outputPath, "entries": len(lines), "warning": warning}
+	if strings.TrimSpace(targetExpansion.TargetName) != "" {
+		payload["target"] = targetExpansion.TargetName
+		payload["manifest_hash"] = targetExpansion.ManifestHash
+	}
+	if err := recordManifestReviewFn(handle, *projectRoot, targetExpansion); err != nil {
+		return err
+	}
 	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return renderWriteEnvResult(w, *outputPath, len(lines), warning)
 	})
@@ -520,6 +628,37 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 
 func checkRepoCommand(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
 	return checkRepoCommandWithDeps(ctx, args, stdout, stderr, defaultExecDeps())
+}
+
+func preflightWriteEnvDestination(ctx context.Context, projectRoot string, outputPath string, appendMode bool, deps execDeps) (string, error) {
+	if err := rejectWriteEnvSymlink(outputPath, "output path"); err != nil {
+		return "", err
+	}
+	if appendMode {
+		if err := rejectWriteEnvSymlink(outputPath+".tmp", "temporary output path"); err != nil {
+			return "", err
+		}
+	}
+	warning := ""
+	root, err := store.CanonicalProjectRoot(ctx, projectRoot)
+	if err == nil && pathInsideProjectForWrite(outputPath, root, deps) {
+		warning = "destination is inside the bound project and outside the agent-safe guarantee"
+	}
+	return warning, nil
+}
+
+func rejectWriteEnvSymlink(path string, label string) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write %s %s because it is a symlink; choose a regular file path", label, path)
+		}
+		return nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("inspect %s %s: %w", label, path, err)
 }
 
 func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, deps execDeps) error {
@@ -546,40 +685,16 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	}
 	noteResolvedProjectRootIfImplicit(fs, *jsonOutput, root, stderr)
 	items := handle.ListItems()
-	files, fallback, err := enumerateCheckRepoFiles(ctx, root, deps)
+	scanResult, err := reposcan.Scan(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
 	if err != nil {
 		return err
 	}
-	var matches []map[string]string
-	var skipped []map[string]any
-	for _, rel := range files {
-		abs := filepath.Join(root, rel)
-		info, statErr := os.Stat(abs)
-		if statErr != nil {
-			return statErr
-		}
-		if info.IsDir() {
-			continue
-		}
-		if info.Size() > checkRepoMaxBytes {
-			skipped = append(skipped, map[string]any{"path": rel, "size": info.Size(), "reason": "over_max_bytes"})
-			continue
-		}
-		data, readErr := os.ReadFile(abs)
-		if readErr != nil {
-			return readErr
-		}
-		for _, item := range items {
-			if hitCheckRepoItem(data, item) {
-				matches = append(matches, map[string]string{"path": rel, "item_name": item.Name})
-			}
-		}
-	}
+	matches := scanMatchesAsMaps(scanResult.Matches)
 	payload := map[string]any{
 		"matches":  matches,
 		"override": *allowManagedSecrets,
-		"skipped":  skipped,
-		"walker":   walkerLabel(fallback),
+		"skipped":  scanResult.Skipped,
+		"walker":   scanResult.Walker,
 	}
 	if len(matches) > 0 {
 		appendAudit(audit.EventRepoBlock, "user", map[string]any{"project_root": root, "matches": len(matches), "override": *allowManagedSecrets})
@@ -597,25 +712,6 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	})
 }
 
-func walkerLabel(fallback bool) string {
-	if fallback {
-		return "walkdir"
-	}
-	return "git-ls-files"
-}
-
-// hitCheckRepoItem tests every encoded form of item.Value against data. We
-// reuse redactor.Needles so the matcher catalogue stays in one place; a new
-// encoding added there automatically flows into check-repo.
-func hitCheckRepoItem(data []byte, item store.Item) bool {
-	for _, needle := range redactor.Needles(item.Value) {
-		if bytesIndex(data, needle) >= 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // bytesIndex is a seam over bytes.Index so future refactors (e.g. swapping
 // in a Boyer-Moore implementation) don't have to touch the scanner loop.
 var bytesIndex = bytes.Index
@@ -628,34 +724,28 @@ var bytesIndex = bytes.Index
 // so callers can surface the "not a git repo, scan was non-authoritative"
 // caveat in docs/CI.
 func enumerateCheckRepoFiles(ctx context.Context, root string, deps execDeps) ([]string, bool, error) {
-	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
-		files, gitErr := deps.GitLsFiles(ctx, root)
-		if gitErr == nil {
-			return files, false, nil
-		}
+	return reposcan.Enumerate(ctx, root, checkRepoScanDeps(deps))
+}
+
+func checkRepoScanDeps(deps execDeps) reposcan.Deps {
+	return reposcan.Deps{
+		Stat:       os.Stat,
+		ReadFile:   os.ReadFile,
+		WalkDir:    deps.WalkProjectDir,
+		GitLsFiles: deps.GitLsFiles,
+		ByteIndex:  bytesIndex,
 	}
-	var files []string
-	err := deps.WalkProjectDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() && d.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		files = append(files, rel)
+}
+
+func scanMatchesAsMaps(matches []reposcan.Match) []map[string]string {
+	if len(matches) == 0 {
 		return nil
-	})
-	if err != nil {
-		return nil, true, err
 	}
-	return files, true, nil
+	out := make([]map[string]string, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, map[string]string{"path": match.Path, "item_name": match.ItemName})
+	}
+	return out
 }
 
 // mergeRedactedItems unions the per-stream MatchedItems lists from a stdout
@@ -675,6 +765,71 @@ func mergeRedactedItems(stdoutItems, stderrItems []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func addTargetAuditFields(details map[string]any, expansion store.ManifestTargetExpansion) {
+	if strings.TrimSpace(expansion.TargetName) == "" {
+		return
+	}
+	details["target"] = expansion.TargetName
+	details["manifest_hash"] = expansion.ManifestHash
+	details["target_refs"] = expansion.Refs
+	details["target_destinations"] = expansion.Destinations
+	if strings.TrimSpace(expansion.TargetRoot) != "" {
+		details["target_root"] = expansion.TargetRoot
+	}
+}
+
+func warnTargetDrift(stderr io.Writer, handle *store.Handle, projectRoot string, expansion store.ManifestTargetExpansion) error {
+	if strings.TrimSpace(expansion.TargetName) == "" {
+		return nil
+	}
+	drift, err := manifestTargetDriftFn(handle, projectRoot, expansion)
+	if err != nil {
+		return err
+	}
+	if !drift.Changed {
+		return nil
+	}
+	changes := make([]string, 0, 4)
+	if drift.CommandChanged {
+		changes = append(changes, "command")
+	}
+	if drift.RefsChanged {
+		changes = append(changes, "refs")
+	}
+	if drift.DeliveryChanged {
+		changes = append(changes, "delivery")
+	}
+	if drift.OutputsChanged {
+		changes = append(changes, "outputs")
+	}
+	if len(changes) == 0 {
+		changes = append(changes, "manifest")
+	}
+	_, _ = fmt.Fprintf(stderr, "manifest target %q changed since last local review: %s\n", expansion.TargetName, strings.Join(changes, ", "))
+	return nil
+}
+
+func singleTargetOutput(expansion store.ManifestTargetExpansion) (string, error) {
+	outputs := make([]string, 0, len(expansion.Outputs))
+	seen := map[string]struct{}{}
+	for _, output := range expansion.Outputs {
+		output = strings.TrimSpace(output)
+		if output == "" {
+			continue
+		}
+		if _, ok := seen[output]; ok {
+			continue
+		}
+		seen[output] = struct{}{}
+		outputs = append(outputs, output)
+	}
+	sort.Strings(outputs)
+	if len(outputs) != 1 {
+		return "", fmt.Errorf("target %q must declare exactly one output for write-env", expansion.TargetName)
+	}
+	return outputs[0], nil
 }
 
 func parseGrantScope(value string) store.GrantScope {
@@ -710,6 +865,39 @@ func pathInsideProjectWithDeps(path string, root string, deps execDeps) bool {
 		absRoot = resolvedRoot
 	}
 	return absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(filepath.Separator))
+}
+
+func pathInsideProjectForWrite(path string, root string, deps execDeps) bool {
+	if pathInsideProjectWithDeps(path, root, deps) {
+		return true
+	}
+	if root == "" {
+		return false
+	}
+	absPath, err1 := deps.AbsPath(path)
+	absRoot, err2 := deps.AbsPath(root)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if resolvedRoot, err := deps.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolvedRoot
+	}
+	parts := []string{filepath.Base(absPath)}
+	dir := filepath.Dir(absPath)
+	for {
+		if resolvedDir, err := deps.EvalSymlinks(dir); err == nil {
+			for i := len(parts) - 1; i >= 0; i-- {
+				resolvedDir = filepath.Join(resolvedDir, parts[i])
+			}
+			return resolvedDir == absRoot || strings.HasPrefix(resolvedDir, absRoot+string(filepath.Separator))
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		parts = append(parts, filepath.Base(dir))
+		dir = parent
+	}
 }
 
 // wrapAuthorizeReferenceError converts known broker errors into appError

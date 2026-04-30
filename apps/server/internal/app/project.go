@@ -57,8 +57,16 @@ func projectCommandWithStderr(ctx context.Context, args []string, stdout io.Writ
 	case "bind":
 		noteSetupCanonical(stderr, "hasp project bind")
 		return projectBindCommand(ctx, args[1:], stdout)
+	case "doctor":
+		return projectManifestDoctorCommand(ctx, args[1:], stdout)
+	case "examples":
+		return projectExamplesCommand(ctx, args[1:], stdout)
+	case "requirements":
+		return projectRequirementsCommand(ctx, args[1:], stdout)
 	case "status":
 		return projectStatusCommand(ctx, args[1:], stdout)
+	case "targets":
+		return projectTargetsCommand(ctx, args[1:], stdout)
 	case "unbind":
 		return projectUnbindCommand(ctx, args[1:], stdout)
 	default:

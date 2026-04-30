@@ -118,6 +118,9 @@ func parseGlobalFlags(args []string) (globalFlags, []string, error) {
 				return globalFlags{}, nil, err
 			}
 			gf.noColor = set
+		case "--help", "-h":
+			seenPositional = true
+			rest = append(rest, token)
 		default:
 			// Unknown flag before the subcommand: error (catches top-level typos).
 			// Unknown flag after the subcommand: pass through to the subcommand parser.
