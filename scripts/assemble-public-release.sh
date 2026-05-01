@@ -49,10 +49,73 @@ metadata_file="$release_dir/release-metadata.json"
 formula_dir="$release_dir/Formula"
 formula_path="$formula_dir/hasp.rb"
 tmp_extract="$(mktemp -d)"
+upgrade_signing_key_temp=""
 cleanup() {
   /bin/rm -rf "$tmp_extract"
+  if [[ -n "$upgrade_signing_key_temp" && -f "$upgrade_signing_key_temp" ]]; then
+    /bin/rm -f "$upgrade_signing_key_temp"
+  fi
 }
 trap cleanup EXIT
+
+release_sign_tool() {
+  (
+    cd "$repo_root/apps/server"
+    go run ./cmd/release-sign "$@"
+  )
+}
+
+resolve_upgrade_signing_key() {
+  if [[ -n "${HASP_UPGRADE_SIGNING_KEY_FILE:-}" ]]; then
+    if [[ ! -f "$HASP_UPGRADE_SIGNING_KEY_FILE" ]]; then
+      printf 'upgrade signing key file not found: %s\n' "$HASP_UPGRADE_SIGNING_KEY_FILE" >&2
+      return 1
+    fi
+    printf '%s\n' "$HASP_UPGRADE_SIGNING_KEY_FILE"
+    return 0
+  fi
+  if [[ -n "${HASP_UPGRADE_SIGNING_KEY_B64:-}" ]]; then
+    upgrade_signing_key_temp="$(mktemp)"
+    chmod 600 "$upgrade_signing_key_temp"
+    if ! printf '%s' "$HASP_UPGRADE_SIGNING_KEY_B64" | release_base64_decode >"$upgrade_signing_key_temp"; then
+      printf 'failed to decode HASP_UPGRADE_SIGNING_KEY_B64\n' >&2
+      return 1
+    fi
+    printf '%s\n' "$upgrade_signing_key_temp"
+    return 0
+  fi
+  printf 'missing upgrade signing key; set HASP_UPGRADE_SIGNING_KEY_FILE or HASP_UPGRADE_SIGNING_KEY_B64\n' >&2
+  return 1
+}
+
+write_upgrade_keys() {
+  local keys_path="$1"
+  if [[ -z "${HASP_UPGRADE_TRUST_ROOTS_HEX:-}" ]]; then
+    printf 'missing HASP_UPGRADE_TRUST_ROOTS_HEX; cannot generate upgrade KEYS file\n' >&2
+    return 1
+  fi
+
+  : >"$keys_path"
+  local roots_csv="$HASP_UPGRADE_TRUST_ROOTS_HEX,"
+  local root=""
+  while [[ -n "$roots_csv" ]]; do
+    root="${roots_csv%%,*}"
+    roots_csv="${roots_csv#*,}"
+    if [[ -z "$root" ]]; then
+      continue
+    fi
+    if [[ ! "$root" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      printf 'invalid HASP_UPGRADE_TRUST_ROOTS_HEX entry: %s\n' "$root" >&2
+      return 1
+    fi
+    printf '%s hasp upgrade release signing key\n' "$root" >>"$keys_path"
+  done
+
+  if [[ ! -s "$keys_path" ]]; then
+    printf 'no upgrade trust roots written to %s\n' "$keys_path" >&2
+    return 1
+  fi
+}
 
 signing_key="${HASP_RELEASE_GPG_KEY_ID:-}"
 if [[ -z "$signing_key" ]]; then
@@ -72,12 +135,36 @@ signing_fingerprint="$(release_gpg --list-keys --with-colons "$signing_key" | aw
 printf '%s\n' "$signing_fingerprint" >"$fingerprint_file"
 : >"$checksum_file"
 
+release_version="$(cat "$repo_root/VERSION")"
+upgrade_signing_key="$(resolve_upgrade_signing_key)"
+upgrade_pubkey="$(release_sign_tool pubkey --key "$upgrade_signing_key")"
+upgrade_keys_file="$release_dir/KEYS-v${release_version}"
+upgrade_keys_sig_file="${upgrade_keys_file}.sig"
+write_upgrade_keys "$upgrade_keys_file"
+if ! awk -v key="$upgrade_pubkey" 'tolower($1) == tolower(key) { found = 1 } END { exit found ? 0 : 1 }' "$upgrade_keys_file"; then
+  printf 'upgrade signing key public key %s is not listed in HASP_UPGRADE_TRUST_ROOTS_HEX\n' "$upgrade_pubkey" >&2
+  exit 1
+fi
+release_sign_tool keys --key "$upgrade_signing_key" --in "$upgrade_keys_file" --out "$upgrade_keys_sig_file" >/dev/null
+{
+  printf '%s  %s\n' "$(release_sha256 "$upgrade_keys_file")" "$(basename "$upgrade_keys_file")"
+  printf '%s  %s\n' "$(release_sha256 "$upgrade_keys_sig_file")" "$(basename "$upgrade_keys_sig_file")"
+} >>"$checksum_file"
+
 metadata_entries=()
 for tarball in "${tarballs[@]}"; do
   tarball_name="$(basename "$tarball")"
   artifact_name="${tarball_name%.tar.gz}"
+  IFS='_' read -r product version os arch <<<"$artifact_name"
+  if [[ "$product" != "hasp" || -z "$version" || -z "$os" || -z "$arch" ]]; then
+    echo "unexpected artifact name: $artifact_name" >&2
+    exit 1
+  fi
   tarball_sig_path="$release_dir/${tarball_name}.asc"
   binary_sig_path="$release_dir/${artifact_name}_bin.asc"
+  upgrade_tarball_name="hasp-v${version}-${os}-${arch}.tar.gz"
+  upgrade_tarball_path="$release_dir/$upgrade_tarball_name"
+  upgrade_tarball_sig_path="${upgrade_tarball_path}.sig"
 
   topdir="$(release_detect_topdir "$tarball")"
   work_dir="$tmp_extract/$artifact_name"
@@ -92,15 +179,22 @@ for tarball in "${tarballs[@]}"; do
 
   release_detached_sign "$signing_key" "$tarball" "$tarball_sig_path"
   release_detached_sign "$signing_key" "$artifact_dir/bin/hasp" "$binary_sig_path"
+  /bin/cp -f "$tarball" "$upgrade_tarball_path"
+  release_sign_tool tarball --key "$upgrade_signing_key" --in "$upgrade_tarball_path" --out "$upgrade_tarball_sig_path" >/dev/null
+  release_sign_tool verify \
+    --roots-hex "$HASP_UPGRADE_TRUST_ROOTS_HEX" \
+    --keys "$upgrade_keys_file" \
+    --keys-sig "$upgrade_keys_sig_file" \
+    --tarball "$upgrade_tarball_path" \
+    --tarball-sig "$upgrade_tarball_sig_path" >/dev/null
 
-  printf '%s  %s\n' "$(release_sha256 "$tarball")" "$tarball_name" >>"$checksum_file"
-  printf '%s  %s\n' "$(release_sha256 "$artifact_dir/bin/hasp")" "${artifact_name}/bin/hasp" >>"$checksum_file"
+  {
+    printf '%s  %s\n' "$(release_sha256 "$tarball")" "$tarball_name"
+    printf '%s  %s\n' "$(release_sha256 "$artifact_dir/bin/hasp")" "${artifact_name}/bin/hasp"
+    printf '%s  %s\n' "$(release_sha256 "$upgrade_tarball_path")" "$upgrade_tarball_name"
+    printf '%s  %s\n' "$(release_sha256 "$upgrade_tarball_sig_path")" "$(basename "$upgrade_tarball_sig_path")"
+  } >>"$checksum_file"
 
-  IFS='_' read -r product version os arch <<<"$artifact_name"
-  if [[ "$product" != "hasp" || -z "$version" || -z "$os" || -z "$arch" ]]; then
-    echo "unexpected artifact name: $artifact_name" >&2
-    exit 1
-  fi
   metadata_entries+=("    {\"name\":\"$artifact_name\",\"version\":\"$version\",\"os\":\"$os\",\"arch\":\"$arch\",\"tarball\":\"$tarball_name\",\"url\":\"$base_url/$tarball_name\",\"sha256\":\"$(release_sha256 "$tarball")\"}")
 done
 
@@ -124,7 +218,7 @@ release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
 
 bash "$script_dir/render-homebrew-formula.sh" --metadata "$metadata_file" "$formula_path" >/dev/null
 
-if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$metadata_file" || ! -s "$formula_path" ]]; then
+if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$metadata_file" || ! -s "$formula_path" || ! -s "$upgrade_keys_file" || ! -s "$upgrade_keys_sig_file" ]]; then
   echo "public release assembly output incomplete" >&2
   exit 1
 fi

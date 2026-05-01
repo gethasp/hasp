@@ -60,7 +60,17 @@ unset HASP_RELEASE_GPG_HOMEDIR
 unset HASP_RELEASE_GPG_PASSPHRASE
 unset HASP_RELEASE_GPG_PASSPHRASE_FILE
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
-export HASP_UPGRADE_TRUST_ROOTS_HEX="${HASP_UPGRADE_TRUST_ROOTS_HEX:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}"
+upgrade_signing_key="$(mktemp)"
+(
+  cd "$repo_root/apps/server"
+  go run ./cmd/release-sign keygen --out "$upgrade_signing_key" >/dev/null
+)
+export HASP_UPGRADE_SIGNING_KEY_FILE="$upgrade_signing_key"
+upgrade_trust_roots_hex="$(
+  cd "$repo_root/apps/server"
+  go run ./cmd/release-sign pubkey --key "$upgrade_signing_key"
+)"
+export HASP_UPGRADE_TRUST_ROOTS_HEX="$upgrade_trust_roots_hex"
 tarball="$(bash ./scripts/package-release.sh)"
 release_dir="$(cd "$(dirname "$tarball")" && pwd)"
 install_root="$(mktemp -d)"
@@ -79,7 +89,7 @@ cleanup_release_smoke() {
   stop_scoped_daemon "${installed_bin:-}" "$temp_home"
   stop_scoped_daemon "${installed_bin:-}" "$restore_home"
   /bin/rm -rf "$smoke_gpg_home" "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo" "$protected_gpg_home" "$protected_release_dir" "$protected_public_dir" "$protected_extract"
-  /bin/rm -f "$protected_passphrase_file"
+  /bin/rm -f "$protected_passphrase_file" "$upgrade_signing_key"
 }
 trap cleanup_release_smoke EXIT
 

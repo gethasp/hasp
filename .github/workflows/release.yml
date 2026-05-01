@@ -41,6 +41,7 @@ jobs:
           HASP_RELEASE_GPG_KEY_ID: ${{ secrets.HASP_RELEASE_GPG_KEY_ID }}
           HASP_RELEASE_GPG_PASSPHRASE: ${{ secrets.HASP_RELEASE_GPG_PASSPHRASE }}
           HASP_UPGRADE_TRUST_ROOTS_HEX: ${{ secrets.HASP_UPGRADE_TRUST_ROOTS_HEX }}
+          HASP_UPGRADE_SIGNING_KEY_B64: ${{ secrets.HASP_UPGRADE_SIGNING_KEY_B64 }}
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases
         run: bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
       - name: Upload release artifacts to Cloudflare R2

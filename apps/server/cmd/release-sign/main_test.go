@@ -196,6 +196,74 @@ func TestPubkeySuccessAndFailures(t *testing.T) {
 	}
 }
 
+func TestVerifySuccessAndFailures(t *testing.T) {
+	resetSignSeams(t)
+	dir := t.TempDir()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	rootsHex := hex.EncodeToString(pub)
+	keysPath := filepath.Join(dir, "KEYS-v1.2.3")
+	keysSigPath := keysPath + ".sig"
+	tarballPath := filepath.Join(dir, "hasp-v1.2.3-darwin-arm64.tar.gz")
+	tarballSigPath := tarballPath + ".sig"
+	keysBody := []byte(rootsHex + " hasp release signing key\n")
+	tarballBody := []byte("tarball")
+	if err := os.WriteFile(keysPath, keysBody, 0o644); err != nil {
+		t.Fatalf("write keys: %v", err)
+	}
+	if err := os.WriteFile(keysSigPath, ed25519.Sign(priv, keysBody), 0o644); err != nil {
+		t.Fatalf("write keys sig: %v", err)
+	}
+	if err := os.WriteFile(tarballPath, tarballBody, 0o644); err != nil {
+		t.Fatalf("write tarball: %v", err)
+	}
+	if err := os.WriteFile(tarballSigPath, ed25519.Sign(priv, tarballBody), 0o644); err != nil {
+		t.Fatalf("write tarball sig: %v", err)
+	}
+
+	args := []string{
+		"verify",
+		"--roots-hex", rootsHex,
+		"--keys", keysPath,
+		"--keys-sig", keysSigPath,
+		"--tarball", tarballPath,
+		"--tarball-sig", tarballSigPath,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := run(args, &stdout, &stderr); code != 0 {
+		t.Fatalf("verify exit = %d, stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), rootsHex) {
+		t.Fatalf("verify output missing signer: %q", stdout.String())
+	}
+
+	stderr.Reset()
+	if code := run([]string{"verify"}, ioDiscard{}, &stderr); code != 2 {
+		t.Fatalf("missing flags exit = %d, stderr=%q", code, stderr.String())
+	}
+
+	tamperedSigPath := filepath.Join(dir, "bad.sig")
+	if err := os.WriteFile(tamperedSigPath, bytes.Repeat([]byte{1}, ed25519.SignatureSize), 0o644); err != nil {
+		t.Fatalf("write bad sig: %v", err)
+	}
+	stderr.Reset()
+	badArgs := append([]string{}, args...)
+	badArgs[len(badArgs)-1] = tamperedSigPath
+	if code := run(badArgs, ioDiscard{}, &stderr); code != 1 {
+		t.Fatalf("bad tarball sig exit = %d, stderr=%q", code, stderr.String())
+	}
+
+	if _, err := parseRootsHex("not-hex"); err == nil {
+		t.Fatal("expected bad root hex error")
+	}
+	if _, err := parseRootsHex(""); err == nil {
+		t.Fatal("expected empty roots error")
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

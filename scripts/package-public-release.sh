@@ -12,8 +12,11 @@ Usage: package-public-release.sh <release-tag> [output-dir]
 Build the packaged public release set under dist/public-release/<release-tag>.
 
 Environment:
-  HASP_RELEASE_BASE_URL   base URL used for generated release metadata
-  HASP_RELEASE_GPG_KEY_ID optional explicit signing key id
+  HASP_RELEASE_BASE_URL         base URL used for generated release metadata
+  HASP_RELEASE_GPG_KEY_ID       optional explicit signing key id
+  HASP_UPGRADE_TRUST_ROOTS_HEX  comma-separated Ed25519 public roots embedded in release binaries
+  HASP_UPGRADE_SIGNING_KEY_FILE path to raw Ed25519 private key for hasp upgrade artifacts
+  HASP_UPGRADE_SIGNING_KEY_B64  base64 raw Ed25519 private key for hasp upgrade artifacts
 EOF
 }
 

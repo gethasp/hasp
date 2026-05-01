@@ -20,6 +20,14 @@
 //	# Print the public-key hex for embedding via -ldflags -X.
 //	go run ./tools/release sign pubkey --key ./hasp-key
 //
+//	# Verify a KEYS chain and tarball signature against embedded-root hex.
+//	go run ./tools/release sign verify \
+//	    --roots-hex "$HASP_UPGRADE_TRUST_ROOTS_HEX" \
+//	    --keys dist/KEYS-v0.2.0 \
+//	    --keys-sig dist/KEYS-v0.2.0.sig \
+//	    --tarball dist/hasp-v0.2.0-darwin-arm64.tar.gz \
+//	    --tarball-sig dist/hasp-v0.2.0-darwin-arm64.tar.gz.sig
+//
 // The private key file format is the raw 64-byte Ed25519 seed+public.
 // Treat it like any other signing key: keep it offline, on hardware
 // where possible. Compromise of an active signing key forces a key
@@ -34,6 +42,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+
+	"github.com/gethasp/hasp/apps/server/internal/release"
 )
 
 func main() {
@@ -58,13 +69,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return cmdSign(args[1:], stderr)
 	case "pubkey":
 		return cmdPubkey(args[1:], stdout, stderr)
+	case "verify":
+		return cmdVerify(args[1:], stdout, stderr)
 	default:
 		return usage(stderr)
 	}
 }
 
 func usage(stderr io.Writer) int {
-	fmt.Fprintln(stderr, "usage: sign keygen|tarball|keys|pubkey [flags]")
+	fmt.Fprintln(stderr, "usage: sign keygen|tarball|keys|pubkey|verify [flags]")
 	return 2
 }
 
@@ -148,6 +161,77 @@ func cmdPubkey(args []string, stdout io.Writer, stderr io.Writer) int {
 	pub := ed25519.PrivateKey(priv).Public().(ed25519.PublicKey)
 	fmt.Fprintln(stdout, hex.EncodeToString(pub))
 	return 0
+}
+
+func cmdVerify(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	rootsHex := fs.String("roots-hex", "", "comma-separated Ed25519 public keys pinned by the binary (required)")
+	keysPath := fs.String("keys", "", "KEYS file path (required)")
+	keysSigPath := fs.String("keys-sig", "", "KEYS signature path (required)")
+	tarballPath := fs.String("tarball", "", "release tarball path (required)")
+	tarballSigPath := fs.String("tarball-sig", "", "release tarball signature path (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *rootsHex == "" || *keysPath == "" || *keysSigPath == "" || *tarballPath == "" || *tarballSigPath == "" {
+		fmt.Fprintln(stderr, "verify: --roots-hex, --keys, --keys-sig, --tarball, and --tarball-sig are required")
+		return 2
+	}
+
+	pinned, err := parseRootsHex(*rootsHex)
+	if err != nil {
+		return die(stderr, "parse roots: %v", err)
+	}
+	keysFile, err := signReadFile(*keysPath)
+	if err != nil {
+		return die(stderr, "read KEYS: %v", err)
+	}
+	keysSig, err := signReadFile(*keysSigPath)
+	if err != nil {
+		return die(stderr, "read KEYS signature: %v", err)
+	}
+	trustedKeys, err := release.VerifyKEYS(keysFile, keysSig, pinned)
+	if err != nil {
+		return die(stderr, "verify KEYS: %v", err)
+	}
+	tarball, err := signReadFile(*tarballPath)
+	if err != nil {
+		return die(stderr, "read tarball: %v", err)
+	}
+	tarballSig, err := signReadFile(*tarballSigPath)
+	if err != nil {
+		return die(stderr, "read tarball signature: %v", err)
+	}
+	signerFP, err := release.VerifyTarball(tarball, tarballSig, trustedKeys)
+	if err != nil {
+		return die(stderr, "verify tarball: %v", err)
+	}
+	fmt.Fprintf(stdout, "verified upgrade artifacts signed by %s\n", signerFP)
+	return 0
+}
+
+func parseRootsHex(raw string) ([][]byte, error) {
+	parts := strings.Split(raw, ",")
+	out := make([][]byte, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, err := hex.DecodeString(part)
+		if err != nil {
+			return nil, err
+		}
+		if len(key) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("key must be %d bytes, got %d", ed25519.PublicKeySize, len(key))
+		}
+		out = append(out, key)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no roots provided")
+	}
+	return out, nil
 }
 
 func die(stderr io.Writer, format string, args ...any) int {

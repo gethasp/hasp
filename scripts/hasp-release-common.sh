@@ -56,6 +56,14 @@ release_sha256() {
   shasum -a 256 "$target" | awk '{print $1}'
 }
 
+release_base64_decode() {
+  if base64 --decode </dev/null >/dev/null 2>&1; then
+    base64 --decode
+    return 0
+  fi
+  base64 -D
+}
+
 release_verify_checksums() {
   local manifest_path="$1"
   local manifest_dir

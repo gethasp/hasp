@@ -1018,7 +1018,7 @@ Closest commands:
 - `hasp doctor` catches CLI and daemon version mismatch after upgrade.
 
 ```bash
-hasp upgrade --version 0.1.38 --yes
+hasp upgrade --version 0.1.39 --yes
 ```
 
 ### `hasp docs`

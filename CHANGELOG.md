@@ -4,11 +4,19 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.39]
+
+- Publish the Ed25519 self-upgrade artifact contract alongside the existing GPG
+  release set: `KEYS-v<version>`, raw `.sig` signatures, and
+  `hasp-v<version>-<os>-<arch>.tar.gz` aliases are generated and verified before
+  public release publication.
+- Wire the upgrade signing key into the public release workflow so `hasp upgrade`
+  can verify the same root embedded in production binaries.
+
 ## [v0.1.38]
 
 - Re-cut the release with embedded Ed25519 upgrade trust roots so packaged
-  binaries report `upgrade_trust_roots=true` and self-upgrade verification is
-  enabled for production artifacts.
+  binaries report `upgrade_trust_roots=true`.
 - Move the private verify workflow to Node 24-compatible GitHub Actions and
   point Go module caching at the server module.
 
