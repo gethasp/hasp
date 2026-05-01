@@ -1,78 +1,122 @@
 # HASP
 
-HASP is a local-first broker for managed secrets in agent workflows.
+HASP is a local secret broker for coding agents.
 
-It is built for people using coding agents on normal developer machines who
-need the agent to do useful work without turning `.env` files, copied tokens,
-and repo-local credentials into the default operating model.
+Agents need credentials to run tests, call APIs, and deploy code. Copying those
+credentials into prompts, shell history, `.env` files, or repo-local notes makes
+the agent faster today and harder to trust tomorrow. HASP keeps secrets in a
+local encrypted vault and gives commands only the values they are allowed to use
+at runtime.
 
-## What this public repo contains
+The core rule is:
 
-This repo contains the public code and release surface for:
+Managed secret values must not enter agent context.
 
-- the Go broker and CLI under `apps/server/`
-- the public docs needed to build, test, verify, and install shipped releases
+## Install
 
-This public repo is limited to the server/CLI release surface. Closed-source
-apps, hosted services, marketing assets, and private planning docs stay outside
-this export.
+Use Homebrew for normal installs on macOS and Linux:
 
-## What HASP does
+```bash
+brew tap gethasp/homebrew-tap
+brew install hasp
+hasp version
+```
 
-- stores managed secrets in a local encrypted vault
-- brokers secret access to commands and agent tooling
-- supports safe brokered execution through `run`, `inject`, and MCP flows
-- provides audited convenience materialization when an operator explicitly asks
-  for it
-- installs repo guardrails so managed secrets do not get committed or deployed
-  by accident
+Then run the guided setup:
 
-The core rule is simple:
+```bash
+hasp setup
+```
 
-In broker-managed agent-safe flows, managed secret values must not enter agent
-context.
-
-## Start locally
-
-Source build:
+For source builds:
 
 ```bash
 make build
 bin/hasp version
 ```
 
-Packaged release:
+See [install.md](docs/install.md) for packaged release verification, upgrades,
+and uninstall steps.
+
+## First proof
+
+Add a secret, connect a project, and run a command through the broker:
 
 ```bash
-scripts/hasp-verify-release.sh dist/release/hasp_<version>_<os>_<arch>.tar.gz
-scripts/hasp-install-release.sh --verify dist/release/hasp_<version>_<os>_<arch>.tar.gz
+hasp secret add
+hasp app connect
+hasp app run -- sh -c 'test -n "$API_TOKEN"'
 ```
 
-If you want the short path first, start with [QUICKSTART.md](QUICKSTART.md).
+For the full first-run path, start with [QUICKSTART.md](QUICKSTART.md). For the
+operating model behind vaults, grants, bindings, and agent profiles, read
+[mental-model.md](docs/mental-model.md).
 
-If you already installed HASP and want the step-by-step setup, start with
-[After Install](docs/after-homebrew.md).
+## What HASP does
 
-## Release model
+- stores managed secrets in a local encrypted vault
+- brokers secret access to commands and agent tooling
+- supports `run`, `inject`, MCP, and app connection flows
+- materializes plaintext only when an operator asks for that tradeoff
+- installs repo hooks that block managed secrets from commits and deploy paths
+- keeps audit records for brokered secret use
 
-- tagged releases publish signed release artifacts
-- release assets can be mirrored to Cloudflare R2 behind a stable download host
-- Homebrew support is artifact-based, not source-build-based
+HASP is local-first. It does not require a hosted control plane for v1.
 
-For the maintainer flow, see [RELEASING.md](RELEASING.md).
+## Repo layout
 
-## Public repo rule
+```text
+.
+|-- apps/server/        # Go module for the hasp CLI and local broker
+|-- docs/               # Public product and operator docs
+|-- scripts/            # Public build, test, install, release, and verification helpers
+|-- Makefile            # Common local and CI entry points
+`-- QUICKSTART.md       # Shortest path to a working local install
+```
 
-This repo is a curated public export of the canonical source tree.
+The Go code lives in `apps/server` because the released module path is
+`github.com/gethasp/hasp/apps/server`. Keeping that path stable avoids breaking
+imports, release scripts, Homebrew packaging, and downstream source builds.
 
-If maintainers accept a public PR, they replay the change through the canonical
-source tree and sync the public export back here before merging or tagging the
-release.
+## Development
 
-## Where to go next
+Use the root Makefile for normal local work:
 
-- [QUICKSTART.md](QUICKSTART.md)
-- [docs/README.md](docs/README.md)
-- [SUPPORT.md](SUPPORT.md)
-- [SECURITY.md](SECURITY.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+```bash
+make build
+make test
+make lint
+make verify-ci
+```
+
+The server module has the same focused targets under `apps/server`:
+
+```bash
+make -C apps/server test
+make -C apps/server coverage
+```
+
+Script details are in [scripts/README.md](scripts/README.md). Server internals
+are in [apps/server/README.md](apps/server/README.md).
+
+## Docs
+
+- [install.md](docs/install.md) covers Homebrew and packaged releases.
+- [after-homebrew.md](docs/after-homebrew.md) covers first setup after install.
+- [command-guide.md](docs/command-guide.md) maps jobs to commands.
+- [cli-reference.md](docs/cli-reference.md) lists generated command help.
+- [operator-guide.md](docs/operator-guide.md) covers day-to-day operations.
+- [value-free-manifests.md](docs/value-free-manifests.md) explains safe manifests.
+- [agent profiles](docs/agent-profiles/README.md) cover Codex, Claude Code,
+  Cursor, Aider, and generic agent flows.
+
+The full docs index is [docs/README.md](docs/README.md).
+
+## Security
+
+Report security issues through [SECURITY.md](SECURITY.md). Please do not open a
+public issue for a suspected vulnerability.
+
+## License
+
+HASP is source-available under the Fair Core License. See [LICENSE](LICENSE).

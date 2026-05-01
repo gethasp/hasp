@@ -9,7 +9,7 @@ body:
       value: |
         Use this form for product bugs, broken setup paths, runtime failures, and release regressions.
 
-        If you found a security issue, stop here and use the canonical source reporting path in `SECURITY.md`.
+        If you found a security issue, stop here and use the process in `SECURITY.md`.
   - type: input
     id: summary
     attributes:
