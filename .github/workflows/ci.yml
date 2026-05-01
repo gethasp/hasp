@@ -1,10 +1,33 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "Makefile"
+      - ".golangci.yml"
+      - "VERSION"
+      - "apps/server/**"
+      - "scripts/**/*.sh"
+      - "scripts/**/*.py"
+      - "scripts/**/*.json"
+      - "scripts/**/*.txt"
   pull_request:
     branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "Makefile"
+      - ".golangci.yml"
+      - "VERSION"
+      - "apps/server/**"
+      - "scripts/**/*.sh"
+      - "scripts/**/*.py"
+      - "scripts/**/*.json"
+      - "scripts/**/*.txt"
 
 permissions:
   contents: read
