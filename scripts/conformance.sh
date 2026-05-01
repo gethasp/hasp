@@ -71,6 +71,7 @@ unset HASP_RELEASE_GPG_HOMEDIR
 unset HASP_RELEASE_GPG_PASSPHRASE
 unset HASP_RELEASE_GPG_PASSPHRASE_FILE
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
+export HASP_UPGRADE_TRUST_ROOTS_HEX="${HASP_UPGRADE_TRUST_ROOTS_HEX:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}"
 
 bash ./scripts/build.sh
 ./bin/hasp init >/dev/null
@@ -126,6 +127,7 @@ for profile in ./apps/server/profiles/*.json; do
   test -f "$artifact_root/agent-profiles/${name}.md"
 done
 test -f "$artifact_root/scripts/hasp-deploy.sh"
+"$artifact_root/bin/hasp" version --json | grep -q '"upgrade_trust_roots":true'
 case "$(cat "$artifact_root/QUICKSTART.md")" in
   *make\ build*|*./hasp\ version*)
     echo "Packaged quickstart is not artifact-specific" >&2

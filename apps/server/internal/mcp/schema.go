@@ -3,7 +3,7 @@ package mcp
 import "github.com/gethasp/hasp/apps/server/internal/store"
 
 func catalog() []tool {
-	return []tool{
+	tools := []tool{
 		{Name: "hasp_list", Description: "List project-scoped references and safe named refs. Prefer the named_reference form for brokered use; do not retrieve raw secret values.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": stringSchema("Optional daemon-backed session token"),
@@ -40,66 +40,73 @@ func catalog() []tool {
 			"files":         mapSchema("Environment variable to file reference mappings. Values may be opaque repo refs like file_01 or named refs like @GOOGLE_APPLICATION_CREDENTIALS."),
 			"command":       stringArraySchema("Command argv"),
 		}, "command")},
-		{Name: "hasp_capture", Description: "Capture a new unmanaged candidate secret into HASP", InputSchema: schema(map[string]any{
-			"project_root":  stringSchema("Bound project root"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
-			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
-			"grant_secret":  grantSchema(),
-			"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
-			"name":          stringSchema("Secret name"),
-			"kind":          stringSchema("Secret kind"),
-			"value":         stringSchema("Candidate secret value"),
-			"bind":          boolSchema("Bind the captured secret into the project"),
-		}, "name", "value")},
-		{Name: "hasp_secret_add", Description: "Add a secret to the personal vault and optionally expose it in the current repo", InputSchema: schema(map[string]any{
-			"project_root":  stringSchema("Optional repo root to expose into"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
-			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
-			"grant_secret":  grantSchema(),
-			"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
-			"name":          stringSchema("Secret name"),
-			"value":         stringSchema("Secret value"),
-			"kind":          stringSchema("Secret kind"),
-			"expose":        boolSchema("Expose the secret in the repo when project_root is set"),
-			"on_conflict":   stringSchema("Collision policy: error, replace, or skip"),
-		}, "name", "value")},
-		{Name: "hasp_secret_update", Description: "Update an existing secret and optionally keep it exposed in the current repo", InputSchema: schema(map[string]any{
-			"project_root":  stringSchema("Optional repo root to keep exposed in"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
-			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
-			"grant_secret":  grantSchema(),
-			"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
-			"name":          stringSchema("Secret name"),
-			"value":         stringSchema("Updated secret value"),
-			"kind":          stringSchema("Secret kind"),
-			"expose":        boolSchema("Expose the secret in the repo when project_root is set"),
-		}, "name", "value")},
-		{Name: "hasp_secret_delete", Description: "Delete a secret from the personal vault and invalidate repo exposures", InputSchema: schema(map[string]any{
+	}
+	if mcpUnsafeSecretWriteToolsEnabled() {
+		tools = append(tools,
+			tool{Name: "hasp_capture", Description: "Capture a new unmanaged candidate secret into HASP", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Bound project root"),
+				"session_token": stringSchema("Optional daemon-backed session token"),
+				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
+				"grant_project": grantSchema(),
+				"grant_secret":  grantSchema(),
+				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
+				"name":          stringSchema("Secret name"),
+				"kind":          stringSchema("Secret kind"),
+				"value":         stringSchema("Candidate secret value"),
+				"bind":          boolSchema("Bind the captured secret into the project"),
+			}, "name", "value")},
+			tool{Name: "hasp_secret_add", Description: "Add a secret to the personal vault and optionally expose it in the current repo", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Optional repo root to expose into"),
+				"session_token": stringSchema("Optional daemon-backed session token"),
+				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
+				"grant_project": grantSchema(),
+				"grant_secret":  grantSchema(),
+				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
+				"name":          stringSchema("Secret name"),
+				"value":         stringSchema("Secret value"),
+				"kind":          stringSchema("Secret kind"),
+				"expose":        boolSchema("Expose the secret in the repo when project_root is set"),
+				"on_conflict":   stringSchema("Collision policy: error, replace, or skip"),
+			}, "name", "value")},
+			tool{Name: "hasp_secret_update", Description: "Update an existing secret and optionally keep it exposed in the current repo", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Optional repo root to keep exposed in"),
+				"session_token": stringSchema("Optional daemon-backed session token"),
+				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
+				"grant_project": grantSchema(),
+				"grant_secret":  grantSchema(),
+				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
+				"name":          stringSchema("Secret name"),
+				"value":         stringSchema("Updated secret value"),
+				"kind":          stringSchema("Secret kind"),
+				"expose":        boolSchema("Expose the secret in the repo when project_root is set"),
+			}, "name", "value")},
+		)
+	}
+	tools = append(tools,
+		tool{Name: "hasp_secret_delete", Description: "Delete a secret from the personal vault and invalidate repo exposures", InputSchema: schema(map[string]any{
 			"host_label": stringSchema("Optional caller label"),
 			"name":       stringSchema("Secret name"),
 		}, "name")},
-		{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
+		tool{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Optional repo root to check availability in"),
 			"host_label":   stringSchema("Optional caller label"),
 			"name":         stringSchema("Secret name"),
 		}, "name")},
-		{Name: "hasp_secret_expose", Description: "Expose an existing secret in the current repo using a repo-scoped reference", InputSchema: schema(map[string]any{
+		tool{Name: "hasp_secret_expose", Description: "Expose an existing secret in the current repo using a repo-scoped reference", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Repo root"),
 			"host_label":   stringSchema("Optional caller label"),
 			"name":         stringSchema("Secret name"),
 		}, "project_root", "name")},
-		{Name: "hasp_secret_hide", Description: "Remove repo visibility for a secret without deleting it from the personal vault", InputSchema: schema(map[string]any{
+		tool{Name: "hasp_secret_hide", Description: "Remove repo visibility for a secret without deleting it from the personal vault", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Repo root"),
 			"host_label":   stringSchema("Optional caller label"),
 			"name":         stringSchema("Secret name"),
 		}, "project_root", "name")},
-		{Name: "hasp_redact", Description: "Redact managed values from supplied text", InputSchema: schema(map[string]any{
+		tool{Name: "hasp_redact", Description: "Redact managed values from supplied text", InputSchema: schema(map[string]any{
 			"text": stringSchema("Text to redact"),
 		}, "text")},
-	}
+	)
+	return tools
 }
 
 func ToolNames() []string {

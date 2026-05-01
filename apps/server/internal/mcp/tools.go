@@ -39,6 +39,7 @@ const (
 	mcpEnvSessionToken     = "HASP_SESSION_TOKEN"
 	mcpEnvAgentProjectRoot = "HASP_AGENT_PROJECT_ROOT"
 	mcpEnvAgentConsumer    = "HASP_AGENT_CONSUMER"
+	mcpEnvUnsafeWriteTools = "HASP_MCP_ENABLE_UNSAFE_SECRET_WRITE_TOOLS"
 	mcpToolOutputByteLimit = 64 << 10
 )
 
@@ -59,10 +60,19 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 	case "hasp_run", "hasp_inject":
 		return callExecute(ctx, handle, call)
 	case "hasp_capture":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callCapture(ctx, handle, call)
 	case "hasp_secret_add":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callSecretAdd(ctx, handle, call)
 	case "hasp_secret_update":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callSecretUpdate(ctx, handle, call)
 	case "hasp_secret_delete":
 		return callSecretDelete(ctx, handle, call)
@@ -79,6 +89,18 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 	default:
 		return nil, fmtUnsupportedTool(call.Name)
 	}
+}
+
+func mcpUnsafeSecretWriteToolsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(mcpEnvUnsafeWriteTools))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+func unsafeSecretWriteToolDisabled(name string) error {
+	return fmt.Errorf("%s is disabled by default because raw secret values would pass through the MCP transcript; use the hasp CLI or set %s=1 only in a trusted local harness", name, mcpEnvUnsafeWriteTools)
 }
 
 func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {

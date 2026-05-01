@@ -108,6 +108,10 @@ func TestRPCServerOpenSessionAndStatus(t *testing.T) {
 	if server.sessions.ActiveCount() != 1 {
 		t.Fatalf("active count = %d, want 1", server.sessions.ActiveCount())
 	}
+	server.sessions.processIdentity = func(int) (string, error) { return "", nil }
+	if !server.sessions.RegisterProcess(session.Token, 12345) {
+		t.Fatal("register process for degraded identity status")
+	}
 	if session.ExpiresAt.Sub(time.Now().UTC()) > DefaultSessionTTL+time.Second {
 		t.Fatalf("session ttl exceeded limit")
 	}
@@ -127,6 +131,9 @@ func TestRPCServerOpenSessionAndStatus(t *testing.T) {
 	}
 	if !status.Sessions[0].AgentSafe || status.Sessions[0].ConsumerName != "agent" {
 		t.Fatalf("expected agent-safe session metadata, got %+v", status.Sessions[0])
+	}
+	if !status.ProcessIdentityDegraded || status.ProcessIdentityDegradedReason == "" {
+		t.Fatalf("expected process identity degradation in status, got %+v", status)
 	}
 	select {
 	case <-ctx.Done():

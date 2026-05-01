@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -83,13 +85,27 @@ func Apply(input []byte, items []store.Item) Result {
 	redacted := false
 	matched := make(map[string]struct{})
 
-	for _, it := range sorted {
-		val := it.Value
-		if len(val) == 0 || len(val) < minRedactLen {
+	itemForms := make([][]formDef, len(sorted))
+	totalForms := 0
+	for i, it := range sorted {
+		if len(it.Value) == 0 || len(it.Value) < minRedactLen {
+			continue
+		}
+		itemForms[i] = buildForms(it.Value)
+		totalForms += len(itemForms[i])
+	}
+	present := detectPresentForms(input, itemForms, totalForms)
+
+	for itemIndex, it := range sorted {
+		forms := itemForms[itemIndex]
+		if len(forms) == 0 {
 			continue
 		}
 
-		for _, f := range buildForms(val) {
+		for formIndex, f := range forms {
+			if present != nil && !present[itemIndex][formIndex] {
+				continue
+			}
 			replaced, changed := replaceSpans(output, f.needle, f.marker)
 			if changed {
 				output = replaced
@@ -112,6 +128,52 @@ func Apply(input []byte, items []store.Item) Result {
 		Suppressed:   false,
 		MatchedItems: matchedItems,
 	}
+}
+
+type formJob struct {
+	itemIndex int
+	formIndex int
+	needle    []byte
+}
+
+func detectPresentForms(input []byte, itemForms [][]formDef, totalForms int) [][]bool {
+	if len(input) < 1<<20 || totalForms < 512 {
+		return nil
+	}
+	present := make([][]bool, len(itemForms))
+	for i, forms := range itemForms {
+		if len(forms) > 0 {
+			present[i] = make([]bool, len(forms))
+		}
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		return nil
+	}
+	if workers > totalForms {
+		workers = totalForms
+	}
+	jobs := make(chan formJob, workers*2)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if bytes.Contains(input, job.needle) {
+					present[job.itemIndex][job.formIndex] = true
+				}
+			}
+		}()
+	}
+	for itemIndex, forms := range itemForms {
+		for formIndex, form := range forms {
+			jobs <- formJob{itemIndex: itemIndex, formIndex: formIndex, needle: form.needle}
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return present
 }
 
 // formDef pairs a needle with its redaction marker for a single encoding form.

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/release"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
@@ -103,6 +104,44 @@ func TestParseGlobalFlagsExtractsGlobalFlagAfterSubcmd(t *testing.T) {
 	// rest should contain only the positional subcommand, not the global flag.
 	if len(rest) != 1 || rest[0] != "status" {
 		t.Fatalf("expected rest=[status], got %v", rest)
+	}
+}
+
+func TestParseGlobalFlagsLeavesCommandVersionFlagForUpgrade(t *testing.T) {
+	gf, rest, err := parseGlobalFlags([]string{"upgrade", "--version", "v0.2.0", "--json", "--yes"})
+	if err != nil {
+		t.Fatalf("parseGlobalFlags: %v", err)
+	}
+	if !gf.json || !gf.yes {
+		t.Fatalf("expected post-subcommand --json and --yes to remain global, got %+v", gf)
+	}
+	want := []string{"upgrade", "--version", "v0.2.0"}
+	if len(rest) != len(want) {
+		t.Fatalf("expected rest %v, got %v", want, rest)
+	}
+	for i := range want {
+		if rest[i] != want[i] {
+			t.Fatalf("expected rest %v, got %v", want, rest)
+		}
+	}
+}
+
+func TestRunUpgradeVersionFlagDispatchesToUpgradeCommand(t *testing.T) {
+	lockAppSeams(t)
+	t.Setenv("HASP_VERSION", "0.1.32")
+	restore := release.SetPinnedKeysForTest("")
+	defer restore()
+
+	var stdout, stderr bytes.Buffer
+	err := runWithStarter(context.Background(), []string{"upgrade", "--version", "v0.2.0", "--yes", "--json"}, bytes.NewReader(nil), &stdout, &stderr, &fakeStarter{})
+	if err == nil {
+		t.Fatal("expected unsigned-build upgrade refusal")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("upgrade dispatch should not print version JSON on stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(err.Error(), "no embedded release-signing keys") {
+		t.Fatalf("expected upgrade no-key refusal, got %v", err)
 	}
 }
 

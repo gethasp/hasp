@@ -69,7 +69,7 @@ These profiles document a useful path, but they should not be described as
 first-class until the proof contract above is satisfied with external usage
 evidence.
 
-- **generic-compatible** — First-proof broker path for any CLI- or MCP-capable
+- **generic-compatible**: first-proof broker path for any CLI- or MCP-capable
   agent that is not a first-class profile yet. Provides setup, doctor, and
   brokered proof commands without claiming agent-specific approval UX or
   release-gate coverage. See [Generic broker guide](./generic.md).

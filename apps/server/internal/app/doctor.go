@@ -18,14 +18,15 @@ import (
 )
 
 type doctorJSONReport struct {
-	DaemonRunning  bool   `json:"daemon_running"`
-	VaultState     string `json:"vault_state"`
-	BindingState   string `json:"binding_state"`
-	HooksInstalled bool   `json:"hooks_installed"`
-	AuditDegraded  bool   `json:"audit_degraded"`
-	VersionMajor   int    `json:"version_major"`
-	VersionMinor   int    `json:"version_minor"`
-	VersionPatch   int    `json:"version_patch"`
+	DaemonRunning           bool   `json:"daemon_running"`
+	VaultState              string `json:"vault_state"`
+	BindingState            string `json:"binding_state"`
+	HooksInstalled          bool   `json:"hooks_installed"`
+	AuditDegraded           bool   `json:"audit_degraded"`
+	ProcessIdentityDegraded bool   `json:"process_identity_degraded"`
+	VersionMajor            int    `json:"version_major"`
+	VersionMinor            int    `json:"version_minor"`
+	VersionPatch            int    `json:"version_patch"`
 }
 
 type doctorReport struct {
@@ -41,6 +42,7 @@ type doctorReport struct {
 	vaultDetail           string
 	bindingDetail         string
 	auditDetail           string
+	processIdentityDetail string
 	versionMismatchDetail string
 }
 
@@ -111,6 +113,7 @@ func applyDoctorFixes(ctx context.Context, report *doctorReport, s starter) {
 			if status, ok := doctorRuntimeStatusFn(ctx, s); ok {
 				report.DaemonRunning = true
 				report.AuditDegraded = status.AuditDegraded
+				report.ProcessIdentityDegraded = status.ProcessIdentityDegraded
 				report.daemonDetail = "daemon is running"
 			}
 		}
@@ -164,20 +167,28 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 			VersionMinor:   minor,
 			VersionPatch:   patch,
 		},
-		RedactorMinLength: redactor.MinRedactLen,
-		RedactorANSIAware: redactor.ANSIAwareAvailable(),
-		daemonDetail:      "daemon is not reachable; run hasp daemon start or retry the command",
-		vaultDetail:       "vault is not initialized or cannot be unlocked",
-		bindingDetail:     "project binding was not checked",
-		auditDetail:       "audit subsystem reports healthy or unknown state",
+		RedactorMinLength:     redactor.MinRedactLen,
+		RedactorANSIAware:     redactor.ANSIAwareAvailable(),
+		daemonDetail:          "daemon is not reachable; run hasp daemon start or retry the command",
+		vaultDetail:           "vault is not initialized or cannot be unlocked",
+		bindingDetail:         "project binding was not checked",
+		auditDetail:           "audit subsystem reports healthy or unknown state",
+		processIdentityDetail: "process binding identity probe reports healthy or unknown state",
 	}
 
 	if status, ok := doctorRuntimeStatusFn(ctx, s); ok {
 		report.DaemonRunning = true
 		report.AuditDegraded = status.AuditDegraded
+		report.ProcessIdentityDegraded = status.ProcessIdentityDegraded
 		report.daemonDetail = "daemon is running"
 		if status.AuditDegraded {
 			report.auditDetail = "audit append is degraded; check disk space, permissions, and the audit path"
+		}
+		if status.ProcessIdentityDegraded {
+			report.processIdentityDetail = "process binding fell back to ancestry-only checks"
+			if status.ProcessIdentityDegradedReason != "" {
+				report.processIdentityDetail += ": " + status.ProcessIdentityDegradedReason
+			}
 		}
 		if daemonVersion, ok := doctorDaemonPingFn(ctx, s); ok {
 			report.DaemonVersion = daemonVersion
@@ -252,6 +263,7 @@ func renderDoctorHumanWithColor(stdout io.Writer, report doctorReport, opts ui.C
 	fmt.Fprintf(tw, "binding\t%s\t%s\n", ui.Colorize(report.BindingState, bindingRole(report.BindingState), opts), report.bindingDetail)
 	fmt.Fprintf(tw, "hooks\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.HooksInstalled), boolRole(report.HooksInstalled), opts))
 	fmt.Fprintf(tw, "audit_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AuditDegraded), auditDegradedRole(report.AuditDegraded), opts), report.auditDetail)
+	fmt.Fprintf(tw, "process_identity_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.ProcessIdentityDegraded), auditDegradedRole(report.ProcessIdentityDegraded), opts), report.processIdentityDetail)
 	if report.VersionMismatch {
 		fmt.Fprintf(tw, "version_mismatch\t%s\t%s\n",
 			ui.Colorize("true", ui.ColorWarn, opts), report.versionMismatchDetail)

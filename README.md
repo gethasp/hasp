@@ -11,11 +11,11 @@ and repo-local credentials into the default operating model.
 This repo contains the public code and release surface for:
 
 - the Go broker and CLI under `apps/server/`
-- the future native macOS app surface under `apps/macos/`
 - the public docs needed to build, test, verify, and install shipped releases
 
-This repo does not contain the marketing site, the future cloud control plane,
-or the internal product/research docs used in the source-of-truth repo.
+This public repo is limited to the server/CLI release surface. Closed-source
+apps, hosted services, marketing assets, and private planning docs stay outside
+this export.
 
 ## What HASP does
 
@@ -50,8 +50,8 @@ scripts/hasp-install-release.sh --verify dist/release/hasp_<version>_<os>_<arch>
 
 If you want the short path first, start with [QUICKSTART.md](QUICKSTART.md).
 
-If you already installed HASP with Homebrew and want the step-by-step setup,
-start with [docs/after-homebrew.md](docs/after-homebrew.md).
+If you already installed HASP and want the step-by-step setup, start with
+[After Install](docs/after-homebrew.md).
 
 ## Release model
 

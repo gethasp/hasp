@@ -76,4 +76,8 @@ func TestSessionStoreResolveProcessAdvisoryWhenIdentityProbeFails(t *testing.T) 
 	if _, _, ok := store.ResolveProcess(99); !ok {
 		t.Fatal("expected resolve to succeed when identity probe is unsupported")
 	}
+	degraded, reason := store.ProcessIdentityDegraded()
+	if !degraded || reason == "" {
+		t.Fatalf("expected identity degradation to be surfaced, got degraded=%t reason=%q", degraded, reason)
+	}
 }

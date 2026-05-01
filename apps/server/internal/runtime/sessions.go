@@ -102,11 +102,13 @@ type processBinding struct {
 }
 
 type SessionStore struct {
-	mu        sync.RWMutex
-	sessions  map[string]Session
-	processes map[int]processBinding
-	now       func() time.Time
-	idleTTL   time.Duration
+	mu                            sync.RWMutex
+	sessions                      map[string]Session
+	processes                     map[int]processBinding
+	now                           func() time.Time
+	idleTTL                       time.Duration
+	processIdentityDegraded       bool
+	processIdentityDegradedReason string
 	// processIdentity returns a stable token identifying the process at pid.
 	// Set explicitly per SessionStore so tests can simulate pid reuse without
 	// swapping a package-level var under a global mutex.
@@ -245,13 +247,18 @@ func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
 		return false
 	}
 	now := s.now().UTC()
-	identity, _ := s.processIdentity(pid)
+	identity, identityErr := s.processIdentity(pid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, ok := s.sessions[sessionToken]
 	if !ok || s.sessionExpired(session, now) {
 		delete(s.sessions, sessionToken)
 		return false
+	}
+	if identityErr != nil {
+		s.markProcessIdentityDegradedLocked("identity probe failed: " + identityErr.Error())
+	} else if identity == "" {
+		s.markProcessIdentityDegradedLocked("identity probe unavailable")
 	}
 	s.processes[pid] = processBinding{token: sessionToken, identity: identity}
 	return true
@@ -276,7 +283,12 @@ func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
 		// the stale binding rather than honoring it. When either probe is
 		// empty the platform is unsupported and we fall back to ancestry.
 		if binding.identity != "" {
-			current, _ := s.processIdentity(ancestor)
+			current, err := s.processIdentity(ancestor)
+			if err != nil {
+				s.markProcessIdentityDegradedLocked("identity recheck failed: " + err.Error())
+			} else if current == "" {
+				s.markProcessIdentityDegradedLocked("identity recheck unavailable")
+			}
 			if current != "" && current != binding.identity {
 				delete(s.processes, ancestor)
 				continue
@@ -294,6 +306,19 @@ func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
 		return session, token, true
 	}
 	return Session{}, "", false
+}
+
+func (s *SessionStore) ProcessIdentityDegraded() (bool, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.processIdentityDegraded, s.processIdentityDegradedReason
+}
+
+func (s *SessionStore) markProcessIdentityDegradedLocked(reason string) {
+	s.processIdentityDegraded = true
+	if s.processIdentityDegradedReason == "" {
+		s.processIdentityDegradedReason = reason
+	}
 }
 
 func (s *SessionStore) sessionExpired(session Session, now time.Time) bool {

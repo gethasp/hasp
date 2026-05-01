@@ -16,6 +16,7 @@ func TestPackagedArtifactOperatorEval(t *testing.T) {
 export GNUPGHOME="$(mktemp -d)"
 trap 'rm -rf "$GNUPGHOME"' EXIT
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
+export HASP_UPGRADE_TRUST_ROOTS_HEX="${HASP_UPGRADE_TRUST_ROOTS_HEX:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}"
 unset HASP_RELEASE_GPG_KEY_ID
 ./scripts/package-release.sh
 `)

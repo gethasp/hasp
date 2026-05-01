@@ -32,7 +32,10 @@ if ! command -v gpg >/dev/null 2>&1; then
   exit 1
 fi
 
-mapfile -t tarballs < <(find "$release_dir" -maxdepth 1 -type f -name 'hasp_*.tar.gz' | sort)
+tarballs=()
+while IFS= read -r tarball; do
+  tarballs+=("$tarball")
+done < <(find "$release_dir" -maxdepth 1 -type f -name 'hasp_*.tar.gz' | sort)
 if [[ "${#tarballs[@]}" -eq 0 ]]; then
   echo "no release tarballs found in $release_dir" >&2
   exit 1

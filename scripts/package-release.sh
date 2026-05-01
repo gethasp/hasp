@@ -24,11 +24,44 @@ fingerprint_path="$release_root/RELEASE-SIGNING-FINGERPRINT.txt"
 formula_dir="$release_root/Formula"
 formula_path="$formula_dir/hasp.rb"
 
+verify_upgrade_trust_roots() {
+  if [[ "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local binary="$artifact_dir/bin/hasp"
+  local host_os host_arch
+  host_os="$(go env GOHOSTOS)"
+  host_arch="$(go env GOHOSTARCH)"
+  if [[ "$os_name" == "$host_os" && "$arch_name" == "$host_arch" ]]; then
+    if ! "$binary" version --json | grep -q '"upgrade_trust_roots":true'; then
+      printf 'packaged binary reports upgrade_trust_roots=false; refusing release artifact\n' >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if ! command -v strings >/dev/null 2>&1; then
+    printf 'strings is required to verify cross-built upgrade trust roots for %s/%s\n' "$os_name" "$arch_name" >&2
+    exit 1
+  fi
+  if ! strings -a "$binary" | awk -v needle="$HASP_UPGRADE_TRUST_ROOTS_HEX" 'index($0, needle) { found = 1 } END { exit found ? 0 : 1 }'; then
+    printf 'packaged cross-built binary does not contain HASP_UPGRADE_TRUST_ROOTS_HEX; refusing release artifact\n' >&2
+    exit 1
+  fi
+}
+
+if [[ -z "${HASP_UPGRADE_TRUST_ROOTS_HEX:-}" && "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" != "1" ]]; then
+  printf 'missing HASP_UPGRADE_TRUST_ROOTS_HEX; release binaries must embed hasp upgrade trust roots (set HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS=1 only for explicit dev packaging)\n' >&2
+  exit 1
+fi
+
 /bin/rm -rf "$artifact_dir" "$tarball" "$checksum_path" "$checksum_sig_path" "$public_key_path" "$tarball_sig_path" "$binary_sig_path" "$fingerprint_path" "$formula_dir"
 /bin/mkdir -p "$artifact_dir/bin" "$artifact_dir/agent-profiles" "$artifact_dir/profiles" "$artifact_dir/scripts" "$formula_dir"
 
 bash ./scripts/build.sh
 /bin/cp -f "$repo_root/bin/hasp" "$artifact_dir/bin/hasp"
+verify_upgrade_trust_roots
 /bin/cp -f "$repo_root/LICENSE" "$artifact_dir/LICENSE"
 bash ./scripts/generate-supply-chain-artifacts.sh "$artifact_dir" >/dev/null
 
@@ -206,7 +239,7 @@ binds the matching repos using the machine defaults from `hasp setup`.
 ```bash
 ./bin/hasp run \
   --project-root /path/to/repo \
-  --env API_TOKEN=secret_01 \
+  --env API_TOKEN=@API_TOKEN \
   --grant-project window \
   --grant-secret session \
   --grant-window 15m \
@@ -219,7 +252,7 @@ binds the matching repos using the machine defaults from `hasp setup`.
 ./bin/hasp write-env \
   --project-root /path/to/repo \
   --output /path/to/repo/.env.local \
-  --env API_TOKEN=secret_01 \
+  --env API_TOKEN=@API_TOKEN \
   --grant-project window \
   --grant-secret session \
   --grant-convenience window

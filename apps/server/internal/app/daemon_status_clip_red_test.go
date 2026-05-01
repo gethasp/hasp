@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
@@ -68,6 +69,32 @@ func TestRenderStatusHumanLeavesValueAloneWhenWidthUnknown(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), longPath) {
 		t.Fatalf("unknown width must keep the full path; got: %s", stdout.String())
+	}
+}
+
+func TestRenderStatusHumanIncludesDegradationDetails(t *testing.T) {
+	degradedAt := time.Date(2026, 4, 30, 22, 0, 0, 0, time.UTC)
+	var stdout bytes.Buffer
+	if err := renderStatusHuman(&stdout, runtime.StatusResponse{
+		SocketPath:                    "/tmp/hasp.sock",
+		PID:                           99,
+		StartedAt:                     degradedAt,
+		AuditDegraded:                 true,
+		AuditDegradedAt:               &degradedAt,
+		ProcessIdentityDegraded:       true,
+		ProcessIdentityDegradedReason: "identity lookup unavailable",
+	}); err != nil {
+		t.Fatalf("renderStatusHuman: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"audit_degraded_at",
+		"process_identity_degraded         true",
+		"process_identity_degraded_reason  identity lookup unavailable",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
 	}
 }
 

@@ -30,6 +30,7 @@ var spawnDaemonProcess = startDetachedProcess
 // the daemon room for both without silently turning a slow start into a
 // hard failure that requires a retry.
 const daemonStartupTimeout = 15 * time.Second
+
 var (
 	resolveRuntimePaths = paths.Resolve
 	registerServerName  = func(server *rpc.Server, name string, rcvr any) error { return server.RegisterName(name, rcvr) }
@@ -316,14 +317,17 @@ func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
 
 func (b *brokerRPC) Status(_ StatusRequest, reply *StatusResponse) error {
 	auditDegraded, degradedAt := b.auditState.Snapshot()
+	processIdentityDegraded, processIdentityReason := b.sessions.ProcessIdentityDegraded()
 	*reply = StatusResponse{
-		SocketPath:      b.paths.SocketPath,
-		PID:             os.Getpid(),
-		StartedAt:       b.startedAt,
-		ActiveSessions:  b.sessions.ActiveCount(),
-		Sessions:        b.sessions.ViewSnapshot(),
-		AuditDegraded:   auditDegraded,
-		AuditDegradedAt: degradedAt,
+		SocketPath:                    b.paths.SocketPath,
+		PID:                           os.Getpid(),
+		StartedAt:                     b.startedAt,
+		ActiveSessions:                b.sessions.ActiveCount(),
+		Sessions:                      b.sessions.ViewSnapshot(),
+		AuditDegraded:                 auditDegraded,
+		AuditDegradedAt:               degradedAt,
+		ProcessIdentityDegraded:       processIdentityDegraded,
+		ProcessIdentityDegradedReason: processIdentityReason,
 	}
 	return nil
 }

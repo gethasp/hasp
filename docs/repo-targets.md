@@ -2,13 +2,16 @@
 
 HASP can keep a value-free repo contract in `.hasp.manifest.json`.
 
+Read [Value-free manifests](value-free-manifests.md) first if you need the full
+contract. This page focuses on the commands you run after the manifest exists.
+
 The manifest answers two questions without storing secrets:
 
 - what this repo needs
 - which target should receive which subset
 
-A target is a named workflow inside a project, such as `web.dev`,
-`macos.debug`, or `deploy.production`. It is not authorization. Target expansion
+A target is a named workflow inside a project, such as `server.dev`,
+`server.integration`, or `release.sign`. It is not authorization. Target expansion
 still goes through the normal project binding, grant, redaction, and audit
 checks.
 
@@ -30,14 +33,14 @@ checks.
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "web",
-      "command": ["npm", "run", "dev"],
+      "name": "server.dev",
+      "root": "apps/server",
+      "command": ["make", "-C", "apps/server", "test-integration"],
       "delivery": [
         { "as": "env", "name": "OPENAI_API_KEY", "ref": "secret_01" }
       ],
       "examples": [
-        { "format": "env", "path": "web/.env.example" }
+        { "format": "env", "path": "apps/server/.env.example" }
       ]
     }
   ]
@@ -52,7 +55,7 @@ Use this when a teammate needs to know which local vault items to create:
 
 ```bash
 hasp project requirements --project-root .
-hasp project requirements --project-root . --target web.dev --json
+hasp project requirements --project-root . --target server.dev --json
 ```
 
 The output reports refs, kinds, target usage, and present/exposed state. It may
@@ -77,8 +80,8 @@ mismatches, and target drift without printing values or command argv.
 Examples are placeholder files for framework compatibility:
 
 ```bash
-hasp project examples --project-root . --target web.dev --check
-hasp project examples --project-root . --target web.dev --write
+hasp project examples --project-root . --target server.dev --check
+hasp project examples --project-root . --target server.dev --write
 ```
 
 Generated examples contain placeholders such as `__HASP_SECRET__`; they never
@@ -88,8 +91,8 @@ to overwrite stale hand-authored files silently.
 ## Run a target
 
 ```bash
-hasp run --project-root . --target web.dev --grant-project window --grant-secret session
-hasp inject --project-root . --target deploy.production -- ./deploy.sh
+hasp run --project-root . --target server.dev --grant-project window --grant-secret session
+hasp inject --project-root . --target release.sign -- ./scripts/package-release.sh
 ```
 
 `run` and `inject` reject extra `--env` or `--file` mappings when `--target` is
@@ -101,7 +104,7 @@ If a target has no command, pass an override command after `--`.
 ## Write a generated value file
 
 ```bash
-hasp write-env --project-root . --target macos.debug --grant-convenience window
+hasp write-env --project-root . --target build.config --grant-convenience window
 ```
 
 `write-env --target` is convenience materialization. It writes a workspace-
@@ -111,8 +114,8 @@ visible file and requires explicit convenience approval. Prefer `run` or
 ## Seed an app profile
 
 ```bash
-hasp app connect web --project-root . --target web.dev
-hasp app run web
+hasp app connect server-dev --project-root . --target server.dev
+hasp app run server-dev
 ```
 
 `app connect --target` imports the target command and env/file mappings into a

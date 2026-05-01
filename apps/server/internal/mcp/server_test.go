@@ -90,18 +90,17 @@ func TestToolsListAndCall(t *testing.T) {
 	}
 	tools := listResp["result"].(map[string]any)["tools"].([]any)
 	var runSchema map[string]any
-	var captureSchema map[string]any
 	for _, rawTool := range tools {
 		tool := rawTool.(map[string]any)
 		switch tool["name"] {
 		case "hasp_run":
 			runSchema = tool["inputSchema"].(map[string]any)
-		case "hasp_capture":
-			captureSchema = tool["inputSchema"].(map[string]any)
+		case "hasp_capture", "hasp_secret_add", "hasp_secret_update":
+			t.Fatalf("unsafe raw-value tool %q must not be in the default MCP schema", tool["name"])
 		}
 	}
-	if runSchema == nil || captureSchema == nil {
-		t.Fatal("expected run and capture schemas")
+	if runSchema == nil {
+		t.Fatal("expected run schema")
 	}
 	runProps := runSchema["properties"].(map[string]any)
 	if _, ok := runProps["grant_project"]; !ok {
@@ -109,10 +108,6 @@ func TestToolsListAndCall(t *testing.T) {
 	}
 	if _, ok := runProps["grant_secret"]; !ok {
 		t.Fatal("expected hasp_run schema to expose grant_secret")
-	}
-	captureProps := captureSchema["properties"].(map[string]any)
-	if _, ok := captureProps["grant_write"]; !ok {
-		t.Fatal("expected hasp_capture schema to expose grant_write")
 	}
 	var callResp map[string]any
 	if err := dec.Decode(&callResp); err != nil {
@@ -208,6 +203,7 @@ func TestHaspRunAndInjectParity(t *testing.T) {
 }
 
 func TestHaspCaptureRequiresWriteGrant(t *testing.T) {
+	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	baseDir := t.TempDir()
 	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
 	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
@@ -251,6 +247,7 @@ func TestHaspCaptureRequiresWriteGrant(t *testing.T) {
 }
 
 func TestHaspCaptureAuditsExplicitWriteGrant(t *testing.T) {
+	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	baseDir := t.TempDir()
 	t.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
 	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
@@ -778,6 +775,7 @@ func TestCallToolEdgeCases(t *testing.T) {
 	}}); err == nil || !strings.Contains(err.Error(), "files are required") {
 		t.Fatalf("expected missing files error, got %v", err)
 	}
+	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_capture", Arguments: map[string]any{
 		"project_root": projectRoot,
 	}}); err == nil || !strings.Contains(err.Error(), "name is required") {

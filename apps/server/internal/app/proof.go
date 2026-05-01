@@ -52,9 +52,18 @@ func proofCommand(ctx context.Context, args []string, stdout io.Writer, stderr i
 	var runErr bytes.Buffer
 	err = runCommand(ctx, runArgs, &runOut, &runErr, s)
 	if err != nil {
-		fmt.Fprintf(stdout, "FAIL: %s — %v\n", *secret, err)
+		if !globalFlagsFromContext(ctx).json {
+			fmt.Fprintf(stdout, "FAIL: %s — %v\n", *secret, err)
+		}
 		return err
 	}
-	fmt.Fprintf(stdout, "PASS: brokered run injected %q as HASP_SETUP_PROOF; audit chain appended.\n", *secret)
-	return nil
+	return renderJSONOrHuman(ctx, stdout, false, map[string]any{
+		"ok":             true,
+		"secret":         *secret,
+		"env":            "HASP_SETUP_PROOF",
+		"audit_appended": true,
+	}, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "PASS: brokered run injected %q as HASP_SETUP_PROOF; audit chain appended.\n", *secret)
+		return err
+	})
 }

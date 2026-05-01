@@ -59,7 +59,8 @@ usage should prefer safe named refs such as `@OPENAI_API_KEY` with
 ## Convenience Path
 
 - Use `hasp write-env` only for explicit repo-visible materialization.
-- Reuse depends on the same destination plus the same canonical secret set, not just alias names.
+- Reuse depends on the same destination and the same canonical secret set.
+  Alias names alone are not enough.
 
 ## Failure Recovery
 

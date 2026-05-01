@@ -100,6 +100,41 @@ func TestRunUnknownCommandJSONEmitsStructuredError(t *testing.T) {
 	}
 }
 
+func TestRunJSONErrorSuppressesBareRefDeprecationWarning(t *testing.T) {
+	lockAppSeams(t)
+	var stdout, stderr bytes.Buffer
+	err := runWithStarter(context.Background(), []string{"run", "--json", "--project-root", ".", "--env", "X=missing", "--", "true"}, bytes.NewBuffer(nil), &stdout, &stderr, &fakeStarter{err: errors.New("daemon unavailable")})
+	if err == nil {
+		t.Fatal("expected run to fail before command execution")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout should stay empty in --json error path, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("command must not write human warnings before JSON error envelope, got %q", stderr.String())
+	}
+	writeCLIError(&stderr, err, true)
+	if err := assertSingleJSONDocument(stderr.Bytes()); err != nil {
+		t.Fatalf("stderr should contain exactly one JSON error document: %v\nstderr=%q", err, stderr.String())
+	}
+}
+
+func TestProofJSONErrorSuppressesHumanFailLine(t *testing.T) {
+	lockAppSeams(t)
+	var stdout, stderr bytes.Buffer
+	err := runWithStarter(context.Background(), []string{"proof", "--json", "--project-root", ".", "--secret", "missing"}, bytes.NewBuffer(nil), &stdout, &stderr, &fakeStarter{err: errors.New("daemon unavailable")})
+	if err == nil {
+		t.Fatal("expected proof to fail")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("proof --json failure must not print human FAIL to stdout, got %q", stdout.String())
+	}
+	writeCLIError(&stderr, err, true)
+	if err := assertSingleJSONDocument(stderr.Bytes()); err != nil {
+		t.Fatalf("stderr should contain exactly one JSON error document: %v\nstderr=%q", err, stderr.String())
+	}
+}
+
 // TestEveryJSONCommandStdoutSingleDocument verifies that when --json is set,
 // every supported command emits exactly one valid JSON document on stdout
 // (or nothing if the command failed). This is the punch-list harness.

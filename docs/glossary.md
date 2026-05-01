@@ -38,7 +38,8 @@ A named workflow inside a project.
 
 Targets are declared in `.hasp.manifest.json`. A target can describe the refs,
 delivery names, root, command argv, and placeholder examples for one workflow.
-It is advisory repo metadata, not authorization.
+It is repo metadata, not authorization. See
+[Value-free manifests](value-free-manifests.md) for the manifest contract.
 
 ## Consumer
 

@@ -40,6 +40,46 @@ func BenchmarkScanLargeVault(b *testing.B) {
 	}
 }
 
+func TestScanLargeVaultAllocationBudget(t *testing.T) {
+	root := t.TempDir()
+	items := benchmarkScanItems(1000)
+	for i := 0; i < 50; i++ {
+		path := filepath.Join(root, fmt.Sprintf("safe-%03d.txt", i))
+		if err := os.WriteFile(path, []byte("safe content only\n"), 0o600); err != nil {
+			t.Fatalf("write safe file: %v", err)
+		}
+	}
+	leakPath := filepath.Join(root, "leak.txt")
+	if err := os.WriteFile(leakPath, append([]byte("prefix "), items[len(items)-1].Value...), 0o600); err != nil {
+		t.Fatalf("write leak file: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1, func() {
+		result, err := Scan(context.Background(), root, items, DefaultMaxFileBytes, DefaultDeps())
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if len(result.Matches) == 0 {
+			t.Fatal("expected at least one match")
+		}
+	})
+	if allocs > 150_000 {
+		t.Fatalf("large-vault scan allocations %.0f exceed budget 150000", allocs)
+	}
+}
+
+func TestCompileItemsSkipsEmptyNeedles(t *testing.T) {
+	compiled := compileItems([]store.Item{
+		{Name: "empty", Value: nil},
+		{Name: "secret", Value: []byte("managed-secret")},
+	})
+	if len(compiled) != 1 {
+		t.Fatalf("compiled items = %#v", compiled)
+	}
+	if compiled[0].name != "secret" || len(compiled[0].needles) == 0 {
+		t.Fatalf("unexpected compiled secret item: %#v", compiled[0])
+	}
+}
+
 func benchmarkScanItems(count int) []store.Item {
 	items := make([]store.Item, 0, count)
 	for i := 0; i < count; i++ {

@@ -31,15 +31,16 @@ func TestDoctorJSONContainsOnlyAllowlistedKeys(t *testing.T) {
 
 	payload := decodeObject(t, out.Bytes())
 	allowed := map[string]bool{
-		"_schema":         true, // schema-version envelope metadata
-		"daemon_running":  true,
-		"vault_state":     true,
-		"binding_state":   true,
-		"hooks_installed": true,
-		"audit_degraded":  true,
-		"version_major":   true,
-		"version_minor":   true,
-		"version_patch":   true,
+		"_schema":                   true, // schema-version envelope metadata
+		"daemon_running":            true,
+		"vault_state":               true,
+		"binding_state":             true,
+		"hooks_installed":           true,
+		"audit_degraded":            true,
+		"process_identity_degraded": true,
+		"version_major":             true,
+		"version_minor":             true,
+		"version_patch":             true,
 	}
 	for key := range payload {
 		if !allowed[key] {
@@ -98,6 +99,13 @@ func TestDoctorReportFallbackBranches(t *testing.T) {
 	report := buildDoctorReport(context.Background(), ".", nil)
 	if !report.AuditDegraded || report.VaultState != "missing" || !strings.Contains(report.auditDetail, "audit append is degraded") {
 		t.Fatalf("expected degraded missing-vault report: %+v", report)
+	}
+	doctorRuntimeStatusFn = func(context.Context, starter) (runtime.StatusResponse, bool) {
+		return runtime.StatusResponse{ProcessIdentityDegraded: true, ProcessIdentityDegradedReason: "identity probe unavailable"}, true
+	}
+	report = buildDoctorReport(context.Background(), ".", nil)
+	if !report.ProcessIdentityDegraded || !strings.Contains(report.processIdentityDetail, "identity probe unavailable") {
+		t.Fatalf("expected process identity degradation report: %+v detail=%q", report, report.processIdentityDetail)
 	}
 
 	t.Setenv("HASP_HOME", t.TempDir())

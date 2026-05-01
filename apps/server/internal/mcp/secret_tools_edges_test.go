@@ -68,6 +68,16 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "unsupported_tool", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("expected unsupported tool error")
 	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_capture", Arguments: map[string]any{"name": "captured", "value": "abc123"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default capture refusal, got %v", err)
+	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_add", Arguments: map[string]any{"name": "API_TOKEN", "value": "abc123"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default unsafe write-tool refusal, got %v", err)
+	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_update", Arguments: map[string]any{"name": "API_TOKEN", "value": "abc123"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default update refusal, got %v", err)
+	}
+	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_add", Arguments: map[string]any{"name": "API_TOKEN", "value": "abc123"}}); err != nil {
 		t.Fatalf("callTool secret_add: %v", err)
 	}

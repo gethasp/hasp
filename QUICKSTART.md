@@ -2,8 +2,8 @@
 
 This file covers the shortest safe path to a working local HASP install.
 
-If you already installed HASP with Homebrew and want the full beginner flow,
-read [docs/after-homebrew.md](docs/after-homebrew.md).
+If you already installed HASP and want the full beginner flow, read
+[After Install](docs/after-homebrew.md).
 
 For the simplest first-run path, use:
 
@@ -115,7 +115,7 @@ binds the matching repos using the machine defaults from `hasp setup`.
 ```bash
 bin/hasp run \
   --project-root /path/to/repo \
-  --env API_TOKEN=secret_01 \
+  --env API_TOKEN=@API_TOKEN \
   --grant-project window \
   --grant-secret session \
   --grant-window 15m \

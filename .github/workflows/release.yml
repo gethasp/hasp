@@ -27,7 +27,8 @@ jobs:
           HASP_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.HASP_RELEASE_GPG_PRIVATE_KEY }}
         run: |
           test -n "$HASP_RELEASE_GPG_PRIVATE_KEY"
-          export GNUPGHOME="$(mktemp -d)"
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
           chmod 700 "$GNUPGHOME"
           printf '%s' "$HASP_RELEASE_GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
           echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
@@ -39,6 +40,7 @@ jobs:
         env:
           HASP_RELEASE_GPG_KEY_ID: ${{ secrets.HASP_RELEASE_GPG_KEY_ID }}
           HASP_RELEASE_GPG_PASSPHRASE: ${{ secrets.HASP_RELEASE_GPG_PASSPHRASE }}
+          HASP_UPGRADE_TRUST_ROOTS_HEX: ${{ secrets.HASP_UPGRADE_TRUST_ROOTS_HEX }}
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases
         run: bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
       - name: Upload release artifacts to Cloudflare R2

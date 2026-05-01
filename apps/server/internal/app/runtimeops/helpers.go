@@ -53,6 +53,10 @@ func renderStatusHumanFallback(stdout io.Writer, reply runtime.StatusResponse, t
 	if reply.AuditDegradedAt != nil {
 		fmt.Fprintf(tw, "audit_degraded_at\t%s\n", reply.AuditDegradedAt.Format(time.RFC3339))
 	}
+	fmt.Fprintf(tw, "process_identity_degraded\t%t\n", reply.ProcessIdentityDegraded)
+	if reply.ProcessIdentityDegradedReason != "" {
+		fmt.Fprintf(tw, "process_identity_degraded_reason\t%s\n", reply.ProcessIdentityDegradedReason)
+	}
 	return tw.Flush()
 }
 

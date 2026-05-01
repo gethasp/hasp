@@ -64,7 +64,7 @@ func TestProjectRequirementsReportsPresenceAndSuggestionsWithoutValues(t *testin
   ],
   "targets": [
     {
-      "name": "web.dev",
+      "name": "server.dev",
       "root": ".",
       "delivery": [
         {"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"},
@@ -157,10 +157,10 @@ func TestProjectTargetsJSONDoesNotExecuteTargetsOrExposeCommands(t *testing.T) {
 func TestProjectExamplesCheckDoesNotExecuteTargetsOrWriteExampleFiles(t *testing.T) {
 	lockAppSeams(t)
 	projectRoot, secretValue, sentinel := setupProjectTargetManifestFixture(t)
-	examplePath := filepath.Join(projectRoot, "apps", "web", ".env.example")
+	examplePath := filepath.Join(projectRoot, "apps", "server", ".env.example")
 
 	var stdout bytes.Buffer
-	if err := Run(context.Background(), []string{"project", "examples", "--check", "--project-root", projectRoot, "--target", "web.dev"}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"project", "examples", "--check", "--project-root", projectRoot, "--target", "server.dev"}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
 		t.Fatalf("project examples --check: %v", err)
 	}
 	if _, err := os.Stat(sentinel); err == nil {
@@ -217,7 +217,7 @@ func TestProjectDoctorJSONUsesSafeDiagnosticFields(t *testing.T) {
 
 func TestProjectDoctorReportsTargetSafetyDiagnostics(t *testing.T) {
 	projectRoot, _ := setupTargetRuntimeFixture(t)
-	scriptPath := filepath.Join(projectRoot, "apps", "web", "bin", "dev")
+	scriptPath := filepath.Join(projectRoot, "apps", "server", "bin", "dev")
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
 		t.Fatalf("mkdir script dir: %v", err)
 	}
@@ -241,21 +241,21 @@ func TestProjectDoctorReportsTargetSafetyDiagnostics(t *testing.T) {
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "apps/web",
+      "name": "server.dev",
+      "root": "apps/server",
       "command": ["./bin/dev"],
       "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]
     },
     {
-      "name": "deploy.production",
+      "name": "release.sign",
       "root": ".",
       "command": ["hasp-missing-doctor-command"],
       "delivery": [{"as": "file", "name": "GOOGLE_APPLICATION_CREDENTIALS", "ref": "@GOOGLE_SERVICE_ACCOUNT"}]
     },
     {
-      "name": "macos.debug",
-      "root": "apps/macos",
-      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/macos/Config/Secrets.generated.xcconfig"}]
+      "name": "build.config",
+      "root": "apps/server",
+      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/server/Config/Secrets.generated.xcconfig"}]
     }
   ]
 }`
@@ -282,17 +282,17 @@ func TestProjectDoctorReportsTargetSafetyDiagnostics(t *testing.T) {
 		t.Fatalf("decode project doctor payload: %v\nbody=%s", err, body)
 	}
 	want := map[string]bool{
-		"target_command_unavailable/deploy.production/":       false,
-		"target_output_unignored/macos.debug/":                false,
-		"secret_workspace_delivery/macos.debug/@API_BASE_URL": false,
-		"requirement_kind_mismatch//@GOOGLE_SERVICE_ACCOUNT":  false,
+		"target_command_unavailable/release.sign/":             false,
+		"target_output_unignored/build.config/":                false,
+		"secret_workspace_delivery/build.config/@API_BASE_URL": false,
+		"requirement_kind_mismatch//@GOOGLE_SERVICE_ACCOUNT":   false,
 	}
 	for _, diag := range payload.Diagnostics {
 		key := diag.Code + "/" + diag.Target + "/" + diag.Ref
 		if _, ok := want[key]; ok {
 			want[key] = true
 		}
-		if diag.Code == "target_command_unavailable" && diag.Target == "web.dev" {
+		if diag.Code == "target_command_unavailable" && diag.Target == "server.dev" {
 			t.Fatalf("relative executable command should not be flagged: %+v", diag)
 		}
 	}
@@ -321,8 +321,8 @@ func setupProjectTargetManifestFixture(t *testing.T) (projectRoot string, secret
 	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "web"), 0o755); err != nil {
-		t.Fatalf("mkdir apps/web: %v", err)
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "server"), 0o755); err != nil {
+		t.Fatalf("mkdir apps/server: %v", err)
 	}
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)
@@ -338,11 +338,11 @@ func setupProjectTargetManifestFixture(t *testing.T) (projectRoot string, secret
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "apps/web",
+      "name": "server.dev",
+      "root": "apps/server",
       "command": ["sh", "-c", "touch %s"],
       "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}],
-      "examples": [{"format": "env", "path": "apps/web/.env.example"}]
+      "examples": [{"format": "env", "path": "apps/server/.env.example"}]
     }
   ]
 }`, sentinel)

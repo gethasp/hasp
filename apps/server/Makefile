@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size test test-integration test-race evals coverage benchmarks benchmark-smoke lint staticcheck vulncheck modelcheck-setup
+.PHONY: build build-debug build-min-size test test-integration test-race evals coverage benchmarks benchmark-smoke lint staticcheck vulncheck
 
 REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
 
@@ -40,6 +40,3 @@ staticcheck:
 
 vulncheck:
 	@bash ../../scripts/run-go-analysis.sh --profile vulncheck
-
-modelcheck-setup:
-	@bash ../../scripts/modelcheck-setup.sh

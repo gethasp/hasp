@@ -4,6 +4,14 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v0.1.38]
+
+- Re-cut the release with embedded Ed25519 upgrade trust roots so packaged
+  binaries report `upgrade_trust_roots=true` and self-upgrade verification is
+  enabled for production artifacts.
+- Move the private verify workflow to Node 24-compatible GitHub Actions and
+  point Go module caching at the server module.
+
 ## [v0.1.37]
 
 - Make the private markdown link checker portable across runner checkout
@@ -12,14 +20,10 @@ All notable public releases should be summarized here.
 
 ## [v0.1.36]
 
-- Add the setup password formal-assurance lane: finite TLA+ model checking,
-  generated Go conformance traces, abstract fuzz/property coverage, targeted
-  mutation evidence, and the published assurance artifact for CONF-SETUP-002.
+- Harden setup password handling around empty input, retry behavior, interrupt
+  handling, and existing-vault password prompts.
 - Automate the Unix PTY Ctrl+C setup-password smoke so interrupted setup stops
   before vault creation.
-- Document adjacent assurance boundaries for keychain/convenience unlock,
-  daemon/session behavior, import/binding side effects, and whole-program
-  release gates without widening the setup password proof.
 - Refresh logo concept assets used by the public brand surface.
 
 ## [v0.1.35]
@@ -38,7 +42,7 @@ All notable public releases should be summarized here.
 - Add target-aware app and MCP surfaces: `hasp app connect --target`,
   `hasp_targets`, `hasp_target_explain`, and target-aware MCP run/inject. Agent
   target listing and explain omit command argv and raw values.
-- Update public docs and the web docs surface with repo-target guidance, a
+- Update public docs and the docs site with repo-target guidance, a
   regenerated CLI reference, and status/conformance entries for the shipped
   target-manifest contract.
 
@@ -78,7 +82,7 @@ All notable public releases should be summarized here.
 ## [v0.1.32]
 
 - Close the post-v0.1.31 V1 visibility remainder without widening the product: surface the stdin/shell-export rescue path in `hasp import --help`, write a paste-rescue section plus V1 threat-model-limits and licensing-and-usage blocks into the packaged `QUICKSTART.md`, and align `docs/quickstart.md` with the same blocks.
-- Reconcile the competitive baseline against shipped v0.1.31 behavior: refresh `docs/competition/matrix.json` and regenerate matrix.md/matrix.html, rewrite `docs/competition/v1-parity.md` to show that no open V1 parity items remain, and drop onboarding and generic-compatible first-proof lines from the weakest-points section of `docs/competition/v1-v4-market-landscape.md`.
+- Reconcile the competitive baseline against shipped v0.1.31 behavior and drop outdated onboarding and generic-compatible first-proof notes from the public release story.
 - Keep the Go verification bar at `100.0%` statement coverage across all 13 packages.
 
 ## [v0.1.31]

@@ -25,8 +25,8 @@ func TestLoadRepoManifestRejectsDuplicateTargetNames(t *testing.T) {
   "references": [{"alias": "secret_01", "item": "OPENAI_API_KEY"}],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": ".", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]},
-    {"name": "web.dev", "root": ".", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
+    {"name": "server.dev", "root": ".", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]},
+    {"name": "server.dev", "root": ".", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
   ]
 }`)
 }
@@ -51,7 +51,7 @@ func TestLoadRepoManifestRejectsUnknownRequirementRefsInDelivery(t *testing.T) {
   ],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": ".", "delivery": [{"as": "env", "name": "DATABASE_URL", "ref": "@DATABASE_URL"}]}
+    {"name": "server.dev", "root": ".", "delivery": [{"as": "env", "name": "DATABASE_URL", "ref": "@DATABASE_URL"}]}
   ]
 }`)
 }
@@ -78,7 +78,7 @@ func TestLoadRepoManifestRejectsUnknownDeliveryFormats(t *testing.T) {
   "references": [{"alias": "secret_01", "item": "OPENAI_API_KEY"}],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": ".", "delivery": [{"as": "dotenv", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
+    {"name": "server.dev", "root": ".", "delivery": [{"as": "dotenv", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
   ]
 }`)
 }
@@ -90,7 +90,7 @@ func TestLoadRepoManifestRejectsShellStringCommands(t *testing.T) {
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
     {
-      "name": "web.dev",
+      "name": "server.dev",
       "root": ".",
       "command": "pnpm dev",
       "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]
@@ -105,7 +105,7 @@ func TestLoadRepoManifestRejectsDangerousEnvNames(t *testing.T) {
   "references": [{"alias": "secret_01", "item": "OPENAI_API_KEY"}],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": ".", "delivery": [{"as": "env", "name": "PATH", "ref": "@OPENAI_API_KEY"}]}
+    {"name": "server.dev", "root": ".", "delivery": [{"as": "env", "name": "PATH", "ref": "@OPENAI_API_KEY"}]}
   ]
 }`)
 }
@@ -116,7 +116,7 @@ func TestLoadRepoManifestRejectsTargetRootPathTraversal(t *testing.T) {
   "references": [{"alias": "secret_01", "item": "OPENAI_API_KEY"}],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": "../outside", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
+    {"name": "server.dev", "root": "../outside", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
   ]
 }`)
 }
@@ -133,7 +133,7 @@ func TestLoadRepoManifestRejectsTargetRootSymlinkEscapes(t *testing.T) {
   "references": [{"alias": "secret_01", "item": "OPENAI_API_KEY"}],
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
-    {"name": "web.dev", "root": "escape-link", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
+    {"name": "server.dev", "root": "escape-link", "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]}
   ]
 }`)
 
@@ -153,7 +153,7 @@ func TestLoadRepoManifestRejectsOutputPathThroughSymlinkParent(t *testing.T) {
   "requirements": [{"ref": "@API_BASE_URL", "kind": "kv", "classification": "public_config", "required": true}],
   "targets": [
     {
-      "name": "macos.debug",
+      "name": "build.config",
       "root": ".",
       "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "linked-output/Secrets.generated.xcconfig"}]
     }
@@ -172,7 +172,7 @@ func TestLoadRepoManifestDoesNotExecuteTargetCommands(t *testing.T) {
   "requirements": [{"ref": "@OPENAI_API_KEY", "kind": "kv", "classification": "secret", "required": true}],
   "targets": [
     {
-      "name": "web.dev",
+      "name": "server.dev",
       "root": ".",
       "command": ["sh", "-c", "touch %s"],
       "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]
@@ -199,14 +199,14 @@ func TestManifestTargetReviewDetectsChangedCommandRefsOutputsAndDelivery(t *test
 	}
 	projectRoot := t.TempDir()
 	base := ManifestTargetExpansion{
-		TargetName:   "web.dev",
-		TargetRoot:   "apps/web",
+		TargetName:   "server.dev",
+		TargetRoot:   "apps/server",
 		ManifestHash: "hash-1",
 		Command:      []string{"npm", "run", "dev"},
 		Env:          map[string]string{"OPENAI_API_KEY": "secret_01"},
 		Files:        map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": "file_01"},
 		XCConfig:     map[string]string{"API_BASE_URL": "config_01"},
-		Outputs:      map[string]string{"API_BASE_URL": "apps/macos/Config/Secrets.generated.xcconfig"},
+		Outputs:      map[string]string{"API_BASE_URL": "apps/server/Config/Secrets.generated.xcconfig"},
 		Refs:         []string{"config_01", "secret_01"},
 		Destinations: []string{"API_BASE_URL", "OPENAI_API_KEY"},
 	}
@@ -252,7 +252,7 @@ func TestManifestTargetReviewDetectsChangedCommandRefsOutputsAndDelivery(t *test
 		{
 			name: "outputs",
 			expansion: manifestExpansionCopy(base, func(e *ManifestTargetExpansion) {
-				e.Outputs["API_BASE_URL"] = "apps/macos/Config/Other.generated.xcconfig"
+				e.Outputs["API_BASE_URL"] = "apps/server/Config/Other.generated.xcconfig"
 			}),
 			wantOutputs: true,
 		},
@@ -287,17 +287,17 @@ func TestManifestTargetExpansionHelpersCoverManifestSurface(t *testing.T) {
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "apps/web",
+      "name": "server.dev",
+      "root": "apps/server",
       "command": ["npm", "run", "dev"],
       "delivery": [
         {"as": "env", "name": "OPENAI_API_KEY", "ref": "secret_01"},
         {"as": "file", "name": "GOOGLE_APPLICATION_CREDENTIALS", "ref": "@GOOGLE_SERVICE_ACCOUNT"},
-        {"as": "xcconfig", "name": "API_BASE_URL", "ref": "config_01", "output": "apps/macos/Config/Secrets.generated.xcconfig"}
+        {"as": "xcconfig", "name": "API_BASE_URL", "ref": "config_01", "output": "apps/server/Config/Secrets.generated.xcconfig"}
       ],
       "examples": [
-        {"format": "env", "path": "apps/web/.env.example"},
-        {"format": "xcconfig", "path": "apps/macos/Config/Secrets.example.xcconfig"}
+        {"format": "env", "path": "apps/server/.env.example"},
+        {"format": "xcconfig", "path": "apps/server/Config/Secrets.example.xcconfig"}
       ]
     },
     {
@@ -315,7 +315,7 @@ func TestManifestTargetExpansionHelpersCoverManifestSurface(t *testing.T) {
 	if identity == "" {
 		t.Fatal("expected manifest identity hash")
 	}
-	if target, ok := manifest.Target(" web.dev "); !ok || target.Name != "web.dev" {
+	if target, ok := manifest.Target(" server.dev "); !ok || target.Name != "server.dev" {
 		t.Fatalf("target lookup failed: %+v %v", target, ok)
 	}
 	if _, ok := manifest.Target("missing"); ok {
@@ -337,17 +337,17 @@ func TestManifestTargetExpansionHelpersCoverManifestSurface(t *testing.T) {
 		t.Fatal("missing item lookup succeeded")
 	}
 
-	expansion, err := ExpandManifestTarget(projectRoot, "web.dev")
+	expansion, err := ExpandManifestTarget(projectRoot, "server.dev")
 	if err != nil {
 		t.Fatalf("expand target: %v", err)
 	}
-	if got := expansion.ExecutionRoot(projectRoot); got != filepath.Join(projectRoot, "apps", "web") {
+	if got := expansion.ExecutionRoot(projectRoot); got != filepath.Join(projectRoot, "apps", "server") {
 		t.Fatalf("execution root = %q", got)
 	}
 	if expansion.Env["OPENAI_API_KEY"] != "secret_01" || expansion.Files["GOOGLE_APPLICATION_CREDENTIALS"] != "@GOOGLE_SERVICE_ACCOUNT" || expansion.XCConfig["API_BASE_URL"] != "config_01" {
 		t.Fatalf("unexpected expansion: %+v", expansion)
 	}
-	if expansion.Outputs["API_BASE_URL"] != "apps/macos/Config/Secrets.generated.xcconfig" {
+	if expansion.Outputs["API_BASE_URL"] != "apps/server/Config/Secrets.generated.xcconfig" {
 		t.Fatalf("unexpected outputs: %+v", expansion.Outputs)
 	}
 	if expansion.Signature().Delivery == "" {
@@ -366,7 +366,7 @@ func TestManifestTargetExpansionHelpersCoverManifestSurface(t *testing.T) {
 	if _, err := ExpandManifestTarget(projectRoot, "missing"); err == nil {
 		t.Fatal("expected unknown target error")
 	}
-	if _, err := ExpandManifestTarget(t.TempDir(), "web.dev"); err == nil {
+	if _, err := ExpandManifestTarget(t.TempDir(), "server.dev"); err == nil {
 		t.Fatal("expected missing manifest error")
 	}
 }
@@ -379,12 +379,12 @@ func TestManifestValidationBranchCoverage(t *testing.T) {
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"},{"ref":"secret_01","kind":"kv","classification":"secret"}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"missing","kind":"kv","classification":"secret"}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"@MISSING","kind":"kv","classification":"secret"}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"file","classification":"secret"}],"targets":[{"name":"web.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01"}]}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"web.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01"},{"as":"file","name":"openai_api_key","ref":"secret_01"}]}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"web.dev","command":[""]}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"web.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01","output":"out.env"}]}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"web.dev","examples":[{"format":"toml","path":"example.toml"}]}]}`,
-		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"web.dev","examples":[{"format":"env","path":"/tmp/.env.example"}]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"file","classification":"secret"}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01"}]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01"},{"as":"file","name":"openai_api_key","ref":"secret_01"}]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","command":[""]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01","output":"out.env"}]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","examples":[{"format":"toml","path":"example.toml"}]}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","examples":[{"format":"env","path":"/tmp/.env.example"}]}]}`,
 	}
 	for _, body := range cases {
 		if _, err := DecodeRepoManifest(projectRoot, []byte(body)); err == nil {
@@ -484,17 +484,17 @@ func TestManifestReviewEmptyAndErrorBranches(t *testing.T) {
 		t.Fatalf("empty record review: %v", err)
 	}
 	handle.state.ManifestReviews = nil
-	if err := handle.RecordManifestTargetReview(t.TempDir(), ManifestTargetExpansion{TargetName: "web.dev"}); err != nil {
+	if err := handle.RecordManifestTargetReview(t.TempDir(), ManifestTargetExpansion{TargetName: "server.dev"}); err != nil {
 		t.Fatalf("record review with nil map: %v", err)
 	}
 
 	origAbs := filepathAbsFn
 	t.Cleanup(func() { filepathAbsFn = origAbs })
 	filepathAbsFn = func(string) (string, error) { return "", errors.New("abs fail") }
-	if _, err := handle.ManifestTargetDrift("bad", ManifestTargetExpansion{TargetName: "web.dev"}); err == nil {
+	if _, err := handle.ManifestTargetDrift("bad", ManifestTargetExpansion{TargetName: "server.dev"}); err == nil {
 		t.Fatal("expected drift canonicalization error")
 	}
-	if err := handle.RecordManifestTargetReview("bad", ManifestTargetExpansion{TargetName: "web.dev"}); err == nil {
+	if err := handle.RecordManifestTargetReview("bad", ManifestTargetExpansion{TargetName: "server.dev"}); err == nil {
 		t.Fatal("expected record canonicalization error")
 	}
 }

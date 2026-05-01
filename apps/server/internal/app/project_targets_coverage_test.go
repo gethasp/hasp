@@ -20,11 +20,11 @@ func TestProjectTargetCommandAndHelperCoverage(t *testing.T) {
 	origOpen := openVaultHandleFn
 	t.Cleanup(func() { openVaultHandleFn = origOpen })
 	projectRoot, _, _ := setupProjectTargetManifestFixture(t)
-	unmanagedExample := filepath.Join(projectRoot, "apps", "web", ".env.example")
+	unmanagedExample := filepath.Join(projectRoot, "apps", "server", ".env.example")
 	if err := os.WriteFile(unmanagedExample, []byte("HAND_AUTHORED=1\n"), 0o600); err != nil {
 		t.Fatalf("write unmanaged example: %v", err)
 	}
-	_ = projectExamplesCommand(context.Background(), []string{"--project-root", projectRoot, "--target", "web.dev", "--write"}, io.Discard)
+	_ = projectExamplesCommand(context.Background(), []string{"--project-root", projectRoot, "--target", "server.dev", "--write"}, io.Discard)
 
 	for _, args := range [][]string{
 		{"--bad"},
@@ -69,7 +69,7 @@ func TestProjectTargetCommandAndHelperCoverage(t *testing.T) {
 		t.Fatalf("targets human: %v", err)
 	}
 	out.Reset()
-	if err := projectExamplesCommand(context.Background(), []string{"--project-root", projectRoot, "--target", "web.dev", "--check"}, &out); err != nil {
+	if err := projectExamplesCommand(context.Background(), []string{"--project-root", projectRoot, "--target", "server.dev", "--check"}, &out); err != nil {
 		t.Fatalf("examples human: %v", err)
 	}
 	out.Reset()
@@ -82,7 +82,7 @@ func TestProjectTargetCommandAndHelperCoverage(t *testing.T) {
 		t.Fatal("expected unknown selected target")
 	}
 	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault closed") }
-	views, err := projectRequirementViews(context.Background(), projectRoot, manifest, "web.dev")
+	views, err := projectRequirementViews(context.Background(), projectRoot, manifest, "server.dev")
 	if err != nil {
 		t.Fatalf("requirement views without vault: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestProjectExampleActionCoverage(t *testing.T) {
 		t.Fatalf("unexpected check results: %+v", results)
 	}
 
-	envPath := filepath.Join(projectRoot, "apps", "web", ".env.example")
+	envPath := filepath.Join(projectRoot, "apps", "server", ".env.example")
 	if err := os.WriteFile(envPath, []byte("# "+projectExampleGeneratedMarker+"\nSTALE=1\n"), 0o600); err != nil {
 		t.Fatalf("write stale generated env: %v", err)
 	}
@@ -276,17 +276,17 @@ func TestProjectDoctorAndRenderCoverage(t *testing.T) {
 	reqs := []projectRequirementView{{
 		Ref: "secret_01", Kind: store.ItemKindKV, Classification: store.ManifestClassificationSecret,
 		Required: true, Present: true, Exposed: true, VaultAvailable: true,
-		Targets: []string{"web.dev"}, SuggestedCommand: "hasp secret add OPENAI_API_KEY",
+		Targets: []string{"server.dev"}, SuggestedCommand: "hasp secret add OPENAI_API_KEY",
 	}, {Ref: "missing", Kind: store.ItemKindFile, Classification: store.ManifestClassificationSecret}}
-	targets := []projectTargetView{{Name: "web.dev", Refs: []string{"secret_01"}, HasCommand: true, HasExamples: true}}
+	targets := []projectTargetView{{Name: "server.dev", Refs: []string{"secret_01"}, HasCommand: true, HasExamples: true}}
 	results := []projectExampleResult{{Target: "written", Written: true}, {Target: "missing", Missing: true}, {Target: "stale", Stale: true}, {Target: "ok"}}
 	doctor := []projectDoctorDiagnostic{{
 		Code: "requirement_ok", Severity: "info", Ref: "secret_01", Kind: store.ItemKindKV,
 		Classification: store.ManifestClassificationSecret, Present: true, Exposed: true,
-	}, {Code: "target_drift", Severity: "warning", Target: "web.dev", Stale: true, Ignored: true}}
+	}, {Code: "target_drift", Severity: "warning", Target: "server.dev", Stale: true, Ignored: true}}
 
 	renderers := []func(io.Writer) error{
-		func(w io.Writer) error { return renderProjectRequirements(w, projectRoot, "web.dev", reqs) },
+		func(w io.Writer) error { return renderProjectRequirements(w, projectRoot, "server.dev", reqs) },
 		func(w io.Writer) error { return renderProjectRequirements(w, projectRoot, "", nil) },
 		func(w io.Writer) error { return renderProjectTargets(w, projectRoot, targets) },
 		func(w io.Writer) error { return renderProjectTargets(w, projectRoot, nil) },
@@ -311,13 +311,13 @@ func TestTargetRuntimeHelperCoverage(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
 	var stderr bytes.Buffer
 	_ = runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--target", "missing", "--", "true"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--target", "macos.debug", "--", "true"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--target", "web.dev", "--dry-run", "--explain"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"inject", "--project-root", projectRoot, "--target", "web.dev", "--", "true"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "web.dev", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--target", "build.config", "--", "true"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"run", "--project-root", projectRoot, "--target", "server.dev", "--dry-run", "--explain"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"inject", "--project-root", projectRoot, "--target", "server.dev", "--", "true"}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "server.dev", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "missing", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "deploy.production", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
-	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "web.dev", "--env", "X=@OPENAI_API_KEY", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "release.sign", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
+	_ = runWithStarter(context.Background(), []string{"write-env", "--project-root", projectRoot, "--target", "server.dev", "--env", "X=@OPENAI_API_KEY", "--output", filepath.Join(t.TempDir(), ".env")}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 
 	if err := warnTargetDrift(io.Discard, nil, projectRoot, store.ManifestTargetExpansion{}); err != nil {
 		t.Fatalf("empty drift warning: %v", err)
@@ -331,28 +331,28 @@ func TestTargetRuntimeHelperCoverage(t *testing.T) {
 	manifestTargetDriftFn = func(*store.Handle, string, store.ManifestTargetExpansion) (store.ManifestDrift, error) {
 		return store.ManifestDrift{}, errors.New("drift fail")
 	}
-	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "web.dev"}); err == nil {
+	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "server.dev"}); err == nil {
 		t.Fatal("expected drift warning error")
 	}
 	_ = runWithStarter(context.Background(), []string{
-		"run", "--project-root", projectRoot, "--target", "web.dev",
+		"run", "--project-root", projectRoot, "--target", "server.dev",
 		"--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "true",
 	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 	_ = runWithStarter(context.Background(), []string{
-		"write-env", "--project-root", projectRoot, "--target", "macos.debug",
+		"write-env", "--project-root", projectRoot, "--target", "build.config",
 		"--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m",
 	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 	manifestTargetDriftFn = origDrift
 	manifestTargetDriftFn = func(*store.Handle, string, store.ManifestTargetExpansion) (store.ManifestDrift, error) {
 		return store.ManifestDrift{Changed: true, OutputsChanged: true}, nil
 	}
-	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "web.dev"}); err != nil {
+	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "server.dev"}); err != nil {
 		t.Fatalf("output-only drift warning: %v", err)
 	}
 	manifestTargetDriftFn = func(*store.Handle, string, store.ManifestTargetExpansion) (store.ManifestDrift, error) {
 		return store.ManifestDrift{Changed: true}, nil
 	}
-	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "web.dev"}); err != nil {
+	if err := warnTargetDrift(io.Discard, handle, projectRoot, store.ManifestTargetExpansion{TargetName: "server.dev"}); err != nil {
 		t.Fatalf("generic drift warning: %v", err)
 	}
 	manifestTargetDriftFn = origDrift
@@ -362,11 +362,11 @@ func TestTargetRuntimeHelperCoverage(t *testing.T) {
 		return errors.New("record fail")
 	}
 	_ = runWithStarter(context.Background(), []string{
-		"run", "--project-root", projectRoot, "--target", "web.dev",
+		"run", "--project-root", projectRoot, "--target", "server.dev",
 		"--grant-project", "window", "--grant-secret", "session", "--grant-window", "15m", "--", "true",
 	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 	_ = runWithStarter(context.Background(), []string{
-		"write-env", "--project-root", projectRoot, "--target", "macos.debug",
+		"write-env", "--project-root", projectRoot, "--target", "build.config",
 		"--grant-project", "window", "--grant-secret", "session", "--grant-convenience", "window", "--grant-window", "15m",
 	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter)
 	recordManifestReviewFn = origRecord
@@ -383,7 +383,7 @@ func TestTargetRuntimeHelperCoverage(t *testing.T) {
 		_, _ = singleTargetOutput(expansion)
 	}
 	var explain bytes.Buffer
-	if err := writeExplainText(&explain, explainPayload{Command: "run", Target: "web.dev", ManifestHash: "hash"}); err != nil {
+	if err := writeExplainText(&explain, explainPayload{Command: "run", Target: "server.dev", ManifestHash: "hash"}); err != nil {
 		t.Fatalf("write explain text: %v", err)
 	}
 }
@@ -398,10 +398,10 @@ func TestApplyAppTargetConfigCoverage(t *testing.T) {
 	if err := applyAppTargetConfig(context.Background(), handle, nil); err != nil {
 		t.Fatalf("nil target config: %v", err)
 	}
-	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{Target: "web.dev"}); err == nil {
+	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{Target: "server.dev"}); err == nil {
 		t.Fatal("expected missing project root")
 	}
-	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{ProjectRoot: t.TempDir(), Target: "web.dev"}); err == nil {
+	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{ProjectRoot: t.TempDir(), Target: "server.dev"}); err == nil {
 		t.Fatal("expected missing manifest")
 	}
 	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{ProjectRoot: projectRoot, Target: "missing", Command: "true"}); err == nil {
@@ -509,19 +509,19 @@ func projectCoverageManifest() store.RepoManifest {
 			{Ref: "unused_01", Kind: store.ItemKindKV, Classification: store.ManifestClassificationSecret, Required: false},
 		},
 		Targets: []store.ManifestTarget{{
-			Name:    "web.dev",
-			Root:    "apps/web",
+			Name:    "server.dev",
+			Root:    "apps/server",
 			Command: []string{"sh", "-c", "true"},
 			Delivery: []store.ManifestDelivery{
 				{As: store.ManifestDeliveryEnv, Name: "OPENAI_API_KEY", Ref: "secret_01"},
 				{As: store.ManifestDeliveryEnv, Name: "OPENAI_API_KEY_COPY", Ref: "secret_01"},
 				{As: store.ManifestDeliveryFile, Name: "GOOGLE_APPLICATION_CREDENTIALS", Ref: "file_01"},
-				{As: store.ManifestDeliveryXCConfig, Name: "API_BASE_URL", Ref: "config_01", Output: "apps/macos/Config/Secrets.generated.xcconfig"},
+				{As: store.ManifestDeliveryXCConfig, Name: "API_BASE_URL", Ref: "config_01", Output: "apps/server/Config/Secrets.generated.xcconfig"},
 				{As: store.ManifestDeliveryEnv, Name: "EMPTY_REF"},
 			},
 			Examples: []store.ManifestExample{
-				{Format: store.ManifestExampleEnv, Path: "apps/web/.env.example"},
-				{Format: store.ManifestExampleXCConfig, Path: "apps/macos/Config/Secrets.example.xcconfig"},
+				{Format: store.ManifestExampleEnv, Path: "apps/server/.env.example"},
+				{Format: store.ManifestExampleXCConfig, Path: "apps/server/Config/Secrets.example.xcconfig"},
 			},
 		}},
 	}

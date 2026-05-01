@@ -45,7 +45,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		Name: "hasp_target_explain",
 		Arguments: map[string]any{
 			"project_root": projectRoot,
-			"target":       "web.dev",
+			"target":       "server.dev",
 		},
 	})
 	if err != nil {
@@ -60,7 +60,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 			t.Fatalf("target explain exposed forbidden content %q in %s", forbidden, explainJSON)
 		}
 	}
-	if explain["target"] != "web.dev" || explain["has_command"] != true {
+	if explain["target"] != "server.dev" || explain["has_command"] != true {
 		t.Fatalf("unexpected target explain payload: %+v", explain)
 	}
 	if _, err := callTargetExplain(context.Background(), toolCall{
@@ -75,14 +75,14 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		Name: "hasp_run",
 		Arguments: map[string]any{
 			"project_root":  projectRoot,
-			"target":        "web.dev",
+			"target":        "server.dev",
 			"grant_project": "window",
 			"grant_secret":  "session",
 			"command": []any{
 				"sh", "-c",
 				`printf '%s' "$API_TOKEN"; test "$(pwd -P)" = "$1"`,
 				"target-root-check",
-				filepath.Join(projectRoot, "apps", "web"),
+				filepath.Join(projectRoot, "apps", "server"),
 			},
 		},
 	})
@@ -92,7 +92,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 	if strings.Contains(runResult["stdout"].(string), "abc123secret") {
 		t.Fatalf("target run exposed secret value: %+v", runResult)
 	}
-	if runResult["target"] != "web.dev" || runResult["manifest_hash"] == "" {
+	if runResult["target"] != "server.dev" || runResult["manifest_hash"] == "" {
 		t.Fatalf("target run missing target metadata: %+v", runResult)
 	}
 
@@ -100,7 +100,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		Name: "hasp_inject",
 		Arguments: map[string]any{
 			"project_root":  projectRoot,
-			"target":        "deploy.production",
+			"target":        "release.sign",
 			"grant_project": "window",
 			"grant_secret":  "session",
 			"command":       []any{"sh", "-c", `cat "$CERT_PATH"`},
@@ -116,7 +116,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		Name: "hasp_run",
 		Arguments: map[string]any{
 			"project_root": projectRoot,
-			"target":       "web.dev",
+			"target":       "server.dev",
 			"env":          map[string]any{"EXTRA": "secret_01"},
 			"command":      []any{"true"},
 		},
@@ -142,17 +142,17 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_targets", Arguments: map[string]any{"project_root": projectRoot}}); err != nil {
 		t.Fatalf("dispatch hasp_targets: %v", err)
 	}
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_target_explain", Arguments: map[string]any{"project_root": projectRoot, "target": "deploy.production"}}); err != nil {
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_target_explain", Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
 		t.Fatalf("dispatch hasp_target_explain: %v", err)
 	}
-	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "deploy.production"}}); err != nil {
+	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
 		t.Fatalf("explain file target: %v", err)
 	} else if kinds, ok := explain["delivery_kinds"].([]string); !ok || len(kinds) != 1 || kinds[0] != store.ManifestDeliveryFile {
 		t.Fatalf("unexpected file delivery kinds: %+v", explain)
 	}
 
 	writeMCPXCConfigManifestForCoverage(t, projectRoot)
-	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "macos.debug"}}); err != nil {
+	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "build.config"}}); err != nil {
 		t.Fatalf("explain xcconfig target: %v", err)
 	} else if kinds, ok := explain["delivery_kinds"].([]string); !ok || len(kinds) != 1 || kinds[0] != store.ManifestDeliveryXCConfig {
 		t.Fatalf("unexpected xcconfig delivery kinds: %+v", explain)
@@ -164,7 +164,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	}
 	if _, err := callExecute(context.Background(), handle, toolCall{
 		Name:      "hasp_run",
-		Arguments: map[string]any{"project_root": projectRoot, "target": "macos.debug", "command": []any{"true"}},
+		Arguments: map[string]any{"project_root": projectRoot, "target": "build.config", "command": []any{"true"}},
 	}); err == nil || !strings.Contains(err.Error(), "workspace-visible") {
 		t.Fatalf("expected workspace-output refusal, got %v", err)
 	}
@@ -175,12 +175,12 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot}}); err == nil {
 		t.Fatal("expected target listing canonical error")
 	}
-	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "web.dev"}}); err == nil {
+	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil {
 		t.Fatal("expected target explain canonical error")
 	}
 	if _, err := callExecute(context.Background(), handle, toolCall{
 		Name:      "hasp_run",
-		Arguments: map[string]any{"project_root": projectRoot, "target": "web.dev", "command": []any{"true"}},
+		Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev", "command": []any{"true"}},
 	}); err == nil {
 		t.Fatal("expected target execute canonical error")
 	}
@@ -210,7 +210,7 @@ func writeMCPXCConfigManifestForCoverage(t *testing.T, projectRoot string) {
   "requirements": [{"ref": "config_01", "kind": "kv", "classification": "public_config", "required": true}],
   "targets": [
     {
-      "name": "macos.debug",
+      "name": "build.config",
       "root": ".",
       "delivery": [{"as": "xcconfig", "name": "API_TOKEN", "ref": "config_01", "output": "Config/Secrets.generated.xcconfig"}]
     }
@@ -240,8 +240,8 @@ func setupMCPTargetFixture(t *testing.T) (*store.Handle, string) {
 		t.Fatalf("open handle: %v", err)
 	}
 	projectRoot := filepath.Join(baseDir, "project")
-	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "web"), 0o755); err != nil {
-		t.Fatalf("mkdir web root: %v", err)
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "server"), 0o755); err != nil {
+		t.Fatalf("mkdir server root: %v", err)
 	}
 	if _, err := handle.UpsertItem("api_token", store.ItemKindKV, []byte("abc123secret"), store.ItemMetadata{Policy: store.PolicySession}); err != nil {
 		t.Fatalf("upsert api token: %v", err)
@@ -267,14 +267,14 @@ func setupMCPTargetFixture(t *testing.T) (*store.Handle, string) {
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "description": "Web target with <unsafe> markup",
-      "root": "apps/web",
+      "name": "server.dev",
+      "description": "Server target with <unsafe> markup",
+      "root": "apps/server",
       "command": ["sh", "-c", "printf '%s' \"$API_TOKEN\""],
       "delivery": [{"as": "env", "name": "API_TOKEN", "ref": "secret_01"}]
     },
     {
-      "name": "deploy.production",
+      "name": "release.sign",
       "root": ".",
       "delivery": [{"as": "file", "name": "CERT_PATH", "ref": "file_01"}]
     }

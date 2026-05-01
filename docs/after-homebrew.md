@@ -1,9 +1,8 @@
-# I installed HASP with Homebrew. Now what?
+# After Install
 
 This guide is for the most common starting point:
 
-- you already ran `brew tap gethasp/homebrew-tap`
-- you already ran `brew install hasp`
+- you already installed HASP
 - you want HASP working with your coding agent today
 
 If that is you, start with the guided setup:
@@ -12,7 +11,7 @@ If that is you, start with the guided setup:
 hasp setup
 ```
 
-`hasp setup` is the normal path after Homebrew. It can:
+`hasp setup` is the normal path after install. It can choose:
 
 - where local encrypted HASP data lives on this machine
 - machine defaults for automatic project protection
@@ -30,11 +29,12 @@ use HASP inside it. Repo-scoped bindings still exist under the hood, but they
 are created for you from machine defaults instead of requiring manual setup
 first.
 
-The rest of this page is the manual flow and troubleshooting fallback.
+The rest of this page starts with the simple daily surface, then shows the
+manual flow and troubleshooting fallback.
 
 ## The normal path is guided
 
-The Homebrew path is designed around one guided command followed by normal
+The installed path is designed around one guided command followed by normal
 work. The product model is:
 
 - one personal vault
@@ -42,15 +42,26 @@ work. The product model is:
 - connect agents once
 - run apps and agents normally afterward
 
-That means the common day-to-day surface should look like:
+That means the easy surface should start here:
 
+- `hasp setup`
 - `hasp secret add`
 - `hasp app connect <name>`
-- `hasp agent connect <name>`
+- `hasp agent connect <profile> --project-root .`
 
-not repeated command wrapping or repeated repo/bootstrap thinking. Use the
-manual sections below only when you want to inspect one layer, automate a
-specific step, or recover from a failed setup.
+After an app is connected, the normal run command is:
+
+- `hasp app run <name>`
+
+You should not need repeated command wrapping or repeated repo/bootstrap
+thinking for normal work. Use the manual sections below only when you want to
+inspect one layer, automate a specific step, or recover from a failed setup.
+
+## Manual fallback and advanced control
+
+The following sections are for scripts, recovery, exact broker testing, and
+operator control. If `hasp setup` already got you to a connected app or agent,
+you can skip to [what you do day to day](#8-what-you-do-day-to-day).
 
 ## 1. Confirm the install
 
@@ -63,7 +74,8 @@ hasp version
 
 You should see a real path and a version number.
 
-If `hasp` is not found, restart your shell or make sure Homebrew's `bin` path is in your `PATH`.
+If `hasp` is not found, restart your shell or make sure the install directory's
+`bin` path is in your `PATH`.
 
 ## 2. Set your local password
 
@@ -127,7 +139,7 @@ That is safer than leaving it in shell history or dropping it into a repo file.
 
 ## 5. Bind one repo
 
-Go into one repo you actually use with an agent:
+Go into one repo you use with an agent:
 
 ```bash
 cd /path/to/your/repo
@@ -183,7 +195,7 @@ Run one brokered command first:
 ```bash
 hasp run \
   --project-root "$PWD" \
-  --env OPENAI_API_KEY=secret_01 \
+  --env OPENAI_API_KEY=@OPENAI_API_KEY \
   --grant-project window \
   --grant-secret session \
   --grant-window 15m \
@@ -194,8 +206,8 @@ If that succeeds, HASP is working.
 
 What the flags mean:
 
-- `--env OPENAI_API_KEY=secret_01`
-  Put the secret bound to `secret_01` into the command as `OPENAI_API_KEY`
+- `--env OPENAI_API_KEY=@OPENAI_API_KEY`
+  Put the named ref `@OPENAI_API_KEY` into the command as `OPENAI_API_KEY`
 - `--grant-project window`
   Reuse approval for this project for a time window
 - `--grant-secret session`
@@ -243,31 +255,68 @@ printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | hasp mcp
 
 If you see the HASP tools, your agent should be able to connect.
 
-## 8. What you actually do day to day
+## 8. What you do day to day
 
-You usually need only three commands.
+Start with saved app and agent profiles. You should not need to rebuild the
+long broker command for normal work.
 
-### A. Run a command with a secret
+### Easy path
+
+Run a connected app:
+
+```bash
+hasp app run <name>
+```
+
+Add another secret:
+
+```bash
+hasp secret add
+```
+
+Connect another app when you need one:
+
+```bash
+hasp app connect <name>
+```
+
+Connect or refresh an agent profile in the current repo:
+
+```bash
+hasp agent connect <profile> --project-root .
+```
+
+Review activity:
+
+```bash
+hasp audit
+```
+
+### Advanced: one-off command delivery
+
+Use `hasp run` when you do not have a saved app profile yet or when a script
+needs an exact one-off mapping:
 
 ```bash
 hasp run \
   --project-root "$PWD" \
-  --env OPENAI_API_KEY=secret_01 \
+  --env OPENAI_API_KEY=@OPENAI_API_KEY \
   --grant-project window \
   --grant-secret session \
   --grant-window 15m \
   -- your-command
 ```
 
-Use this whenever you can.
+Prefer the easy app/agent commands when they fit. Use this broker form when
+you need to spell out the project, env mapping, and grant window yourself.
 
-### B. Materialize a file only when you really need to
+### Advanced: materialize a file only when a tool needs one
 
 ```bash
 hasp write-env \
   --project-root "$PWD" \
   --output "$PWD/.env.local" \
-  --env OPENAI_API_KEY=secret_01 \
+  --env OPENAI_API_KEY=@OPENAI_API_KEY \
   --grant-project window \
   --grant-secret session \
   --grant-convenience window
@@ -276,14 +325,6 @@ hasp write-env \
 Use this only when a tool absolutely requires a real file.
 
 This is convenience mode, not the safest path.
-
-### C. Check what HASP has been doing
-
-```bash
-hasp audit
-```
-
-Use that if you want to review imports, approvals, backup/restore events, and similar actions.
 
 ## 9. Backup your vault
 
@@ -309,7 +350,8 @@ HASP helps a lot, but do not expect magic.
 - It reduces common local leaks.
 - It does not protect you from a malicious same-user local process.
 - It does not make pasted secrets magically safe after the fact.
-- `write-env` is explicit convenience. Once you write a real file, that file is truly real: the OS, editors, backups, and git hooks can all see it.
+- `write-env` is explicit convenience. Once HASP writes a real file, the OS,
+  editors, backups, and git hooks can all see it.
 
 ## 11. If something is broken
 
@@ -356,7 +398,21 @@ Start with:
 
 ## 12. The shortest successful setup
 
-If you want the absolute minimum happy path, this is it:
+The easiest successful path is guided:
+
+```bash
+hasp setup
+cd /path/to/repo
+hasp secret add
+hasp app connect <name>
+hasp agent connect <profile> --project-root .
+hasp app run <name>
+```
+
+If those commands work, you are ready to use HASP through your connected app
+or coding agent.
+
+If you need a fully explicit scriptable proof instead, use the advanced form:
 
 ```bash
 export HASP_MASTER_PASSWORD='choose-a-strong-password'
@@ -364,8 +420,9 @@ hasp init
 printf 'export OPENAI_API_KEY=your-real-key\n' | hasp import --format env -
 cd /path/to/repo
 hasp bootstrap --profile codex-cli --project-root "$PWD" --alias secret_01=OPENAI_API_KEY
-hasp run --project-root "$PWD" --env OPENAI_API_KEY=secret_01 --grant-project window --grant-secret session --grant-window 15m -- sh -c 'test -n "$OPENAI_API_KEY"'
+hasp run --project-root "$PWD" --env OPENAI_API_KEY=@OPENAI_API_KEY --grant-project window --grant-secret session --grant-window 15m -- sh -c 'test -n "$OPENAI_API_KEY"'
 printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | hasp mcp
 ```
 
-If those commands work, you are ready to connect your coding agent.
+Use this form for automation, recovery, or debugging a specific lower-level
+layer.

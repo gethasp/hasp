@@ -12,10 +12,19 @@ commit="$(git rev-parse --short=10 HEAD 2>/dev/null || echo unknown)"
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 pkg="github.com/gethasp/hasp/apps/server/internal/runtime"
+release_pkg="github.com/gethasp/hasp/apps/server/internal/release"
+upgrade_trust_roots="${HASP_UPGRADE_TRUST_ROOTS_HEX:-}"
+if [[ -n "$upgrade_trust_roots" && ! "$upgrade_trust_roots" =~ ^[0-9a-fA-F]{64}(,[0-9a-fA-F]{64})*$ ]]; then
+  echo "HASP_UPGRADE_TRUST_ROOTS_HEX must be one or more comma-separated 64-hex Ed25519 public keys" >&2
+  exit 1
+fi
 ldflags_base="\
 -X ${pkg}.Version=${version} \
 -X ${pkg}.Commit=${commit} \
 -X ${pkg}.BuildDate=${build_date}"
+if [[ -n "$upgrade_trust_roots" ]]; then
+  ldflags_base+=" -X ${release_pkg}.pinnedKeysHex=${upgrade_trust_roots}"
+fi
 
 server_pkg="./apps/server/cmd/hasp"
 server_mod="./apps/server/go.mod"

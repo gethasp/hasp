@@ -20,7 +20,8 @@ func emitDeprecationWarning(ctx context.Context, stderr io.Writer, format string
 	if stderr == nil {
 		return
 	}
-	if globalFlagsFromContext(ctx).quiet {
+	gf := globalFlagsFromContext(ctx)
+	if gf.quiet || gf.json {
 		return
 	}
 	if deprecationOptOutFromEnv(os.Getenv("HASP_NO_DEPRECATION")) {

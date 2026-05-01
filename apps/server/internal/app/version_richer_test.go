@@ -35,6 +35,7 @@ func TestVersionCommandRichJSONPayload(t *testing.T) {
 		"format_version",
 		"os",
 		"arch",
+		"upgrade_trust_roots",
 	}
 	for _, key := range required {
 		if _, ok := payload[key]; !ok {
@@ -53,6 +54,9 @@ func TestVersionCommandRichJSONPayload(t *testing.T) {
 	}
 	if got, _ := payload["format_version"].(float64); got <= 0 {
 		t.Errorf("format_version must be positive, got %v", payload["format_version"])
+	}
+	if got, ok := payload["upgrade_trust_roots"].(bool); !ok || got {
+		t.Errorf("dev/test build should report upgrade_trust_roots=false, got %v", payload["upgrade_trust_roots"])
 	}
 
 	// Default mode must NOT leak KDF tuning details.

@@ -13,13 +13,13 @@ import (
 
 func TestRunTargetInjectsOnlyDeclaredEnvAndRejectsAdditiveMappings(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
-	targetRoot := canonicalPathForTest(t, filepath.Join(projectRoot, "apps", "web"))
+	targetRoot := canonicalPathForTest(t, filepath.Join(projectRoot, "apps", "server"))
 
 	var stdout, stderr bytes.Buffer
 	err := runWithStarter(context.Background(), []string{
 		"run",
 		"--project-root", projectRoot,
-		"--target", "web.dev",
+		"--target", "server.dev",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",
@@ -36,7 +36,7 @@ func TestRunTargetInjectsOnlyDeclaredEnvAndRejectsAdditiveMappings(t *testing.T)
 	err = runWithStarter(context.Background(), []string{
 		"run",
 		"--project-root", projectRoot,
-		"--target", "web.dev",
+		"--target", "server.dev",
 		"--env", "DATABASE_URL=@DATABASE_URL",
 		"--",
 		"true",
@@ -52,9 +52,9 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	if err := Run(context.Background(), []string{
-		"app", "connect", "web",
+		"app", "connect", "server-dev",
 		"--project-root", projectRoot,
-		"--target", "web.dev",
+		"--target", "server.dev",
 	}, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("app connect --target: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
@@ -62,7 +62,7 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open vault: %v", err)
 	}
-	consumer, err := handle.GetAppConsumer("web")
+	consumer, err := handle.GetAppConsumer("server-dev")
 	if err != nil {
 		t.Fatalf("get app consumer: %v", err)
 	}
@@ -80,14 +80,14 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 	if err := Run(context.Background(), []string{
 		"app", "connect", "deployapp",
 		"--project-root", projectRoot,
-		"--target", "deploy.production",
+		"--target", "release.sign",
 	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "has no command") {
 		t.Fatalf("expected commandless target refusal, got %v", err)
 	}
 	if err := Run(context.Background(), []string{
 		"app", "connect", "deployapp",
 		"--project-root", projectRoot,
-		"--target", "deploy.production",
+		"--target", "release.sign",
 		"--cmd", `test -s "$GOOGLE_APPLICATION_CREDENTIALS"`,
 	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("app connect commandless target with override: %v", err)
@@ -95,14 +95,14 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 	if err := Run(context.Background(), []string{
 		"app", "connect", "macapp",
 		"--project-root", projectRoot,
-		"--target", "macos.debug",
+		"--target", "build.config",
 	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "workspace-visible delivery") {
 		t.Fatalf("expected xcconfig target refusal for app connect, got %v", err)
 	}
 
 	rewriteWebTargetManifest(t, projectRoot)
 	var runOut bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"app", "run", "web"}, bytes.NewBuffer(nil), &runOut, &stderr, starter); err != nil {
+	if err := runWithStarter(context.Background(), []string{"app", "run", "server-dev"}, bytes.NewBuffer(nil), &runOut, &stderr, starter); err != nil {
 		t.Fatalf("app run should use the local profile seeded before manifest drift: %v\nstdout=%s\nstderr=%s", err, runOut.String(), stderr.String())
 	}
 	if strings.Contains(runOut.String(), "sk-web-value") {
@@ -116,7 +116,7 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 	if err := runWithStarter(context.Background(), []string{
 		"run",
 		"--project-root", projectRoot,
-		"--target", "web.dev",
+		"--target", "server.dev",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",
@@ -143,7 +143,7 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 	}
 	found := false
 	for _, diag := range doctorPayload.Diagnostics {
-		if diag.Code == "target_drift" && diag.Target == "web.dev" && diag.Stale {
+		if diag.Code == "target_drift" && diag.Target == "server.dev" && diag.Stale {
 			found = true
 		}
 	}
@@ -155,7 +155,7 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 	if err := runWithStarter(context.Background(), []string{
 		"run",
 		"--project-root", projectRoot,
-		"--target", "web.dev",
+		"--target", "server.dev",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",
@@ -165,7 +165,7 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 		t.Fatalf("second run --target after drift: %v\nstderr=%s", err, stderr.String())
 	}
 	warning := stderr.String()
-	for _, want := range []string{"manifest target \"web.dev\" changed", "command", "refs", "delivery"} {
+	for _, want := range []string{"manifest target \"server.dev\" changed", "command", "refs", "delivery"} {
 		if !strings.Contains(warning, want) {
 			t.Fatalf("expected drift warning to contain %q, got %q", want, warning)
 		}
@@ -179,7 +179,7 @@ func TestInjectTargetProvidesDeclaredTempFileOnly(t *testing.T) {
 	err := runWithStarter(context.Background(), []string{
 		"inject",
 		"--project-root", projectRoot,
-		"--target", "deploy.production",
+		"--target", "release.sign",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",
@@ -196,12 +196,12 @@ func TestInjectTargetProvidesDeclaredTempFileOnly(t *testing.T) {
 
 func TestWriteEnvTargetUsesConfiguredOutputAndRequiresConvenienceGrant(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
-	output := filepath.Join(projectRoot, "apps", "macos", "Config", "Secrets.generated.xcconfig")
+	output := filepath.Join(projectRoot, "apps", "server", "Config", "Secrets.generated.xcconfig")
 
 	err := runWithStarter(context.Background(), []string{
 		"write-env",
 		"--project-root", projectRoot,
-		"--target", "macos.debug",
+		"--target", "build.config",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",
@@ -213,7 +213,7 @@ func TestWriteEnvTargetUsesConfiguredOutputAndRequiresConvenienceGrant(t *testin
 	if err := runWithStarter(context.Background(), []string{
 		"write-env",
 		"--project-root", projectRoot,
-		"--target", "macos.debug",
+		"--target", "build.config",
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-convenience", "window",
@@ -240,13 +240,10 @@ func setupTargetRuntimeFixture(t *testing.T) (projectRoot string, starter starte
 	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "web"), 0o755); err != nil {
-		t.Fatalf("mkdir web target root: %v", err)
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "server", "Config"), 0o755); err != nil {
+		t.Fatalf("mkdir server target root: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "macos", "Config"), 0o755); err != nil {
-		t.Fatalf("mkdir macos target root: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectRoot, ".gitignore"), []byte("apps/macos/Config/Secrets.generated.xcconfig\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(projectRoot, ".gitignore"), []byte("apps/server/Config/Secrets.generated.xcconfig\n"), 0o600); err != nil {
 		t.Fatalf("write gitignore: %v", err)
 	}
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
@@ -283,20 +280,20 @@ func setupTargetRuntimeFixture(t *testing.T) (projectRoot string, starter starte
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "apps/web",
+      "name": "server.dev",
+      "root": "apps/server",
       "command": ["sh", "-c", "test -n \"$OPENAI_API_KEY\""],
       "delivery": [{"as": "env", "name": "OPENAI_API_KEY", "ref": "@OPENAI_API_KEY"}]
     },
     {
-      "name": "deploy.production",
+      "name": "release.sign",
       "root": ".",
       "delivery": [{"as": "file", "name": "GOOGLE_APPLICATION_CREDENTIALS", "ref": "@GOOGLE_SERVICE_ACCOUNT"}]
     },
     {
-      "name": "macos.debug",
-      "root": "apps/macos",
-      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/macos/Config/Secrets.generated.xcconfig"}]
+      "name": "build.config",
+      "root": "apps/server",
+      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/server/Config/Secrets.generated.xcconfig"}]
     }
   ]
 }`
@@ -334,20 +331,20 @@ func rewriteWebTargetManifest(t *testing.T, projectRoot string) {
   ],
   "targets": [
     {
-      "name": "web.dev",
-      "root": "apps/web",
+      "name": "server.dev",
+      "root": "apps/server",
       "command": ["sh", "-c", "false"],
       "delivery": [{"as": "env", "name": "DATABASE_URL", "ref": "@DATABASE_URL"}]
     },
     {
-      "name": "deploy.production",
+      "name": "release.sign",
       "root": ".",
       "delivery": [{"as": "file", "name": "GOOGLE_APPLICATION_CREDENTIALS", "ref": "@GOOGLE_SERVICE_ACCOUNT"}]
     },
     {
-      "name": "macos.debug",
-      "root": "apps/macos",
-      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/macos/Config/Secrets.generated.xcconfig"}]
+      "name": "build.config",
+      "root": "apps/server",
+      "delivery": [{"as": "xcconfig", "name": "API_BASE_URL", "ref": "@API_BASE_URL", "output": "apps/server/Config/Secrets.generated.xcconfig"}]
     }
   ]
 }`

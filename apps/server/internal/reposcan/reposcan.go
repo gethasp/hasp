@@ -45,6 +45,11 @@ type Result struct {
 	Walker  string    `json:"walker"`
 }
 
+type compiledItem struct {
+	name    string
+	needles [][]byte
+}
+
 func DefaultDeps() Deps {
 	return Deps{
 		Stat:     os.Stat,
@@ -80,6 +85,7 @@ func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, 
 		return Result{}, err
 	}
 	result := Result{Walker: WalkerLabel(fallback)}
+	compiled := compileItems(items)
 	for _, rel := range files {
 		abs := filepath.Join(root, rel)
 		info, statErr := deps.Stat(abs)
@@ -97,9 +103,9 @@ func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, 
 		if readErr != nil {
 			return Result{}, readErr
 		}
-		for _, item := range items {
-			if HitItem(data, item, deps.ByteIndex) {
-				result.Matches = append(result.Matches, Match{Path: rel, ItemName: item.Name})
+		for _, item := range compiled {
+			if hitNeedles(data, item.needles, deps.ByteIndex) {
+				result.Matches = append(result.Matches, Match{Path: rel, ItemName: item.name})
 			}
 		}
 	}
@@ -114,11 +120,27 @@ func WalkerLabel(fallback bool) string {
 }
 
 func HitItem(data []byte, item store.Item, byteIndex ...func([]byte, []byte) int) bool {
+	return hitNeedles(data, redactor.Needles(item.Value), byteIndex...)
+}
+
+func compileItems(items []store.Item) []compiledItem {
+	compiled := make([]compiledItem, 0, len(items))
+	for _, item := range items {
+		needles := redactor.Needles(item.Value)
+		if len(needles) == 0 {
+			continue
+		}
+		compiled = append(compiled, compiledItem{name: item.Name, needles: needles})
+	}
+	return compiled
+}
+
+func hitNeedles(data []byte, needles [][]byte, byteIndex ...func([]byte, []byte) int) bool {
 	index := bytes.Index
 	if len(byteIndex) > 0 && byteIndex[0] != nil {
 		index = byteIndex[0]
 	}
-	for _, needle := range redactor.Needles(item.Value) {
+	for _, needle := range needles {
 		if index(data, needle) >= 0 {
 			return true
 		}

@@ -1,13 +1,50 @@
 # Install HASP
 
-## Source build
+Use Homebrew for normal installs on macOS and Linux. Use the packaged release
+scripts when you need to verify a tarball by hand or install into a custom
+prefix.
+
+## Install with Homebrew
 
 ```bash
-make build
-bin/hasp version
+brew tap gethasp/homebrew-tap
+brew install hasp
+hasp version
 ```
 
-## Packaged release
+If you already added the tap, `brew install hasp` is enough.
+
+After install, continue with [After Install](after-homebrew.md):
+
+```bash
+hasp setup
+```
+
+## Upgrade with Homebrew
+
+```bash
+brew update
+brew upgrade hasp
+hasp version
+```
+
+Run `hasp doctor` after upgrading if a daemon is already running. It reports
+CLI and daemon version mismatch.
+
+## Uninstall with Homebrew
+
+```bash
+brew uninstall hasp
+```
+
+Homebrew removes the formula files. It does not remove your HASP vault,
+`HASP_HOME`, repo hooks, app launchers, or audit history. Remove those only when
+you are intentionally decommissioning the local install.
+
+## Direct packaged release
+
+Use this path when you downloaded a release tarball and want local signature
+verification before install:
 
 ```bash
 scripts/hasp-verify-release.sh dist/release/hasp_<version>_<os>_<arch>.tar.gz
@@ -26,16 +63,38 @@ Installed binary:
 $HOME/.local/share/hasp/hasp_<version>_<os>_<arch>/bin/hasp
 ```
 
-## Upgrade
+## Upgrade a packaged release
 
 ```bash
-scripts/hasp-upgrade-release.sh --verify dist/release/hasp_<new-version>_<os>_<arch>.tar.gz
+scripts/hasp-upgrade-release.sh --verify \
+  dist/release/hasp_<new-version>_<os>_<arch>.tar.gz \
+  "$HOME/.local/share/hasp/hasp_<old-version>_<os>_<arch>"
 ```
 
-## Uninstall
+You can also use the CLI upgrade command when you want HASP to fetch and verify
+a published release:
 
 ```bash
-scripts/hasp-uninstall-release.sh ~/.local/share/hasp/hasp_<version>_<os>_<arch>
+hasp upgrade --version v0.1.35 --yes
 ```
 
-The default uninstall path removes the installed release tree only.
+## Uninstall a packaged release
+
+```bash
+scripts/hasp-uninstall-release.sh "$HOME/.local/share/hasp/hasp_<version>_<os>_<arch>"
+```
+
+The default uninstall path removes the installed release tree only. Pass
+`--remove-hooks-from <repo>` or `--purge-hasp-home <path>` only when that cleanup
+is intentional.
+
+## Source build
+
+Use source builds for development:
+
+```bash
+make build
+bin/hasp version
+```
+
+Source builds are not the normal user install path.

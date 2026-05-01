@@ -25,12 +25,17 @@ type StatusResponse struct {
 	Sessions        []SessionView `json:"sessions"`
 	AuditDegraded   bool          `json:"audit_degraded"`
 	AuditDegradedAt *time.Time    `json:"audit_degraded_at,omitempty"`
+	// ProcessIdentityDegraded is true when process binding fell back to
+	// ancestry-only checks because the platform probe could not produce a stable
+	// per-process identity token.
+	ProcessIdentityDegraded       bool   `json:"process_identity_degraded"`
+	ProcessIdentityDegradedReason string `json:"process_identity_degraded_reason,omitempty"`
 }
 
 type OpenSessionRequest struct {
-	HostLabel    string `json:"host_label"`
-	ProjectRoot  string `json:"project_root"`
-	TTLSeconds   int    `json:"ttl_seconds"`
+	HostLabel   string `json:"host_label"`
+	ProjectRoot string `json:"project_root"`
+	TTLSeconds  int    `json:"ttl_seconds"`
 	// TTLMillis lets callers request sub-second TTL for tests that exercise
 	// the expiry-rejection codepath without long sleeps. When non-zero it
 	// takes precedence over TTLSeconds. Callers that need >1s TTL keep

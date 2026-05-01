@@ -8,6 +8,7 @@ import (
 	"io"
 	goruntime "runtime"
 
+	"github.com/gethasp/hasp/apps/server/internal/release"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -135,13 +136,14 @@ func versionCommand(ctx context.Context, args []string, stdout io.Writer) error 
 	}
 	version := runtime.VersionString()
 	payload := map[string]any{
-		"version":        version,
-		"commit":         runtime.CommitString(),
-		"build_date":     runtime.BuildDateString(),
-		"go_version":     goruntime.Version(),
-		"format_version": store.FormatVersion(),
-		"os":             goruntime.GOOS,
-		"arch":           goruntime.GOARCH,
+		"version":             version,
+		"commit":              runtime.CommitString(),
+		"build_date":          runtime.BuildDateString(),
+		"go_version":          goruntime.Version(),
+		"format_version":      store.FormatVersion(),
+		"os":                  goruntime.GOOS,
+		"arch":                goruntime.GOARCH,
+		"upgrade_trust_roots": len(release.PinnedPublicKeys()) > 0,
 	}
 	// KDF tuning details are diagnostic-only and useful for attacker
 	// reconnaissance against weakened-build configurations. Gate them

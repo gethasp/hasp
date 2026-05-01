@@ -16,7 +16,7 @@ first brokered proof before any profile-specific support claim exists.
 ## Config Surface
 
 - Canonical command: `hasp mcp`
-- Generic local-first setup: `hasp setup --agent generic-compatible --repo <repo>` or
+- Generic local-first setup: `hasp setup --agent generic-compatible --project-root <repo>` or
   `hasp bootstrap generic --project-root <repo>`
 - Prefer the agent wrapper or launcher path when you need subprocess-safe
   propagation.
@@ -27,7 +27,7 @@ Run this to initialize the vault, bind the repo, and wire the generic-compatible
 MCP path in a single step:
 
 ```sh
-hasp setup --agent generic-compatible --repo "<repo>" \
+hasp setup --agent generic-compatible --project-root "<repo>" \
   --import .env --bind-imports \
   --enable-convenience-unlock=false --install-hooks=false
 ```
@@ -60,17 +60,16 @@ environment:
 
 ```sh
 hasp run --project-root "<repo>" \
-  --env HASP_SETUP_PROOF=<ref> \
+  --env HASP_SETUP_PROOF=@OPENAI_API_KEY \
   --grant-project window \
   --grant-secret session \
   --grant-window 15m \
   -- sh -c 'test -n "$HASP_SETUP_PROOF"'
 ```
 
-Replace `<ref>` with the alias or named reference printed by setup (e.g.
-`secret_01` or `@OPENAI_API_KEY`). The exact command is also printed verbatim
-in the `verification.brokered_proof.command` field of the `hasp setup --json`
-output.
+Replace `@OPENAI_API_KEY` with the named reference printed by setup. The exact
+command is also printed verbatim in the
+`verification.brokered_proof.command` field of the `hasp setup --json` output.
 
 ## Ready-to-Paste Config Snippets
 
@@ -92,7 +91,7 @@ hasp bootstrap print-config generic-compatible --format claude-json
 ```
 
 Each snippet embeds `"support_tier": "generic-compatible"` so the config is
-clearly labeled as a generic broker path, not first-class profile support.
+labeled as a generic broker path, not first-class profile support.
 
 ## Config Example
 

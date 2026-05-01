@@ -38,6 +38,7 @@ make coverage
 - Keep each PR about one thing.
 - Add or update tests when behavior changes.
 - Update docs when commands, packaging, install flow, or release flow change.
+- Before a tag is cut, maintainers update the public docs for every new or exposed behavior and publish the matching versioned docs from the canonical source.
 - Use non-interactive Git commands.
 - Keep commits small enough to roll back cleanly.
 

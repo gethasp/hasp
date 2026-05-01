@@ -107,6 +107,10 @@ func parseGlobalFlags(args []string) (globalFlags, []string, error) {
 			}
 			gf.debug = set
 		case "--version", "-version", "-V":
+			if seenPositional {
+				rest = append(rest, token)
+				continue
+			}
 			set, err := parseGlobalBool(name, value, hasValue)
 			if err != nil {
 				return globalFlags{}, nil, err

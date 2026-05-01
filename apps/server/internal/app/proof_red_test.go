@@ -89,6 +89,38 @@ func TestProofCommandFailsWhenSecretMissing(t *testing.T) {
 	}
 }
 
+func TestProofCommandJSONFailureDoesNotPrintHumanFail(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	starter := newDaemonTestStarter(t)
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("project bind: %v", err)
+	}
+
+	ctx := contextWithGlobalFlags(context.Background(), globalFlags{json: true})
+	var stdout bytes.Buffer
+	err := proofCommand(ctx, []string{
+		"--project-root", projectRoot,
+		"--secret", "nonexistent_secret",
+	}, &stdout, io.Discard, starter)
+	if err == nil {
+		t.Fatal("expected proof to fail when secret is missing")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("JSON proof failure must not print human FAIL to stdout, got %q", stdout.String())
+	}
+}
+
 func TestProofCommandRequiresSecretFlag(t *testing.T) {
 	lockAppSeams(t)
 	homeDir := t.TempDir()

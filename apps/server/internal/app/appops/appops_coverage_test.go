@@ -120,7 +120,7 @@ func TestAppCommandSuccessPaths(t *testing.T) {
 	}{
 		{"help", []string{"help"}, "Usage: hasp app"},
 		{"connect", []string{"connect", "web", "--cmd", "npm start", "--project-root", "~/repo", "--env", "TOKEN=@TOKEN", "--file", "CONFIG=@CONFIG", "--install", "--add-to-path=never"}, "web:/tmp/rc"},
-		{"connect target default root", []string{"connect", "web", "--target", "web.dev", "--cmd", "npm start"}, "web:/tmp/rc"},
+		{"connect target default root", []string{"connect", "web", "--target", "server.dev", "--cmd", "npm start"}, "web:/tmp/rc"},
 		{"run", []string{"run", "web", "--", "arg"}, "run:echo arg"},
 		{"shell", []string{"shell", "web", "--", "-c", "true"}, "shell:sh -l -c true"},
 		{"install", []string{"install", "web", "--add-to-path=always"}, "web:/tmp/rc"},
@@ -228,7 +228,7 @@ func TestAppCommandErrorBranches(t *testing.T) {
 			d.ValidateAppConsumerName = func(string) error { return errors.New("name") }
 		}},
 		{"connect dotenv env missing", []string{"connect", "web", "--cmd", "x", "--dotenv", "A=@A"}, nil},
-		{"connect target with env", []string{"connect", "web", "--target", "web.dev", "--env", "TOKEN=@TOKEN", "--cmd", "x"}, nil},
+		{"connect target with env", []string{"connect", "web", "--target", "server.dev", "--env", "TOKEN=@TOKEN", "--cmd", "x"}, nil},
 		{"connect expand", []string{"connect", "web", "--cmd", "x", "--project-root", "~"}, func(d *Deps) {
 			d.ExpandUserPath = func(string) (string, error) { return "", errors.New("expand") }
 		}},

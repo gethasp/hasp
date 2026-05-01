@@ -57,6 +57,14 @@ The Homebrew formula must consume the published artifact bytes, not rebuild from
 It should point at the canonical GitHub release asset URL unless the R2 mirror
 has been verified for the same byte set.
 
+## Docs before tag
+
+Treat docs as part of the release payload. Before the tag is created, update the public docs for every command, package, install step, agent profile, error, or exposed behavior that changed.
+
+Maintainers then publish the matching versioned docs from the canonical release
+source. The release should not publish until `/docs/` and `/docs/vX.Y.Z/` match
+the binary and package that are going out.
+
 ## Operator note
 
 The local packaged lifecycle and the hosted publication flow are separate concerns:

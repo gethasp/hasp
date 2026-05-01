@@ -60,6 +60,7 @@ unset HASP_RELEASE_GPG_HOMEDIR
 unset HASP_RELEASE_GPG_PASSPHRASE
 unset HASP_RELEASE_GPG_PASSPHRASE_FILE
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
+export HASP_UPGRADE_TRUST_ROOTS_HEX="${HASP_UPGRADE_TRUST_ROOTS_HEX:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}"
 tarball="$(bash ./scripts/package-release.sh)"
 release_dir="$(cd "$(dirname "$tarball")" && pwd)"
 install_root="$(mktemp -d)"
@@ -112,6 +113,7 @@ grep -q 'hasp-upgrade-release.sh' "$install_root/QUICKSTART.md"
 grep -q 'stages a new release tree' "$install_root/OPERATOR_GUIDE.md"
 
 "$installed_bin" version >/dev/null
+"$installed_bin" version --json | grep -q '"upgrade_trust_roots":true'
 "$installed_bin" init >/dev/null
 env_file="$temp_home/.env"
 printf 'API_TOKEN=abc123\n' >"$env_file"
@@ -123,7 +125,7 @@ git -C "$project_root" init >/dev/null 2>&1
 "$installed_bin" project status --project-root "$project_root" >/dev/null
 "$installed_bin" run \
   --project-root "$project_root" \
-  --env API_TOKEN=secret_01 \
+  --env API_TOKEN=@API_TOKEN \
   --grant-project window \
   --grant-window 15m \
   -- sh -c 'test "$API_TOKEN" = "abc123"' >/dev/null
@@ -131,7 +133,7 @@ env_output="$temp_home/.env.local"
 "$installed_bin" write-env \
   --project-root "$project_root" \
   --output "$env_output" \
-  --env API_TOKEN=secret_01 \
+  --env API_TOKEN=@API_TOKEN \
   --grant-project window \
   --grant-convenience window \
   --grant-window 15m >/dev/null

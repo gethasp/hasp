@@ -36,7 +36,9 @@ func TestMCPEndToEndEval(t *testing.T) {
 	}
 
 	sessionToken := openRuntimeSession(t, env, env.projectRoot, int(runtime.DefaultSessionTTL.Seconds()))
-	responses, err := runMCPBinaryRequests(t, env, []map[string]any{
+	responses, err := runMCPBinaryRequestsWithEnv(t, env, map[string]string{
+		"HASP_MCP_ENABLE_UNSAFE_SECRET_WRITE_TOOLS": "1",
+	}, []map[string]any{
 		{"jsonrpc": "2.0", "id": 1, "method": "initialize"},
 		{"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
 		{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
@@ -179,6 +181,11 @@ func TestMCPFailureEval(t *testing.T) {
 
 func runMCPBinaryRequests(t *testing.T, env evalEnv, requests []map[string]any) ([]map[string]any, error) {
 	t.Helper()
+	return runMCPBinaryRequestsWithEnv(t, env, nil, requests)
+}
+
+func runMCPBinaryRequestsWithEnv(t *testing.T, env evalEnv, extra map[string]string, requests []map[string]any) ([]map[string]any, error) {
+	t.Helper()
 	var input bytes.Buffer
 	enc := json.NewEncoder(&input)
 	for _, req := range requests {
@@ -186,7 +193,7 @@ func runMCPBinaryRequests(t *testing.T, env evalEnv, requests []map[string]any) 
 			return nil, err
 		}
 	}
-	stdout, stderr, err := runCmdWithInput(t, env.projectRoot, env.commandEnv(nil), input.String(), env.binary, "mcp")
+	stdout, stderr, err := runCmdWithInput(t, env.projectRoot, env.commandEnv(extra), input.String(), env.binary, "mcp")
 	if err != nil {
 		return nil, fmt.Errorf("mcp exec: %w stderr=%s", err, stderr)
 	}
