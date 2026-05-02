@@ -8,6 +8,16 @@ import (
 	"syscall"
 )
 
+var (
+	peerUcredSyscallConn = func(conn *net.UnixConn) (syscall.RawConn, error) {
+		return conn.SyscallConn()
+	}
+	peerUcredRawControl = func(raw syscall.RawConn, f func(uintptr)) error {
+		return raw.Control(f)
+	}
+	peerUcredGetsockopt = syscall.GetsockoptUcred
+)
+
 // realPeerUID returns the effective UID of the peer connected on conn using
 // SO_PEERCRED (Linux). conn must be a *net.UnixConn; any other type is
 // rejected fail-closed.
@@ -35,14 +45,14 @@ func peerUcred(conn net.Conn) (*syscall.Ucred, error) {
 	if !ok {
 		return nil, fmt.Errorf("peer credential lookup: not a unix socket")
 	}
-	raw, err := uc.SyscallConn()
+	raw, err := peerUcredSyscallConn(uc)
 	if err != nil {
 		return nil, fmt.Errorf("peer credential lookup: SyscallConn: %w", err)
 	}
 	var ucred *syscall.Ucred
 	var credErr error
-	ctrlErr := raw.Control(func(fd uintptr) {
-		ucred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	ctrlErr := peerUcredRawControl(raw, func(fd uintptr) {
+		ucred, credErr = peerUcredGetsockopt(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
 		if credErr != nil {
 			credErr = fmt.Errorf("peer credential lookup: getsockopt SO_PEERCRED: %w", credErr)
 		}

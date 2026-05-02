@@ -4,15 +4,6 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
-## [v0.1.49]
-
-- Supersede v0.1.48 with direct Linux runtime coverage for peer credential and
-  process identity branches so hosted Linux release gates can prove the same
-  100% statement coverage as the local Darwin gate.
-- Keep the v0.1.48 public-export root leak hardening plus the prior hosted-CI,
-  coverage, Darwin assurance, deterministic race, public mirror, and docs
-  improvements in the final release set.
-
 ## [v0.1.48]
 
 - Supersede v0.1.47 with a hardened public-export root leak check that scans

@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+var processIdentityReadFile = os.ReadFile
+
 // realProcessIdentity reads /proc/<pid>/stat and returns field 22
 // (starttime, in clock ticks since boot). Linux PIDs may be reused but the
 // (pid, starttime) pair is unique for the lifetime of the kernel, so a
@@ -20,7 +22,7 @@ func realProcessIdentity(pid int) (string, error) {
 	if pid <= 0 {
 		return "", nil
 	}
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	data, err := processIdentityReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return "", nil // /proc unavailable or process gone — advisory mode
 	}
