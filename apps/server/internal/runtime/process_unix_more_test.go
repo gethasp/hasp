@@ -229,11 +229,15 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		origRead := processReadFile
 		origFind := findProcessByPID
 		origSignal := signalProcess
+		origWait := waitProcess
+		waitReturned := make(chan struct{})
 		defer func() {
+			<-waitReturned
 			resolveRuntimePaths = origResolve
 			processReadFile = origRead
 			findProcessByPID = origFind
 			signalProcess = origSignal
+			waitProcess = origWait
 		}()
 
 		resolveRuntimePaths = func() (paths.Paths, error) {
@@ -241,6 +245,10 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		}
 		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
 		findProcessByPID = os.FindProcess
+		waitProcess = func(*os.Process) error {
+			close(waitReturned)
+			return errors.New("test wait failed")
+		}
 		signalProcess = func(*os.Process, os.Signal) error { return errors.New("signal failed") }
 
 		if err := stopDetachedProcess(); err == nil || !strings.Contains(err.Error(), "signal daemon: signal failed") {
@@ -253,13 +261,17 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		origRead := processReadFile
 		origFind := findProcessByPID
 		origSignal := signalProcess
+		origWait := waitProcess
 		origRemove := runtimeRemove
 		origPoll := daemonStopPollInterval
+		waitReturned := make(chan struct{})
 		defer func() {
+			<-waitReturned
 			resolveRuntimePaths = origResolve
 			processReadFile = origRead
 			findProcessByPID = origFind
 			signalProcess = origSignal
+			waitProcess = origWait
 			runtimeRemove = origRemove
 			daemonStopPollInterval = origPoll
 		}()
@@ -269,6 +281,10 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
 		findProcessByPID = os.FindProcess
 		daemonStopPollInterval = time.Nanosecond
+		waitProcess = func(*os.Process) error {
+			close(waitReturned)
+			return errors.New("test wait failed")
+		}
 		probeCount := 0
 		signalProcess = func(_ *os.Process, sig os.Signal) error {
 			if sig == syscall.SIGTERM {
@@ -305,6 +321,7 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		origRead := processReadFile
 		origFind := findProcessByPID
 		origSignal := signalProcess
+		origWait := waitProcess
 		origRemove := runtimeRemove
 		origStopTimeout := daemonStopTimeout
 		origKillTimeout := daemonStopKillTimeout
@@ -314,6 +331,7 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 			processReadFile = origRead
 			findProcessByPID = origFind
 			signalProcess = origSignal
+			waitProcess = origWait
 			runtimeRemove = origRemove
 			daemonStopTimeout = origStopTimeout
 			daemonStopKillTimeout = origKillTimeout
@@ -328,12 +346,14 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		daemonStopKillTimeout = time.Second
 		daemonStopPollInterval = time.Nanosecond
 		killed := false
+		killedCh := make(chan struct{})
 		signalProcess = func(_ *os.Process, sig os.Signal) error {
 			switch sig {
 			case syscall.SIGTERM:
 				return nil
 			case syscall.SIGKILL:
 				killed = true
+				close(killedCh)
 				return nil
 			case syscall.Signal(0):
 				if killed {
@@ -344,6 +364,10 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 				t.Fatalf("unexpected signal %v", sig)
 				return nil
 			}
+		}
+		waitProcess = func(*os.Process) error {
+			<-killedCh
+			return nil
 		}
 		runtimeRemove = func(string) error { return nil }
 
@@ -360,6 +384,7 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		origRead := processReadFile
 		origFind := findProcessByPID
 		origSignal := signalProcess
+		origWait := waitProcess
 		origRemove := runtimeRemove
 		origStopTimeout := daemonStopTimeout
 		origKillTimeout := daemonStopKillTimeout
@@ -369,6 +394,7 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 			processReadFile = origRead
 			findProcessByPID = origFind
 			signalProcess = origSignal
+			waitProcess = origWait
 			runtimeRemove = origRemove
 			daemonStopTimeout = origStopTimeout
 			daemonStopKillTimeout = origKillTimeout
@@ -383,6 +409,17 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		daemonStopKillTimeout = 0
 		daemonStopPollInterval = time.Nanosecond
 		signalProcess = func(*os.Process, os.Signal) error { return nil }
+		waitDone := make(chan struct{})
+		waitReturned := make(chan struct{})
+		defer func() {
+			close(waitDone)
+			<-waitReturned
+		}()
+		waitProcess = func(*os.Process) error {
+			defer close(waitReturned)
+			<-waitDone
+			return errors.New("test wait released")
+		}
 		runtimeRemove = func(string) error { return nil }
 
 		if err := stopDetachedProcess(); err == nil || !strings.Contains(err.Error(), "timed out waiting for daemon pid 123 to exit") {

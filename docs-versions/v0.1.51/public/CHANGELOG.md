@@ -4,16 +4,6 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
-## [v0.1.52]
-
-- Supersede v0.1.51 with deterministic stop-process failure-path tests so
-  public release self-checks do not depend on whether pid 123 exists or on
-  mutable wait-process seam timing.
-- Keep the v0.1.51 runner-portable public-export scanner, v0.1.50 daemon leak
-  prevention, packaged eval daemon parent guard, deterministic root leak
-  reporting, hosted-CI, coverage, Darwin assurance, deterministic race, public
-  mirror, and docs improvements in the final release set.
-
 ## [v0.1.51]
 
 - Supersede v0.1.50 with runner-portable public-export internal-reference
