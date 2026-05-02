@@ -15,8 +15,8 @@ func auditFileStateFromInfo(info os.FileInfo) fileState {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		state.ctimeSec = stat.Ctim.Sec
 		state.ctimeNsec = stat.Ctim.Nsec
-		state.dev = uint64(stat.Dev)
-		state.ino = uint64(stat.Ino)
+		state.dev = stat.Dev
+		state.ino = stat.Ino
 		state.cacheable = true
 	}
 	return state
