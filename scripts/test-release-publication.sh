@@ -152,6 +152,10 @@ if [[ -f "$private_verify_workflow" && -f "$ROOT/scripts/check-public-export.sh"
     printf 'private release-smoke matrix must use the smoke-only Go bootstrap profile\n' >&2
     exit 1
   fi
+  if grep -Fq 'cache: pnpm' "$private_verify_workflow"; then
+    printf 'private verify workflow must not enable setup-node pnpm cache before pnpm is bootstrapped\n' >&2
+    exit 1
+  fi
 fi
 assert_file_contains "$ROOT/scripts/hasp-release-common.sh" 'release_tar()'
 assert_no_absolute_tar \
@@ -169,6 +173,10 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$public_ci_workflow" "runs-on: ubuntu-latest"
   assert_file_contains "$public_ci_workflow" "head.repo.full_name != github.repository"
   assert_file_contains "$public_ci_workflow" "head.repo.full_name == github.repository"
+  if grep -Fq 'cache: pnpm' "$public_ci_workflow" "$release_workflow"; then
+    printf 'public workflows must not enable setup-node pnpm cache before pnpm is bootstrapped\n' >&2
+    exit 1
+  fi
   if [[ -f "$ROOT/scripts/check-public-export.sh" ]]; then
     assert_file_contains "$root_makefile" 'bash ./scripts/check-github-actions-pinning.sh .github/workflows public/.github/workflows'
   fi
