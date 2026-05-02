@@ -333,6 +333,19 @@ func TestNewWithNilKeyringFallsBackToUnsupported(t *testing.T) {
 	}
 }
 
+func TestNewKeepsProvidedKeyring(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+	keyring := newMemoryKeyring()
+	store, err := New(keyring)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if got, ok := store.keyring.(*memoryKeyring); !ok || got != keyring {
+		t.Fatalf("provided keyring was not preserved: %#v", store.keyring)
+	}
+}
+
 func TestNewAndInitErrorPaths(t *testing.T) {
 	lockStoreSeams(t)
 	origResolve := resolvePathsFn

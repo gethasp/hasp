@@ -232,6 +232,7 @@ func TestSecretHelperAndEdgeBranches(t *testing.T) {
 	if err := os.WriteFile(clipboardScript, []byte("#!/usr/bin/env bash\ncat > \""+clipboardOutput+"\"\n"), 0o755); err != nil {
 		t.Fatalf("write clipboard script: %v", err)
 	}
+	secretRuntimeGOOS = "darwin"
 	secretExecCommandFn = func(name string, args ...string) *exec.Cmd {
 		return exec.Command(clipboardScript)
 	}

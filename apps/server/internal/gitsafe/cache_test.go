@@ -171,6 +171,44 @@ func TestCacheKeyForFailuresAndStoreWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestCacheTryHitMissAndConfigStatFailure(t *testing.T) {
+	origStat := cacheStatPath
+	defer func() { cacheStatPath = origStat }()
+
+	dir := t.TempDir()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	cache := NewCache()
+	if topLevel, hit := cache.tryHit("missing", info); hit || topLevel != "" {
+		t.Fatalf("empty cache hit = (%q, %v), want miss", topLevel, hit)
+	}
+
+	repo := setupGitLikeDir(t)
+	repoInfo, err := os.Stat(repo)
+	if err != nil {
+		t.Fatalf("stat repo: %v", err)
+	}
+	cache.entries["repo"] = cacheEntry{
+		dirInfo:     repoInfo,
+		topLevel:    repo,
+		configMtime: time.Now(),
+	}
+	cacheStatPath = func(path string) (os.FileInfo, error) {
+		if filepath.Base(path) == "config" {
+			return nil, errors.New("config stat")
+		}
+		return origStat(path)
+	}
+	if topLevel, hit := cache.tryHit("repo", repoInfo); hit || topLevel != "" {
+		t.Fatalf("config stat failure hit = (%q, %v), want miss", topLevel, hit)
+	}
+	if _, ok := cache.entries["repo"]; ok {
+		t.Fatal("config stat failure should evict the cache entry")
+	}
+}
+
 func setupGitLikeDir(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
