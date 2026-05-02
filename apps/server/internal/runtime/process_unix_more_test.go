@@ -427,3 +427,47 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		}
 	})
 }
+
+func TestWaitForProcessExitTimerObservesExitedProcess(t *testing.T) {
+	lockRuntimeSeams(t)
+	origSignal := signalProcess
+	defer func() { signalProcess = origSignal }()
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("find current process: %v", err)
+	}
+	signalProcess = func(_ *os.Process, sig os.Signal) error {
+		if sig != syscall.Signal(0) {
+			t.Fatalf("unexpected signal %v", sig)
+		}
+		return syscall.ESRCH
+	}
+
+	if !waitForProcessExit(proc, nil, 0) {
+		t.Fatal("expected timer branch to observe exited process")
+	}
+}
+
+func TestWaitForProcessExitWaitErrorObservesExitedProcess(t *testing.T) {
+	lockRuntimeSeams(t)
+	origSignal := signalProcess
+	defer func() { signalProcess = origSignal }()
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("find current process: %v", err)
+	}
+	waitCh := make(chan error, 1)
+	waitCh <- errors.New("wait failed")
+	signalProcess = func(_ *os.Process, sig os.Signal) error {
+		if sig != syscall.Signal(0) {
+			t.Fatalf("unexpected signal %v", sig)
+		}
+		return syscall.ESRCH
+	}
+
+	if !waitForProcessExit(proc, waitCh, time.Second) {
+		t.Fatal("expected wait-error branch to observe exited process")
+	}
+}

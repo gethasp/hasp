@@ -51,6 +51,7 @@ for mod in "${modules[@]}"; do
   echo "Coverage for $dir"
 	  eval_profile="$(mktemp)"
 	  combined_profile="$(mktemp)"
+	  cover_report="$(mktemp)"
 	  profiles=()
 	  coverage_packages=()
 	  (
@@ -87,11 +88,13 @@ for mod in "${modules[@]}"; do
     fi
 
     merge_profiles_max "$combined_profile" "${profiles[@]}"
-    go tool cover -func="$combined_profile" | tail -n 20
+    go tool cover -func="$combined_profile" >"$cover_report"
+    tail -n 20 "$cover_report"
     if [[ -n "${HASP_COVERAGE_TARGET:-}" ]]; then
-      total="$(go tool cover -func="$combined_profile" | awk '/^total:/{print $3}' | tr -d '%')"
+      total="$(awk '/^total:/{print $3}' "$cover_report" | tr -d '%')"
       awk -v total="$total" -v target="$HASP_COVERAGE_TARGET" 'BEGIN { exit !(total + 0 >= target + 0) }' || {
         echo "coverage ${total}% is below target ${HASP_COVERAGE_TARGET}%" >&2
+        awk '$1 != "total:" && $NF ~ /%$/ && $NF != "100.0%" {print}' "$cover_report" >&2
         exit 1
       }
     fi
@@ -100,5 +103,5 @@ for mod in "${modules[@]}"; do
       rm -f "$profile"
     done
   )
-  rm -f "$eval_profile" "$combined_profile"
+  rm -f "$eval_profile" "$combined_profile" "$cover_report"
 done

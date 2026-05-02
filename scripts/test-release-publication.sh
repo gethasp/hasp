@@ -53,6 +53,31 @@ assert_no_absolute_tar() {
   done
 }
 
+find_unpinned_action_refs() {
+  local workflows_dir="$1"
+  python3 - "$workflows_dir" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+workflows_dir = Path(sys.argv[1])
+pattern = re.compile(r"uses:\s+.*@(v|main|master|release|stable)\b")
+matches = []
+
+for path in sorted(p for p in workflows_dir.rglob("*") if p.is_file()):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if pattern.search(line):
+            matches.append(f"{path}:{lineno}:{line}")
+
+if matches:
+    print("\n".join(matches))
+PY
+}
+
 root_makefile="$ROOT/Makefile"
 public_export_check="$ROOT/scripts/check-public-export.sh"
 private_verify_workflow="$ROOT/.github/workflows/verify.yml"
@@ -245,9 +270,10 @@ if [[ -f "$release_workflow" ]]; then
   fi
   # shellcheck disable=SC2016
   assert_file_contains "$release_workflow" 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
-  if rg -n 'uses: .*@(v|main|master|release|stable)' "$public_workflows_dir" >/dev/null; then
+  unpinned_action_refs="$(find_unpinned_action_refs "$public_workflows_dir")"
+  if [[ -n "$unpinned_action_refs" ]]; then
     printf 'public workflows must pin actions to full commit SHAs\n' >&2
-    rg -n 'uses: .*@(v|main|master|release|stable)' "$public_workflows_dir" >&2 || true
+    printf '%s\n' "$unpinned_action_refs" >&2
     exit 1
   fi
   tag_check_line="$(grep -n 'Verify release tag commit is on main' "$release_workflow" | head -n1 | cut -d: -f1)"
