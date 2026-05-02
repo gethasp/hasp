@@ -138,10 +138,15 @@ else
 fi
 if [[ -f "$private_verify_workflow" && -f "$ROOT/scripts/check-public-export.sh" ]]; then
   fork_pr_block="$(awk '/^  fork-pr-verify:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  fork-pr-verify:/{exit} seen{print}' "$private_verify_workflow")"
+  fork_pr_darwin_block="$(awk '/^  fork-pr-darwin-audit-coverage:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  fork-pr-darwin-audit-coverage:/{exit} seen{print}' "$private_verify_workflow")"
   trusted_block="$(awk '/^  verify:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  verify:/{exit} seen{print}' "$private_verify_workflow")"
   release_smoke_block="$(awk '/^  release-smoke-matrix:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  release-smoke-matrix:/{exit} seen{print}' "$private_verify_workflow")"
   if [[ "$fork_pr_block" != *"runs-on: ubuntu-latest"* || "$fork_pr_block" != *"run: make release-gate"* ]]; then
     printf 'private fork-pr-verify must stay on GitHub-hosted runners and run release-gate\n' >&2
+    exit 1
+  fi
+  if [[ "$fork_pr_darwin_block" != *"runs-on: macos-15"* || "$fork_pr_darwin_block" != *"run: make coverage-audit-platform"* ]]; then
+    printf 'private fork PRs must prove Darwin audit coverage on GitHub-hosted macOS\n' >&2
     exit 1
   fi
   if [[ "$trusted_block" != *"runs-on: ubicloud-standard-2"* || "$trusted_block" != *"run: make release-gate"* ]]; then
@@ -170,6 +175,11 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$public_ci_workflow" 'run: make release-gate'
   assert_file_contains "$public_ci_workflow" 'darwin-audit-coverage:'
   assert_file_contains "$public_ci_workflow" 'run: make coverage-audit-platform'
+  public_darwin_block="$(awk '/^  darwin-audit-coverage:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  darwin-audit-coverage:/{exit} seen{print}' "$public_ci_workflow")"
+  if [[ "$public_darwin_block" == *"head.repo.full_name == github.repository"* ]]; then
+    printf 'public Darwin audit coverage must run for fork PRs too\n' >&2
+    exit 1
+  fi
   assert_file_contains "$public_ci_workflow" "runs-on: ubuntu-latest"
   assert_file_contains "$public_ci_workflow" "head.repo.full_name != github.repository"
   assert_file_contains "$public_ci_workflow" "head.repo.full_name == github.repository"
@@ -185,6 +195,9 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$release_workflow" 'group: public-release'
   assert_file_contains "$release_workflow" 'cancel-in-progress: false'
   assert_file_contains "$release_workflow" 'bash ./scripts/bootstrap_go_tools.sh release-smoke'
+  assert_file_contains "$release_workflow" 'run: make test'
+  assert_file_contains "$release_workflow" 'run: make test-race'
+  assert_file_contains "$release_workflow" 'run: make coverage-audit-platform'
   # shellcheck disable=SC2016
   assert_file_contains "$ROOT/scripts/release-smoke.sh" 'bash ./scripts/homebrew-formula-smoke.sh "$release_dir/Formula/hasp.rb"'
   if [[ -f "$ROOT/scripts/public-export-manifest.json" ]]; then

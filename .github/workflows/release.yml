@@ -40,6 +40,15 @@ jobs:
           cache: false
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh release-smoke
+      - name: Test Darwin packages
+        if: matrix.goos == 'darwin'
+        run: make test
+      - name: Race Darwin packages
+        if: matrix.goos == 'darwin'
+        run: make test-race
+      - name: Audit Darwin coverage
+        if: matrix.goos == 'darwin'
+        run: make coverage-audit-platform
       - name: Smoke release artifact
         env:
           HASP_RUN_BREW_INSTALL_SMOKE: ${{ matrix.goos == 'darwin' && '1' || '0' }}

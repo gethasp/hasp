@@ -9,6 +9,9 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 changelog="$repo_root/CHANGELOG.md"
+if [[ ! -f "$changelog" && -f "$repo_root/public/CHANGELOG.md" ]]; then
+  changelog="$repo_root/public/CHANGELOG.md"
+fi
 if [[ ! -f "$changelog" ]]; then
   echo "missing CHANGELOG.md" >&2
   exit 1

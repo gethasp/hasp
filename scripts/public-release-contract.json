@@ -86,6 +86,10 @@
         "fork-pr-verify": {
           "run_contains": ["make release-gate"]
         },
+        "fork-pr-darwin-audit-coverage": {
+          "runs_on_contains": "macos-15",
+          "run_contains": ["make coverage-audit-platform"]
+        },
         "release-smoke-matrix": {
           "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke", "make coverage-audit-platform"]
         }
@@ -113,7 +117,7 @@
       "path": ".github/workflows/release.yml",
       "jobs": {
         "release-smoke": {
-          "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke"]
+          "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke", "make test", "make test-race", "make coverage-audit-platform"]
         },
         "deploy-download-worker": {
           "needs_include": ["publish-r2"],
