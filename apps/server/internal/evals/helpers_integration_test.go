@@ -126,6 +126,7 @@ func (e evalEnv) commandEnv(extra map[string]string) []string {
 		"HOME="+e.userHome,
 		"HASP_HOME="+e.home,
 		"HASP_SOCKET="+e.socket,
+		"HASP_TEST_DAEMON_PARENT_PID="+strconv.Itoa(os.Getpid()),
 		"HASP_MASTER_PASSWORD="+e.masterPassword,
 		"HASP_BACKUP_PASSPHRASE="+e.backupPass,
 		"HASP_PROFILES_DIR="+e.profilesDir,
@@ -446,6 +447,39 @@ func TestStopEvalDaemonStopsDetachedDaemon(t *testing.T) {
 	}
 
 	t.Fatalf("expected daemon cleanup to remove pid file %s, socket %s, and process %d", pidPath, env.socket, pidValue)
+}
+
+func TestEvalDaemonExitsWhenTestParentGone(t *testing.T) {
+	env := newEvalEnv(t)
+	cmdEnv := env.commandEnv(map[string]string{
+		"HASP_TEST_DAEMON_PARENT_PID": "999999",
+	})
+	if stdout, stderr, err := runCmdWithInput(t, env.projectRoot, cmdEnv, "", env.binary, "daemon", "start"); err != nil {
+		t.Fatalf("start daemon with gone test parent: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	pidPath := filepath.Join(env.home, "runtime", "daemon.pid")
+	deadline := time.Now().Add(5 * time.Second)
+	var observedPID int
+	for time.Now().Before(deadline) {
+		pidData, err := os.ReadFile(pidPath)
+		if err == nil {
+			pidValue, convErr := strconv.Atoi(strings.TrimSpace(string(pidData)))
+			if convErr == nil && pidValue > 0 {
+				observedPID = pidValue
+				if exec.Command("ps", "-p", strconv.Itoa(pidValue), "-o", "pid=").Run() != nil {
+					return
+				}
+			}
+		} else if os.IsNotExist(err) {
+			if _, socketErr := os.Stat(env.socket); os.IsNotExist(socketErr) {
+				return
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	t.Fatalf("daemon did not exit after test parent disappeared; pid file %s last pid %d", pidPath, observedPID)
 }
 
 func TestStopEvalDaemonSkipsUnverifiedPID(t *testing.T) {

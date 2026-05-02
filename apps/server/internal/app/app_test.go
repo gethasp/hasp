@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,7 +29,10 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			os.Exit(2)
 		}
-		if err := manager.RunDaemon(context.Background()); err != nil {
+		ctx, cancel := testHelperDaemonContext()
+		err = manager.RunDaemon(ctx)
+		cancel()
+		if err != nil {
 			os.Exit(3)
 		}
 		return
@@ -40,6 +47,7 @@ func TestMain(m *testing.M) {
 	// write to the real ~/.hasp directory even when HASP_HOME is set in the
 	// caller's shell environment.  Individual tests call
 	// t.Setenv("HASP_HOME", t.TempDir()) to get their own isolated dir.
+	os.Setenv("HASP_TEST_HELPER_DAEMON", "1")
 	dir, err := os.MkdirTemp("", "hasp-test-home-*")
 	if err == nil {
 		os.Setenv("HASP_HOME", dir)
@@ -54,6 +62,46 @@ func TestMain(m *testing.M) {
 	restoreEnvelopeDurability()
 	cleanupTempRoot()
 	os.Exit(code)
+}
+
+func testHelperDaemonContext() (context.Context, context.CancelFunc) {
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	parentPID, err := strconv.Atoi(os.Getenv("HASP_TEST_HELPER_PARENT_PID"))
+	if err != nil || parentPID <= 0 {
+		return ctx, stopSignals
+	}
+	parentCtx, cancelParent := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		defer cancelParent()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := syscall.Kill(parentPID, 0); errors.Is(err, syscall.ESRCH) {
+					return
+				}
+			}
+		}
+	}()
+	return parentCtx, func() {
+		cancelParent()
+		stopSignals()
+	}
+}
+
+func TestHelperDaemonContextCancelsWhenParentIsGone(t *testing.T) {
+	t.Setenv("HASP_TEST_HELPER_PARENT_PID", "999999")
+	ctx, cancel := testHelperDaemonContext()
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("helper daemon context did not cancel for missing parent")
+	}
 }
 
 func configureAppTestTempRoot() (func(), error) {

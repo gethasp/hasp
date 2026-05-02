@@ -66,8 +66,19 @@ func TestClientRegisterAndResolveProcess(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = manager.RunDaemon(ctx) }()
+	errCh := make(chan error, 1)
+	go func() { errCh <- manager.RunDaemon(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("daemon exited: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for daemon shutdown")
+		}
+	})
 	if err := waitForSocket(manager.SocketPath(), 2*time.Second); err != nil {
 		t.Fatalf("wait for socket: %v", err)
 	}
@@ -241,8 +252,19 @@ func TestClientRegisterProcessFailureBranch(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = manager.RunDaemon(ctx) }()
+	errCh := make(chan error, 1)
+	go func() { errCh <- manager.RunDaemon(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("daemon exited: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for daemon shutdown")
+		}
+	})
 	if err := waitForSocket(manager.SocketPath(), 2*time.Second); err != nil {
 		t.Fatalf("wait for socket: %v", err)
 	}

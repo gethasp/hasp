@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 mode="${1:-}"
+go_test_package_parallelism="${HASP_GO_TEST_PACKAGE_PARALLELISM:-1}"
 
 modules=()
 while IFS= read -r mod; do
@@ -26,13 +27,13 @@ for mod in "${modules[@]}"; do
   echo "Testing $dir"
   case "$mode" in
     --integration)
-      (cd "$dir" && go test -tags=integration,hasp_test_fastkdf ./...)
+      (cd "$dir" && go test -p "$go_test_package_parallelism" -tags=integration,hasp_test_fastkdf ./...)
       ;;
     --race)
-      (cd "$dir" && go test -tags=hasp_test_fastkdf -race ./...)
+      (cd "$dir" && go test -p "$go_test_package_parallelism" -tags=hasp_test_fastkdf -race ./...)
       ;;
     *)
-      (cd "$dir" && go test -tags=hasp_test_fastkdf ./...)
+      (cd "$dir" && go test -p "$go_test_package_parallelism" -tags=hasp_test_fastkdf ./...)
       ;;
   esac
 done

@@ -27,6 +27,9 @@ git push origin v0.1.0
 4. `make release-gate` passes. This runs the maintainer verification suite,
    integration-tagged tests, conformance, release smoke, and the Go coverage
    gate with `HASP_COVERAGE_TARGET=100`.
+   The Go test wrapper defaults package parallelism to `-p 1` so daemon
+   lifecycle tests stay process-bounded during release verification; only raise
+   `HASP_GO_TEST_PACKAGE_PARALLELISM` for explicitly process-safe lanes.
 5. the release-smoke matrix passes on every supported target. Smoke-only jobs
    use `scripts/bootstrap_go_tools.sh release-smoke`; the full `verify`
    bootstrap remains reserved for release-gate and build jobs.

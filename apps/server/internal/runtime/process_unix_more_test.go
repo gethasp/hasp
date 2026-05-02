@@ -9,13 +9,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
 func TestStartDetachedProcessFailurePaths(t *testing.T) {
 	lockRuntimeSeams(t)
+	t.Run("test binary without helper guard", func(t *testing.T) {
+		t.Setenv("HASP_TEST_HELPER_DAEMON", "")
+
+		if err := startDetachedProcess(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing to start test daemon") {
+			t.Fatalf("expected test daemon guard error, got %v", err)
+		}
+	})
+
 	t.Run("resolve paths failure", func(t *testing.T) {
 		origResolve := resolveRuntimePaths
 		defer func() { resolveRuntimePaths = origResolve }()
@@ -235,6 +245,148 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 
 		if err := stopDetachedProcess(); err == nil || !strings.Contains(err.Error(), "signal daemon: signal failed") {
 			t.Fatalf("expected signal error, got %v", err)
+		}
+	})
+
+	t.Run("waits for graceful exit", func(t *testing.T) {
+		origResolve := resolveRuntimePaths
+		origRead := processReadFile
+		origFind := findProcessByPID
+		origSignal := signalProcess
+		origRemove := runtimeRemove
+		origPoll := daemonStopPollInterval
+		defer func() {
+			resolveRuntimePaths = origResolve
+			processReadFile = origRead
+			findProcessByPID = origFind
+			signalProcess = origSignal
+			runtimeRemove = origRemove
+			daemonStopPollInterval = origPoll
+		}()
+
+		pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+		resolveRuntimePaths = func() (paths.Paths, error) { return paths.Paths{PidFilePath: pidPath}, nil }
+		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
+		findProcessByPID = os.FindProcess
+		daemonStopPollInterval = time.Nanosecond
+		probeCount := 0
+		signalProcess = func(_ *os.Process, sig os.Signal) error {
+			if sig == syscall.SIGTERM {
+				return nil
+			}
+			if sig == syscall.Signal(0) {
+				probeCount++
+				if probeCount == 1 {
+					return nil
+				}
+				return syscall.ESRCH
+			}
+			t.Fatalf("unexpected signal %v", sig)
+			return nil
+		}
+		removed := false
+		runtimeRemove = func(path string) error {
+			if path == pidPath {
+				removed = true
+			}
+			return nil
+		}
+
+		if err := stopDetachedProcess(); err != nil {
+			t.Fatalf("stop detached process: %v", err)
+		}
+		if !removed {
+			t.Fatal("expected pid file removal")
+		}
+	})
+
+	t.Run("kills stubborn process", func(t *testing.T) {
+		origResolve := resolveRuntimePaths
+		origRead := processReadFile
+		origFind := findProcessByPID
+		origSignal := signalProcess
+		origRemove := runtimeRemove
+		origStopTimeout := daemonStopTimeout
+		origKillTimeout := daemonStopKillTimeout
+		origPoll := daemonStopPollInterval
+		defer func() {
+			resolveRuntimePaths = origResolve
+			processReadFile = origRead
+			findProcessByPID = origFind
+			signalProcess = origSignal
+			runtimeRemove = origRemove
+			daemonStopTimeout = origStopTimeout
+			daemonStopKillTimeout = origKillTimeout
+			daemonStopPollInterval = origPoll
+		}()
+
+		pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+		resolveRuntimePaths = func() (paths.Paths, error) { return paths.Paths{PidFilePath: pidPath}, nil }
+		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
+		findProcessByPID = os.FindProcess
+		daemonStopTimeout = 0
+		daemonStopKillTimeout = time.Second
+		daemonStopPollInterval = time.Nanosecond
+		killed := false
+		signalProcess = func(_ *os.Process, sig os.Signal) error {
+			switch sig {
+			case syscall.SIGTERM:
+				return nil
+			case syscall.SIGKILL:
+				killed = true
+				return nil
+			case syscall.Signal(0):
+				if killed {
+					return syscall.ESRCH
+				}
+				return nil
+			default:
+				t.Fatalf("unexpected signal %v", sig)
+				return nil
+			}
+		}
+		runtimeRemove = func(string) error { return nil }
+
+		if err := stopDetachedProcess(); err != nil {
+			t.Fatalf("stop detached process: %v", err)
+		}
+		if !killed {
+			t.Fatal("expected SIGKILL for stubborn process")
+		}
+	})
+
+	t.Run("reports timeout after kill", func(t *testing.T) {
+		origResolve := resolveRuntimePaths
+		origRead := processReadFile
+		origFind := findProcessByPID
+		origSignal := signalProcess
+		origRemove := runtimeRemove
+		origStopTimeout := daemonStopTimeout
+		origKillTimeout := daemonStopKillTimeout
+		origPoll := daemonStopPollInterval
+		defer func() {
+			resolveRuntimePaths = origResolve
+			processReadFile = origRead
+			findProcessByPID = origFind
+			signalProcess = origSignal
+			runtimeRemove = origRemove
+			daemonStopTimeout = origStopTimeout
+			daemonStopKillTimeout = origKillTimeout
+			daemonStopPollInterval = origPoll
+		}()
+
+		pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+		resolveRuntimePaths = func() (paths.Paths, error) { return paths.Paths{PidFilePath: pidPath}, nil }
+		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
+		findProcessByPID = os.FindProcess
+		daemonStopTimeout = 0
+		daemonStopKillTimeout = 0
+		daemonStopPollInterval = time.Nanosecond
+		signalProcess = func(*os.Process, os.Signal) error { return nil }
+		runtimeRemove = func(string) error { return nil }
+
+		if err := stopDetachedProcess(); err == nil || !strings.Contains(err.Error(), "timed out waiting for daemon pid 123 to exit") {
+			t.Fatalf("expected timeout error, got %v", err)
 		}
 	})
 }

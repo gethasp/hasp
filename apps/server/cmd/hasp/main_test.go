@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -96,5 +99,63 @@ func TestMainUsesExitFn(t *testing.T) {
 	main()
 	if code != 0 {
 		t.Fatalf("main exit code = %d, want 0", code)
+	}
+}
+
+func TestProcessExists(t *testing.T) {
+	if !processExists(os.Getpid()) {
+		t.Fatal("current process should exist")
+	}
+	if processExists(999999) {
+		t.Fatal("sentinel process should not exist")
+	}
+}
+
+func TestContextWithTestDaemonParentIgnoresInvalidEnv(t *testing.T) {
+	t.Setenv(testDaemonParentPIDEnv, "not-a-pid")
+
+	ctx, cancel := contextWithTestDaemonParent(context.Background())
+	select {
+	case <-ctx.Done():
+		t.Fatal("invalid parent pid should not cancel context")
+	default:
+	}
+	cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not close context")
+	}
+}
+
+func TestContextWithTestDaemonParentCancelsWhenParentGone(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start parent sentinel: %v", err)
+	}
+	parentPID := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait parent sentinel: %v", err)
+	}
+	t.Setenv(testDaemonParentPIDEnv, strconv.Itoa(parentPID))
+
+	ctx, cancel := contextWithTestDaemonParent(context.Background())
+	defer cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("parent-gone context did not cancel")
+	}
+}
+
+func TestContextWithTestDaemonParentStopsOnManualCancel(t *testing.T) {
+	t.Setenv(testDaemonParentPIDEnv, strconv.Itoa(os.Getpid()))
+
+	ctx, cancel := contextWithTestDaemonParent(context.Background())
+	cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("manual cancel did not close context")
 	}
 }
