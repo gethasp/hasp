@@ -177,6 +177,11 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$release_workflow" 'group: public-release'
   assert_file_contains "$release_workflow" 'cancel-in-progress: false'
   assert_file_contains "$release_workflow" 'bash ./scripts/bootstrap_go_tools.sh release-smoke'
+  # shellcheck disable=SC2016
+  assert_file_contains "$ROOT/scripts/release-smoke.sh" 'bash ./scripts/homebrew-formula-smoke.sh "$release_dir/Formula/hasp.rb"'
+  if [[ -f "$ROOT/scripts/public-export-manifest.json" ]]; then
+    assert_file_contains "$ROOT/scripts/public-export-manifest.json" 'scripts/homebrew-formula-smoke.sh'
+  fi
   assert_file_contains "$release_workflow" 'HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases'
   assert_file_contains "$release_workflow" 'Verify release tag commit is on main'
   assert_file_contains "$release_workflow" 'git fetch --no-tags origin main'
@@ -201,6 +206,8 @@ if [[ -f "$release_workflow" ]]; then
   # shellcheck disable=SC2016
   assert_file_contains "$release_workflow" 'hasp_${GITHUB_REF_NAME#v}_${goos}_${goarch}.tar.gz'
   assert_file_contains "$release_workflow" 'Verify latest release mirror'
+  # shellcheck disable=SC2016
+  assert_file_contains "$release_workflow" 'bash ./scripts/homebrew-formula-smoke.sh "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb"'
   # shellcheck disable=SC2016
   assert_file_contains "$release_workflow" 'https://downloads.gethasp.com/hasp/releases/latest/${asset}'
   # shellcheck disable=SC2016

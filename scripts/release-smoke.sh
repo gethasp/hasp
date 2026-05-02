@@ -351,10 +351,7 @@ if command -v ruby >/dev/null 2>&1; then
   ruby -c "$release_dir/Formula/hasp.rb" >/dev/null
 fi
 if [[ "${HASP_RUN_BREW_INSTALL_SMOKE:-0}" == "1" ]] && command -v brew >/dev/null 2>&1; then
-  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew uninstall --formula hasp >/dev/null 2>&1 || true
-  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install --formula "$release_dir/Formula/hasp.rb" >/dev/null
-  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew test hasp >/dev/null
-  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew uninstall --formula hasp >/dev/null
+  bash ./scripts/homebrew-formula-smoke.sh "$release_dir/Formula/hasp.rb"
 fi
 grep -q "url \"file://$tarball\"" "$release_dir/Formula/hasp.rb"
 grep -q "sha256 \"$(release_sha256 "$tarball")\"" "$release_dir/Formula/hasp.rb"

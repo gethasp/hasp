@@ -265,8 +265,7 @@ jobs:
           name: public-release
       - name: Smoke packaged Homebrew formula
         run: |
-          brew install --formula "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb"
-          hasp version
+          bash ./scripts/homebrew-formula-smoke.sh "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb"
 
   publish-homebrew-tap:
     needs:
