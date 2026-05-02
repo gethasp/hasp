@@ -185,7 +185,7 @@ expect_git_check() {
   local expected="$2"
   shift 2
   local actual
-  actual="$(cd "$fixture" && env -u HASP_TEST_ROOT "$@" bash scripts/run-docs-versioning-if-needed.sh --check)"
+  actual="$(cd "$fixture" && env -u HASP_TEST_ROOT -u HASP_DOCS_VERSIONING_BASE "$@" bash scripts/run-docs-versioning-if-needed.sh --check)"
   if [[ "$actual" != "$expected" ]]; then
     printf 'docs-versioning git diff check mismatch: fixture=%s actual=%s expected=%s env=%s\n' "$fixture" "$actual" "$expected" "$*" >&2
     exit 1

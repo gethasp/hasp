@@ -17,10 +17,13 @@ func TestOpenSession_TTLMillisHonoured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
 	}
+	fixedNow := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	store := NewSessionStore()
+	store.now = func() time.Time { return fixedNow }
 	broker := &brokerRPC{
 		paths:     resolved,
-		startedAt: time.Now().UTC(),
-		sessions:  NewSessionStore(),
+		startedAt: fixedNow,
+		sessions:  store,
 	}
 	var reply OpenSessionResponse
 	if err := broker.OpenSession(OpenSessionRequest{
@@ -30,12 +33,8 @@ func TestOpenSession_TTLMillisHonoured(t *testing.T) {
 	}, &reply); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	got := reply.ExpiresAt.Sub(time.Now().UTC())
-	if got > 200*time.Millisecond {
-		t.Fatalf("TTLMillis=50 produced ExpiresAt %v in the future; expected <200ms", got)
-	}
-	if got < 0 {
-		t.Fatalf("TTLMillis=50 produced ExpiresAt already in the past: %v", got)
+	if got := reply.ExpiresAt.Sub(fixedNow); got != 50*time.Millisecond {
+		t.Fatalf("TTLMillis=50 produced ExpiresAt %v after now; want 50ms", got)
 	}
 }
 
@@ -44,10 +43,13 @@ func TestOpenSession_TTLMillisTakesPrecedenceOverSeconds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
 	}
+	fixedNow := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	store := NewSessionStore()
+	store.now = func() time.Time { return fixedNow }
 	broker := &brokerRPC{
 		paths:     resolved,
-		startedAt: time.Now().UTC(),
-		sessions:  NewSessionStore(),
+		startedAt: fixedNow,
+		sessions:  store,
 	}
 	var reply OpenSessionResponse
 	if err := broker.OpenSession(OpenSessionRequest{
@@ -58,9 +60,8 @@ func TestOpenSession_TTLMillisTakesPrecedenceOverSeconds(t *testing.T) {
 	}, &reply); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	got := reply.ExpiresAt.Sub(time.Now().UTC())
-	if got > 250*time.Millisecond {
-		t.Fatalf("TTLMillis should take precedence over TTLSeconds; got ExpiresAt %v in the future", got)
+	if got := reply.ExpiresAt.Sub(fixedNow); got != 75*time.Millisecond {
+		t.Fatalf("TTLMillis should take precedence over TTLSeconds; got %v after now, want 75ms", got)
 	}
 }
 
@@ -69,10 +70,13 @@ func TestOpenSession_TTLSecondsStillHonouredWhenMillisZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
 	}
+	fixedNow := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	store := NewSessionStore()
+	store.now = func() time.Time { return fixedNow }
 	broker := &brokerRPC{
 		paths:     resolved,
-		startedAt: time.Now().UTC(),
-		sessions:  NewSessionStore(),
+		startedAt: fixedNow,
+		sessions:  store,
 	}
 	var reply OpenSessionResponse
 	if err := broker.OpenSession(OpenSessionRequest{
@@ -82,8 +86,7 @@ func TestOpenSession_TTLSecondsStillHonouredWhenMillisZero(t *testing.T) {
 	}, &reply); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	got := reply.ExpiresAt.Sub(time.Now().UTC())
-	if got < 50*time.Second || got > 65*time.Second {
-		t.Fatalf("TTLSeconds=60 should still produce ~60s TTL; got %v", got)
+	if got := reply.ExpiresAt.Sub(fixedNow); got != 60*time.Second {
+		t.Fatalf("TTLSeconds=60 should still produce 60s TTL; got %v", got)
 	}
 }
