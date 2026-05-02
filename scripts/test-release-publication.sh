@@ -117,6 +117,8 @@ if [[ -f "$public_export_check" ]]; then
   assert_file_contains "$ROOT/scripts/bootstrap_web_tools.sh" 'EXPECTED_PNPM_VERSION="10.33.2"'
   # shellcheck disable=SC2016
   assert_file_contains "$ROOT/scripts/bootstrap_web_tools.sh" 'corepack prepare "pnpm@$EXPECTED_PNPM_VERSION" --activate'
+  assert_file_contains "$ROOT/scripts/run-audit-platform-coverage.sh" 'HASP_AUDIT_FALLBACK_TARGET:-freebsd/amd64'
+  assert_file_contains "$ROOT/scripts/run-audit-platform-coverage.sh" "go test -tags=hasp_test_fastkdf -run '^$' -c"
   assert_file_contains "$ROOT/apps/web/package.json" '"check": "pnpm build && pnpm check:docs-versioning && pnpm test:downloads-worker"'
   assert_file_contains "$ROOT/scripts/conformance.sh" 'make benchmark-smoke'
   if [[ -f "$ROOT/public/scripts/conformance.sh" ]]; then
@@ -137,12 +139,17 @@ fi
 if [[ -f "$private_verify_workflow" && -f "$ROOT/scripts/check-public-export.sh" ]]; then
   fork_pr_block="$(awk '/^  fork-pr-verify:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  fork-pr-verify:/{exit} seen{print}' "$private_verify_workflow")"
   trusted_block="$(awk '/^  verify:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  verify:/{exit} seen{print}' "$private_verify_workflow")"
+  release_smoke_block="$(awk '/^  release-smoke-matrix:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  release-smoke-matrix:/{exit} seen{print}' "$private_verify_workflow")"
   if [[ "$fork_pr_block" != *"runs-on: ubuntu-latest"* || "$fork_pr_block" != *"run: make release-gate"* ]]; then
     printf 'private fork-pr-verify must stay on GitHub-hosted runners and run release-gate\n' >&2
     exit 1
   fi
   if [[ "$trusted_block" != *"runs-on: ubicloud-standard-2"* || "$trusted_block" != *"run: make release-gate"* ]]; then
     printf 'private trusted verify lane must stay on Ubicloud and run release-gate\n' >&2
+    exit 1
+  fi
+  if [[ "$release_smoke_block" != *"bash ./scripts/bootstrap_go_tools.sh release-smoke"* ]]; then
+    printf 'private release-smoke matrix must use the smoke-only Go bootstrap profile\n' >&2
     exit 1
   fi
 fi
@@ -169,6 +176,7 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$release_workflow" 'concurrency:'
   assert_file_contains "$release_workflow" 'group: public-release'
   assert_file_contains "$release_workflow" 'cancel-in-progress: false'
+  assert_file_contains "$release_workflow" 'bash ./scripts/bootstrap_go_tools.sh release-smoke'
   assert_file_contains "$release_workflow" 'HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases'
   assert_file_contains "$release_workflow" 'Verify release tag commit is on main'
   assert_file_contains "$release_workflow" 'git fetch --no-tags origin main'

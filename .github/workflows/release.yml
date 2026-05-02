@@ -39,7 +39,7 @@ jobs:
           go-version: stable
           cache: false
       - name: Bootstrap Go tools
-        run: bash ./scripts/bootstrap_go_tools.sh verify
+        run: bash ./scripts/bootstrap_go_tools.sh release-smoke
       - name: Smoke release artifact
         env:
           HASP_RUN_BREW_INSTALL_SMOKE: ${{ matrix.goos == 'darwin' && '1' || '0' }}

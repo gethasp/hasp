@@ -95,8 +95,8 @@ func TestToolsListAndCall(t *testing.T) {
 		switch tool["name"] {
 		case "hasp_run":
 			runSchema = tool["inputSchema"].(map[string]any)
-		case "hasp_capture", "hasp_secret_add", "hasp_secret_update":
-			t.Fatalf("unsafe raw-value tool %q must not be in the default MCP schema", tool["name"])
+		case "hasp_capture", "hasp_secret_add", "hasp_secret_update", "hasp_secret_delete", "hasp_secret_expose", "hasp_secret_hide":
+			t.Fatalf("unsafe write/mutation tool %q must not be in the default MCP schema", tool["name"])
 		}
 	}
 	if runSchema == nil {

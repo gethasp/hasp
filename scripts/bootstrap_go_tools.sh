@@ -47,6 +47,12 @@ case "$profile" in
     require_shellcheck
     require_gnupg
     ;;
+  release-smoke|smoke)
+    require_tool go "GitHub Actions release-smoke jobs must run actions/setup-go before this script."
+    require_tool python3 "GitHub Actions release-smoke jobs must run on an image with Python 3."
+    require_tool git "GitHub Actions release-smoke jobs must run after actions/checkout on an image with git."
+    require_gnupg
+    ;;
   *)
     echo "Unknown profile: $profile" >&2
     exit 1

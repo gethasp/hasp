@@ -87,7 +87,7 @@
           "run_contains": ["make release-gate"]
         },
         "release-smoke-matrix": {
-          "run_contains": ["make coverage-audit-platform"]
+          "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke", "make coverage-audit-platform"]
         }
       }
     },
@@ -112,6 +112,9 @@
     "public_release": {
       "path": ".github/workflows/release.yml",
       "jobs": {
+        "release-smoke": {
+          "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke"]
+        },
         "deploy-download-worker": {
           "needs_include": ["publish-r2"],
           "run_contains": [
