@@ -1,7 +1,6 @@
 package secretops
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
@@ -160,29 +158,7 @@ func secretDiffCommand(ctx context.Context, deps Deps, args []string, stdout io.
 
 // parseDotEnvForDiff extracts name→value pairs from a .env reader.
 func parseDotEnvForDiff(reader io.Reader) (map[string]string, error) {
-	out := map[string]string{}
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			return nil, fmt.Errorf("invalid env line %q", line)
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if unquoted, err := strconv.Unquote(value); err == nil {
-			value = unquoted
-		}
-		out[key] = value
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan env file: %w", err)
-	}
-	return out, nil
+	return store.ParseDotEnvMap(reader)
 }
 
 func renderSecretDiff(w io.Writer, path string, same, changed, missing, extra []string) error {

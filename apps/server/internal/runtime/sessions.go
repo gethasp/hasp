@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -134,9 +135,17 @@ func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration, ag
 		return Session{}, err
 	}
 	now := s.now().UTC()
+	id, err := randomHex(16)
+	if err != nil {
+		return Session{}, fmt.Errorf("generate session id: %w", err)
+	}
+	token, err := randomHex(32)
+	if err != nil {
+		return Session{}, fmt.Errorf("generate session token: %w", err)
+	}
 	session := Session{
-		ID:           mustRandomHex(16),
-		Token:        mustRandomHex(32),
+		ID:           id,
+		Token:        token,
 		LocalUser:    localUser,
 		HostLabel:    hostLabel,
 		ProjectRoot:  CanonicalProjectRoot(projectRoot),
@@ -331,12 +340,12 @@ func (s *SessionStore) sessionExpired(session Session, now time.Time) bool {
 	return now.Sub(session.LastSeenAt) > s.idleTTL
 }
 
-func mustRandomHex(n int) string {
+func randomHex(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := randomRead(buf); err != nil {
-		panic(err)
+		return "", err
 	}
-	return hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
 }
 
 func CanonicalProjectRoot(path string) string {

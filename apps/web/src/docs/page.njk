@@ -1,0 +1,103 @@
+---
+layout: layouts/base.njk
+pagination:
+  data: docs.pages
+  size: 1
+  alias: docPage
+permalink: "{{ docPage.url }}"
+eleventyComputed:
+  title: "{{ docPage.title }} · hasp docs"
+  description: "{{ docPage.description }}"
+---
+
+<div class="doc docs-shell">
+  <aside class="docs-sidebar" aria-label="Documentation">
+    <a class="docs-sidebar-home" href="{{ docPage.homeUrl }}">Docs home</a>
+    <div class="docs-version-picker docs-version-picker-sidebar">
+      <label for="docs-version-sidebar">Docs version</label>
+      <div>
+        <span class="docs-select-wrap">
+          <select id="docs-version-sidebar" data-docs-version-select>
+            {% for option in docPage.versionOptions %}
+            <option value="{{ option.url }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </span>
+        <a href="{{ docPage.versionIndexUrl }}">All versions</a>
+      </div>
+    </div>
+    {% for section in docPage.sections %}
+    <div class="docs-sidebar-section">
+      <h2>{{ section.title }}</h2>
+      {% for page in section.pages %}
+      <a href="{{ page.url }}"{% if page.url == docPage.url %} aria-current="page"{% endif %}>{{ page.title }}</a>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </aside>
+
+  <main class="docs-article-wrap">
+    <article class="docs-article" data-pagefind-body>
+      <div class="docs-kicker">{{ docPage.section }}</div>
+      <h1>{{ docPage.title }}</h1>
+      <p class="docs-description">{{ docPage.description }}</p>
+      <div class="docs-markdown">
+        {{ docPage.html | safe }}
+      </div>
+    </article>
+  </main>
+
+  <aside class="docs-toc" aria-label="On this page">
+    <h2>On this page</h2>
+    {% if docPage.headings.length %}
+      {% for heading in docPage.headings %}
+      <a class="toc-level-{{ heading.level }}" href="#{{ heading.id }}">{{ heading.title }}</a>
+      {% endfor %}
+    {% else %}
+      <span>No subsections</span>
+    {% endif %}
+  </aside>
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-docs-version-select]").forEach((select) => {
+    select.addEventListener("change", () => {
+      if (select.value) window.location.href = select.value;
+    });
+  });
+
+  document.querySelectorAll(".docs-markdown pre").forEach((block) => {
+    const code = block.querySelector("code");
+    if (!code) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "docs-copy";
+    button.textContent = "Copy";
+    button.addEventListener("click", async () => {
+      const lines = Array.from(code.querySelectorAll(".code-line"));
+      const text = lines.length
+        ? lines.map((line) => `${" ".repeat(Number(line.style.getPropertyValue("--indent")) || 0)}${line.innerText}`).join("\n")
+        : code.innerText;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const field = document.createElement("textarea");
+        field.value = text;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.left = "-9999px";
+        document.body.append(field);
+        field.select();
+        document.execCommand("copy");
+        field.remove();
+      }
+      button.textContent = "Copied";
+      window.setTimeout(() => {
+        button.textContent = "Copy";
+      }, 1200);
+    });
+    block.prepend(button);
+  });
+})();
+</script>

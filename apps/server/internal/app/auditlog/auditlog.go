@@ -56,6 +56,34 @@ func GetHMACKey() []byte {
 // ClearHMACKey removes any installed HMAC key. Equivalent to SetHMACKey(nil).
 func ClearHMACKey() { SetHMACKey(nil) }
 
+// EnsureKeyedChainSeed appends one keyed marker when the current audit log has
+// not yet recorded any HMAC-authenticated event. This lets the daemon verify a
+// freshly-unlocked caller's vault-derived audit key before adopting it for
+// daemon-owned session events, without requiring the daemon to open the vault.
+func EnsureKeyedChainSeed() {
+	defer func() {
+		_ = recover()
+	}()
+	key := GetHMACKey()
+	if len(key) == 0 {
+		return
+	}
+	log, err := NewLogFn()
+	if err != nil {
+		return
+	}
+	events, err := EventsFn(log)
+	if err != nil {
+		return
+	}
+	for _, event := range events {
+		if event.Scheme == audit.SchemeHMACSHA256V1 {
+			return
+		}
+	}
+	_, _ = log.WithKey(key).Append(audit.EventApprove, "user", map[string]any{"action": "audit.hmac_key.seed"})
+}
+
 // Append writes a single event to the audit log. Construction failures and
 // write failures are intentionally swallowed — callers cannot meaningfully
 // recover, and the broker / CLI must not abort their primary work because

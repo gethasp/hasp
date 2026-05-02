@@ -50,7 +50,7 @@ fi
     if [[ -n "$release_tag" ]]; then
       msg="$msg for $release_tag"
     fi
-    git -c core.hooksPath=/dev/null commit -m "$msg" >/dev/null
+    git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -m "$msg" >/dev/null
   fi
   if [[ "$push_mode" == "1" ]]; then
     git push

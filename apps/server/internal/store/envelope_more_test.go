@@ -32,7 +32,7 @@ func TestSealStateInitializesNilMaps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state: %v", err)
 	}
-	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil || state.PlaintextGrants == nil {
+	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil || state.PlaintextGrants == nil || state.MutationGrants == nil {
 		t.Fatal("expected state maps initialized")
 	}
 }

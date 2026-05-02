@@ -31,9 +31,11 @@ type Starter interface {
 // filters on. Tests construct a local instance to inject deterministic
 // outcomes without touching package-level vars.
 type LocalDeps struct {
-	Approve   func(session runtime.SessionView, itemName string, action store.PlaintextAction) error
-	UseGrant  func(handle *store.Handle, token string, itemName string, action store.PlaintextAction, window time.Duration) (store.PlaintextGrant, error)
-	LocalUser func() (string, error)
+	Approve          func(session runtime.SessionView, itemName string, action store.PlaintextAction) error
+	UseGrant         func(handle *store.Handle, token string, itemName string, action store.PlaintextAction, window time.Duration) (store.PlaintextGrant, error)
+	ApproveMutation  func(session runtime.SessionView, itemName string, action store.SecretMutationAction) error
+	UseMutationGrant func(handle *store.Handle, bindingID string, token string, itemName string, action store.SecretMutationAction, window time.Duration) (store.MutationGrant, error)
+	LocalUser        func() (string, error)
 }
 
 // ConfirmPlaintextGrantDeps wires the platform inputs that the operator
@@ -64,6 +66,9 @@ type Deps struct {
 	// GetItem fetches a vault item by name.
 	GetItem func(handle *store.Handle, name string) (store.Item, error)
 
+	// ResolveBindingView resolves the project binding for a session project root.
+	ResolveBindingView func(ctx context.Context, handle *store.Handle, root string) (store.Binding, []store.VisibleReference, error)
+
 	// NewStarter constructs a runtime Starter.
 	NewStarter func() (Starter, error)
 
@@ -84,6 +89,9 @@ type Deps struct {
 
 	// ParsePlaintextAction parses a plaintext action string.
 	ParsePlaintextAction func(value string) (store.PlaintextAction, error)
+
+	// ParseMutationAction parses a destructive secret mutation action string.
+	ParseMutationAction func(value string) (store.SecretMutationAction, error)
 
 	// ParseGrantScope parses a grant scope string.
 	ParseGrantScope func(value string) store.GrantScope
@@ -130,7 +138,7 @@ type ColorOptions struct {
 // printSessionHelp writes a minimal session subcommand help stub used when
 // deps.PrintHelpTopic is not wired.
 func printSessionHelp(w io.Writer) error {
-	subcommands := []string{"open", "grant-plaintext", "revoke", "list", "resolve"}
+	subcommands := []string{"open", "grant-plaintext", "grant-mutation", "revoke", "list", "resolve"}
 	_, err := fmt.Fprintf(w, "Usage: hasp session <subcommand>\n\nSubcommands: %s\n", strings.Join(subcommands, ", "))
 	return err
 }
@@ -165,6 +173,8 @@ func SessionCommand(ctx context.Context, deps Deps, args []string, stdin io.Read
 		return sessionOpen(ctx, deps, args[1:], stdout)
 	case "grant-plaintext":
 		return sessionGrantPlaintext(ctx, deps, args[1:], stdout, nil)
+	case "grant-mutation":
+		return sessionGrantMutation(ctx, deps, args[1:], stdout, nil)
 	case "resolve":
 		return sessionResolve(ctx, deps, args[1:], stdout)
 	case "revoke":

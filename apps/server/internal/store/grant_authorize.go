@@ -88,6 +88,14 @@ func (h *Handle) convenienceGrantActive(bindingID string, destinationPath string
 	return ok && grantIsActive(grant.Scope, grant.ExpiresAt, grant.RevokedAt, grant.UsedAt, h.store.now())
 }
 
+func (h *Handle) mutationGrantActive(bindingID string, sessionToken string, itemName string, action SecretMutationAction) bool {
+	grant, ok := h.state.MutationGrants[mutationGrantKey(bindingID, sessionToken, itemName, action)]
+	if !ok || !grantIsActive(grant.Scope, grant.ExpiresAt, grant.RevokedAt, grant.UsedAt, h.store.now()) {
+		return false
+	}
+	return h.projectLeaseActive(bindingID, sessionToken)
+}
+
 func grantIsActive(scope GrantScope, expiresAt *time.Time, revokedAt *time.Time, usedAt *time.Time, now time.Time) bool {
 	if revokedAt != nil {
 		return false
@@ -130,6 +138,10 @@ func convenienceGrantKey(bindingID string, destinationPath string, resolvedSet [
 
 func plaintextGrantKey(sessionToken string, itemName string, action PlaintextAction) string {
 	return sessionToken + "|" + itemName + "|" + string(action)
+}
+
+func mutationGrantKey(bindingID string, sessionToken string, itemName string, action SecretMutationAction) string {
+	return bindingID + "|" + sessionToken + "|" + itemName + "|" + string(action)
 }
 
 func hashString(value string) string {

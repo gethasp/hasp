@@ -48,6 +48,7 @@ signature_file="$dist_dir/SHA256SUMS.asc"
 public_key_file="$dist_dir/hasp-release-public-key.asc"
 tarball_sig_path="$dist_dir/$(basename "$tarball").asc"
 binary_sig_path="$dist_dir/${artifact_name}_bin.asc"
+fingerprint_path="$dist_dir/RELEASE-SIGNING-FINGERPRINT.txt"
 
 signing_key="${HASP_RELEASE_GPG_KEY_ID:-}"
 
@@ -61,7 +62,14 @@ if [[ -z "$signing_key" ]]; then
   echo "failed to resolve a release signing key" >&2
   exit 1
 fi
+signing_fingerprint="$(release_signing_fingerprint "$signing_key")"
+if [[ -z "$signing_fingerprint" ]]; then
+  echo "failed to resolve release signing fingerprint" >&2
+  exit 1
+fi
+release_require_allowed_signing_fingerprint "$signing_fingerprint" "release signing key"
 release_export_public_key "$signing_key" "$public_key_file"
+printf '%s\n' "$signing_fingerprint" >"$fingerprint_path"
 
 {
   printf '%s  %s\n' "$(release_sha256 "$tarball")" "$(basename "$tarball")"
@@ -71,7 +79,7 @@ release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
 release_detached_sign "$signing_key" "$tarball" "$tarball_sig_path"
 release_detached_sign "$signing_key" "$artifact_dir/bin/hasp" "$binary_sig_path"
 
-if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$tarball_sig_path" || ! -s "$binary_sig_path" ]]; then
+if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$fingerprint_path" || ! -s "$tarball_sig_path" || ! -s "$binary_sig_path" ]]; then
   echo "signing output incomplete" >&2
   exit 1
 fi

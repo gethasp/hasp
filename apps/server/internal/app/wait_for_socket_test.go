@@ -16,14 +16,22 @@ import (
 // the socket; this regression guard exercises the readiness primitive
 // directly.
 
-func shortSocketPath(t *testing.T, name string) string {
+func shortSocketPath(t *testing.T, _ string) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "haspsock-")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	base := filepath.Clean(filepath.Join(cwd, "../../../..", ".testsock"))
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("create socket base: %v", err)
+	}
+	dir, err := os.MkdirTemp(base, "s-")
 	if err != nil {
 		t.Fatalf("mkdir socket dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, name)
+	return filepath.Join(dir, "s.sock")
 }
 
 func TestWaitForSocketReadyTreatsStaleFileAsNotReady(t *testing.T) {

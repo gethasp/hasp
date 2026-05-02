@@ -21,79 +21,84 @@ if [[ ! -x "$binary" ]]; then
   exit 1
 fi
 
-version="$("$binary" version 2>/dev/null || true)"
+target_os="${HASP_TARGET_OS:-$(go env GOOS)}"
+target_arch="${HASP_TARGET_ARCH:-$(go env GOARCH)}"
+host_os="$(go env GOHOSTOS)"
+host_arch="$(go env GOHOSTARCH)"
+version=""
+if [[ "$target_os" == "$host_os" && "$target_arch" == "$host_arch" ]]; then
+  version="$("$binary" version 2>/dev/null || true)"
+fi
 if [[ -z "$version" ]]; then
   version="$(< VERSION)"
 fi
 binary_sha256="$(shasum -a 256 "$binary" | awk '{print $1}')"
 go_version="$(go version | sed 's/"/\\"/g')"
-target_os="${HASP_TARGET_OS:-$(go env GOOS)}"
-target_arch="${HASP_TARGET_ARCH:-$(go env GOARCH)}"
 generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-cat >"$artifact_dir/sbom.spdx.json" <<EOF
 {
-  "spdxVersion": "SPDX-2.3",
-  "dataLicense": "CC0-1.0",
-  "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "hasp-$version",
-  "documentNamespace": "https://gethasp.example.invalid/spdx/hasp-$version-$binary_sha256",
-  "creationInfo": {
-    "created": "$generated_at",
-    "creators": ["Tool: hasp generate-supply-chain-artifacts"]
-  },
-  "packages": [
-    {
-      "name": "hasp",
-      "SPDXID": "SPDXRef-Package-hasp",
-      "versionInfo": "$version",
-      "downloadLocation": "NOASSERTION",
-      "filesAnalyzed": false,
-      "checksums": [{"algorithm": "SHA256", "checksumValue": "$binary_sha256"}],
-      "supplier": "Organization: HASP"
-    }
-  ]
-}
-EOF
+  printf '{\n'
+  printf '  "spdxVersion": "SPDX-2.3",\n'
+  printf '  "dataLicense": "CC0-1.0",\n'
+  printf '  "SPDXID": "SPDXRef-DOCUMENT",\n'
+  printf '  "name": "hasp-%s",\n' "$version"
+  printf '  "documentNamespace": "https://gethasp.example.invalid/spdx/hasp-%s-%s",\n' "$version" "$binary_sha256"
+  printf '  "creationInfo": {\n'
+  printf '    "created": "%s",\n' "$generated_at"
+  printf '    "creators": ["Tool: hasp generate-supply-chain-artifacts"]\n'
+  printf '  },\n'
+  printf '  "packages": [\n'
+  printf '    {\n'
+  printf '      "name": "hasp",\n'
+  printf '      "SPDXID": "SPDXRef-Package-hasp",\n'
+  printf '      "versionInfo": "%s",\n' "$version"
+  printf '      "downloadLocation": "NOASSERTION",\n'
+  printf '      "filesAnalyzed": false,\n'
+  printf '      "checksums": [{"algorithm": "SHA256", "checksumValue": "%s"}],\n' "$binary_sha256"
+  printf '      "supplier": "Organization: HASP"\n'
+  printf '    }\n'
+  printf '  ]\n'
+  printf '}\n'
+} >"$artifact_dir/sbom.spdx.json"
 
-cat >"$artifact_dir/slsa-provenance.json" <<EOF
 {
-  "_type": "https://in-toto.io/Statement/v1",
-  "predicateType": "https://slsa.dev/provenance/v1",
-  "subject": [
-    {
-      "name": "bin/hasp",
-      "digest": {"sha256": "$binary_sha256"}
-    }
-  ],
-  "predicate": {
-    "buildDefinition": {
-      "buildType": "https://gethasp.example.invalid/build/go",
-      "externalParameters": {
-        "version": "$version",
-        "target_os": "$target_os",
-        "target_arch": "$target_arch"
-      },
-      "internalParameters": {}
-    },
-    "runDetails": {
-      "builder": {"id": "hasp-local-release-scripts"},
-      "metadata": {
-        "invocationId": "$binary_sha256",
-        "startedOn": "$generated_at",
-        "finishedOn": "$generated_at"
-      },
-      "byproducts": [
-        {"name": "go_version", "value": "$go_version"}
-      ]
-    }
-  }
-}
-EOF
+  printf '{\n'
+  printf '  "_type": "https://in-toto.io/Statement/v1",\n'
+  printf '  "predicateType": "https://slsa.dev/provenance/v1",\n'
+  printf '  "subject": [\n'
+  printf '    {\n'
+  printf '      "name": "bin/hasp",\n'
+  printf '      "digest": {"sha256": "%s"}\n' "$binary_sha256"
+  printf '    }\n'
+  printf '  ],\n'
+  printf '  "predicate": {\n'
+  printf '    "buildDefinition": {\n'
+  printf '      "buildType": "https://gethasp.example.invalid/build/go",\n'
+  printf '      "externalParameters": {\n'
+  printf '        "version": "%s",\n' "$version"
+  printf '        "target_os": "%s",\n' "$target_os"
+  printf '        "target_arch": "%s"\n' "$target_arch"
+  printf '      },\n'
+  printf '      "internalParameters": {}\n'
+  printf '    },\n'
+  printf '    "runDetails": {\n'
+  printf '      "builder": {"id": "hasp-local-release-scripts"},\n'
+  printf '      "metadata": {\n'
+  printf '        "invocationId": "%s",\n' "$binary_sha256"
+  printf '        "startedOn": "%s",\n' "$generated_at"
+  printf '        "finishedOn": "%s"\n' "$generated_at"
+  printf '      },\n'
+  printf '      "byproducts": [\n'
+  printf '        {"name": "go_version", "value": "%s"}\n' "$go_version"
+  printf '      ]\n'
+  printf '    }\n'
+  printf '  }\n'
+  printf '}\n'
+} >"$artifact_dir/slsa-provenance.json"
 
 codesign_status="unsupported"
 codesign_detail="macOS code signing verification is available only on darwin with codesign"
-if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
+if [[ "$target_os" == "darwin" && "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
   if codesign --verify --deep --strict "$binary" >/dev/null 2>&1; then
     codesign_status="verified"
     codesign_detail="codesign verification passed"
@@ -102,14 +107,14 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
     codesign_detail="codesign verification did not find a valid macOS signature"
   fi
 fi
-cat >"$artifact_dir/CODE_SIGNING_STATUS.json" <<EOF
 {
-  "status": "$codesign_status",
-  "detail": "$codesign_detail",
-  "binary_sha256": "$binary_sha256",
-  "generated_at": "$generated_at"
-}
-EOF
+  printf '{\n'
+  printf '  "status": "%s",\n' "$codesign_status"
+  printf '  "detail": "%s",\n' "$codesign_detail"
+  printf '  "binary_sha256": "%s",\n' "$binary_sha256"
+  printf '  "generated_at": "%s"\n' "$generated_at"
+  printf '}\n'
+} >"$artifact_dir/CODE_SIGNING_STATUS.json"
 
 repro_status="not_run"
 repro_detail="set HASP_RUN_REPRODUCIBLE_BUILD_CHECK=1 to run the slower reproducible build comparison during packaging"
@@ -130,14 +135,14 @@ if [[ "${HASP_RUN_REPRODUCIBLE_BUILD_CHECK:-0}" == "1" ]]; then
   fi
   /bin/rm -f "$temp_binary"
 fi
-cat >"$artifact_dir/REPRODUCIBLE_BUILD.json" <<EOF
 {
-  "status": "$repro_status",
-  "detail": "$repro_detail",
-  "binary_sha256": "$binary_sha256",
-  "generated_at": "$generated_at"
-}
-EOF
+  printf '{\n'
+  printf '  "status": "%s",\n' "$repro_status"
+  printf '  "detail": "%s",\n' "$repro_detail"
+  printf '  "binary_sha256": "%s",\n' "$binary_sha256"
+  printf '  "generated_at": "%s"\n' "$generated_at"
+  printf '}\n'
+} >"$artifact_dir/REPRODUCIBLE_BUILD.json"
 
 printf '%s\n' "$artifact_dir/sbom.spdx.json"
 printf '%s\n' "$artifact_dir/slsa-provenance.json"

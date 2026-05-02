@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
@@ -178,6 +180,9 @@ type rpcServer struct {
 func newRPCServer(runtimePaths paths.Paths) *rpcServer {
 	startedAt := time.Now().UTC()
 	log, logErr := newRuntimeAuditLog()
+	if log != nil {
+		log = log.WithKey(auditlog.GetHMACKey())
+	}
 	auditState := newAuditState(nil)
 	if logErr != nil {
 		auditState.MarkDegradedAt(startedAt)
@@ -292,6 +297,38 @@ func (s *rpcServer) appendPeerRejectAudit(details map[string]any) {
 	s.auditState.RecordAppendResult(err)
 }
 
+func installAuditHMACKey(log *audit.Log, key []byte) error {
+	if log == nil || len(key) == 0 {
+		return nil
+	}
+	if len(key) != sha256.Size {
+		return errors.New("audit HMAC key must be 32 bytes")
+	}
+	verifier, err := newRuntimeAuditLog()
+	if err != nil {
+		return fmt.Errorf("verify audit HMAC key: %w", err)
+	}
+	events, err := verifier.Events()
+	if err != nil {
+		return fmt.Errorf("verify audit HMAC key: %w", err)
+	}
+	trustedKeyedEvent := false
+	for _, event := range events {
+		if event.Scheme == audit.SchemeHMACSHA256V1 {
+			trustedKeyedEvent = true
+			break
+		}
+	}
+	if !trustedKeyedEvent {
+		return errors.New("audit HMAC key cannot be adopted before an existing keyed audit chain is present")
+	}
+	if err := verifier.WithKey(key).Verify(); err != nil {
+		return fmt.Errorf("audit HMAC key does not verify existing audit chain: %w", err)
+	}
+	log.WithKey(key)
+	return nil
+}
+
 type brokerRPC struct {
 	paths      paths.Paths
 	startedAt  time.Time
@@ -347,6 +384,13 @@ func (b *brokerRPC) OpenSession(req OpenSessionRequest, reply *OpenSessionRespon
 	}
 	session, err := b.sessions.Open(req.HostLabel, req.ProjectRoot, ttl, req.AgentSafe, req.ConsumerName)
 	if err != nil {
+		return err
+	}
+	if err := installAuditHMACKey(b.audit, req.AuditHMACKey); err != nil {
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{
+			"action": "session.open.reject",
+			"reason": "untrusted_audit_hmac_key",
+		})
 		return err
 	}
 	*reply = OpenSessionResponse{
@@ -449,13 +493,11 @@ func (b *brokerRPC) RegisterProcess(req RegisterProcessRequest, reply *RegisterP
 	return nil
 }
 
-// peerSharesLineage reports whether the kernel-attested socket peer and
-// reqPID share a parent-chain relationship in either direction. Self
-// (peerPID == reqPID), peer-as-ancestor-of-req (parent registers spawned
-// child), and req-as-ancestor-of-peer (child MCP registers its parent — the
-// `hasp agent mcp` flow registers os.Getppid()) are all valid trust paths.
-// Any other PID — a sibling, an unrelated same-uid process, or an arbitrary
-// PID picked by an attacker — is denied.
+// peerSharesLineage reports whether the kernel-attested socket peer is allowed
+// to bind a session to reqPID. Self (peerPID == reqPID) and peer-as-ancestor of
+// reqPID (parent registering a child it spawned) are valid trust paths. The
+// reverse path is intentionally denied: a child must not register its parent,
+// because that would grant the session to sibling processes under that parent.
 func peerSharesLineage(peerPID uint32, reqPID int) bool {
 	if peerPID == 0 || reqPID <= 0 {
 		return false
@@ -466,13 +508,6 @@ func peerSharesLineage(peerPID uint32, reqPID int) bool {
 	if reqLineage, err := processLineage(reqPID); err == nil {
 		for _, ancestor := range reqLineage {
 			if uint32(ancestor) == peerPID {
-				return true
-			}
-		}
-	}
-	if peerLineage, err := processLineage(int(peerPID)); err == nil {
-		for _, ancestor := range peerLineage {
-			if ancestor == reqPID {
 				return true
 			}
 		}

@@ -1,0 +1,30 @@
+---
+permalink: "/llms.txt"
+eleventyExcludeFromCollections: true
+---
+# hasp
+
+> Local secret broker for coding-agent and app workflows.
+
+Docs root: {{ site.url }}/docs/
+Version: {{ docs.version }}
+GitHub: {{ site.githubUrl }}
+Changelog: {{ site.changelogUrl }}
+
+## Recommended Reading
+
+{% for section in docs.sections -%}
+### {{ section.title }}
+{% for page in section.pages -%}
+- [{{ page.title }}]({{ site.url }}{{ page.url }}): {{ page.description }}
+{% endfor %}
+
+{% endfor -%}
+
+## Agent Notes
+
+- HASP keeps named secrets in a local encrypted vault.
+- Repo bindings define where secrets can be used.
+- Grants are short-lived and scoped to a run, session, or window.
+- Agents should use brokered references and metadata, not raw secret values.
+- Use `/llms-full.txt` for the full public documentation bundle.

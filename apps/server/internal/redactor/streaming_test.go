@@ -329,4 +329,3 @@ func TestStreamingWriterLookbackZeroWhenNoItems(t *testing.T) {
 		t.Errorf("expected maxNeedleLen 0 for no items, got %d", sw.maxNeedleLen)
 	}
 }
-

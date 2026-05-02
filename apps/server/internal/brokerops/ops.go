@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -83,9 +84,10 @@ func EnsureSession(ctx context.Context, connector Connector, projectRoot string,
 	}
 
 	reply, err := client.OpenSession(ctx, runtime.OpenSessionRequest{
-		HostLabel:   hostLabel,
-		ProjectRoot: canonicalRoot,
-		TTLSeconds:  int(runtime.DefaultSessionTTL.Seconds()),
+		HostLabel:    hostLabel,
+		ProjectRoot:  canonicalRoot,
+		TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
+		AuditHMACKey: auditlog.GetHMACKey(),
 	})
 	if err != nil {
 		return Session{}, err

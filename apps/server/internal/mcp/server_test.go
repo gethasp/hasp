@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -854,6 +854,56 @@ func TestOpenHandleAndAppendAuditApprovalSeams(t *testing.T) {
 	appendAuditApproval("binding", "item")
 }
 
+func TestMCPAuditAppendsUseUnlockedHMACKey(t *testing.T) {
+	lockMCPSeams(t)
+	origDefaultKeyring := defaultKeyringFn
+	defer func() { defaultKeyringFn = origDefaultKeyring }()
+	defaultKeyringFn = func() store.Keyring { return nil }
+
+	homeDir := t.TempDir()
+	t.Setenv(paths.EnvHome, homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "secret-password")
+	vaultStore, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(context.Background(), "secret-password"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	handle, err := openHandle(context.Background())
+	if err != nil {
+		t.Fatalf("open handle: %v", err)
+	}
+	auditKey := handle.AuditHMACKey()
+	if len(auditKey) == 0 || len(auditlog.GetHMACKey()) == 0 {
+		t.Fatal("expected openHandle to cache the audit HMAC key")
+	}
+
+	appendAuditApproval("binding", "item")
+	appendSecretAuditMCP(audit.EventCapture, "agent", map[string]any{"action": "secret.test"})
+
+	log, err := audit.New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("expected at least two MCP audit events, got %d", len(events))
+	}
+	for _, event := range events[len(events)-2:] {
+		if event.Scheme != audit.SchemeHMACSHA256V1 {
+			t.Fatalf("event %d scheme = %q, want %q", event.Sequence, event.Scheme, audit.SchemeHMACSHA256V1)
+		}
+	}
+	if err := log.WithKey(auditKey).Verify(); err != nil {
+		t.Fatalf("verify keyed MCP audit chain: %v", err)
+	}
+}
+
 func TestCallToolAndSessionBootstrapErrorBranches(t *testing.T) {
 	lockMCPSeams(t)
 	origNewStore := newVaultStoreFn
@@ -1154,7 +1204,16 @@ func runMCPRequests(requests []map[string]any) ([]map[string]any, error) {
 func startTestDaemon(t *testing.T) *runtime.Manager {
 	t.Helper()
 
-	t.Setenv(paths.EnvSocket, filepath.Join("/tmp", fmt.Sprintf("hasp-mcp-%d.sock", time.Now().UnixNano())))
+	socketDir, err := os.MkdirTemp("/tmp", "hmcp-")
+	if err != nil {
+		t.Fatalf("create socket dir: %v", err)
+	}
+	socketPath := filepath.Join(socketDir, "s.sock")
+	t.Setenv(paths.EnvSocket, socketPath)
+	t.Cleanup(func() {
+		_ = os.Remove(socketPath)
+		_ = os.RemoveAll(socketDir)
+	})
 	manager, err := runtime.NewManager()
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -1187,7 +1246,7 @@ func startTestDaemon(t *testing.T) *runtime.Manager {
 
 func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
@@ -1197,7 +1256,11 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 			t.Fatalf("daemon exited before socket became available")
 		default:
 		}
-		if _, err := os.Stat(socketPath); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		client, err := runtime.Dial(ctx, socketPath)
+		cancel()
+		if err == nil {
+			_ = client.Close()
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -1207,6 +1270,12 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	if len(args) == 1 && args[0] == "init" {
+		if out, err := initTestGitRepo(dir); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return
+	}
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)

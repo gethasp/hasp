@@ -44,7 +44,7 @@ func (s fixedClientStarter) Connect(context.Context) (*runtime.Client, error) {
 
 func TestRunVersionMCPAndStarterConstructionSuccess(t *testing.T) {
 	t.Setenv("HASP_HOME", t.TempDir())
-	t.Setenv("HASP_SOCKET", filepath.Join(t.TempDir(), "daemon.sock"))
+	t.Setenv("HASP_SOCKET", shortSocketPath(t, "daemon.sock"))
 	starter, err := newRuntimeStarter()
 	if err != nil {
 		t.Fatalf("new runtime starter: %v", err)

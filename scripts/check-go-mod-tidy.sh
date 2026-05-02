@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ -n "${HASP_TEST_ROOT:-}" ]]; then
+  repo_root="$(cd "$HASP_TEST_ROOT" && pwd)"
+else
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 cd "$repo_root"
 
 modules=()

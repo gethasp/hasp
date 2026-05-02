@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestSessionStoreOpenReturnsCurrentUserError(t *testing.T) {
 	}
 }
 
-func TestMustRandomHexPanicsWhenEntropyFails(t *testing.T) {
+func TestSessionStoreOpenReturnsEntropyError(t *testing.T) {
 	lockRuntimeSeams(t)
 	origRandomRead := randomRead
 	defer func() { randomRead = origRandomRead }()
@@ -31,12 +32,31 @@ func TestMustRandomHexPanicsWhenEntropyFails(t *testing.T) {
 		return 0, errors.New("entropy failed")
 	}
 
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic when entropy source fails")
+	if _, err := NewSessionStore().Open("agent", "/tmp/project", DefaultSessionTTL, false, ""); err == nil {
+		t.Fatal("expected entropy failure")
+	}
+}
+
+func TestSessionStoreOpenReturnsTokenEntropyError(t *testing.T) {
+	lockRuntimeSeams(t)
+	origRandomRead := randomRead
+	defer func() { randomRead = origRandomRead }()
+
+	calls := 0
+	randomRead = func(buf []byte) (int, error) {
+		calls++
+		if calls == 2 {
+			return 0, errors.New("token entropy failed")
 		}
-	}()
-	_ = mustRandomHex(4)
+		for i := range buf {
+			buf[i] = byte(i)
+		}
+		return len(buf), nil
+	}
+
+	if _, err := NewSessionStore().Open("agent", "/tmp/project", DefaultSessionTTL, false, ""); err == nil || !strings.Contains(err.Error(), "generate session token") {
+		t.Fatalf("expected token entropy failure, got %v", err)
+	}
 }
 
 func TestCanonicalProjectRootCoversEdgeCases(t *testing.T) {

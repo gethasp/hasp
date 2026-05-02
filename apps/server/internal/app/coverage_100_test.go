@@ -681,8 +681,9 @@ func TestCoverage100DoctorBranches(t *testing.T) {
 		t.Fatalf("expected daemon status refresh, got %+v", report)
 	}
 
-	socketDir := t.TempDir()
-	listener, err := net.Listen("unix", filepath.Join(socketDir, "live.sock"))
+	socketPath := shortSocketPath(t, "live.sock")
+	socketDir := filepath.Dir(socketPath)
+	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen unix socket: %v", err)
 	}
@@ -1052,8 +1053,30 @@ func TestCoverage100ExplainSetupAndSessionBranches(t *testing.T) {
 	if got, err := defaultSessionLocalDeps().LocalUser(); err != nil || got != "501" {
 		t.Fatalf("LocalUser uid fallback = %q err=%v", got, err)
 	}
+	t.Setenv("HASP_HOME", t.TempDir())
+	s, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := s.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	h, err := s.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	home := os.Getenv("HASP_HOME")
+	if err := os.RemoveAll(home); err != nil {
+		t.Fatalf("remove home: %v", err)
+	}
+	if err := os.WriteFile(home, []byte("not-a-directory"), 0o600); err != nil {
+		t.Fatalf("poison home path: %v", err)
+	}
+	if _, err := defaultSessionLocalDeps().UseMutationGrant(h, "binding", "tok", "API_TOKEN", store.SecretMutationExpose, time.Second); err == nil {
+		t.Fatal("expected mutation grant project lease error")
+	}
 	sessionOut := bytes.Buffer{}
-	err := renderSessionListWithColor(&sessionOut, []runtime.SessionView{{ID: "s", ExpiresAt: time.Now().Add(time.Minute)}}, ui.ColorOptions{Verbose: true})
+	err = renderSessionListWithColor(&sessionOut, []runtime.SessionView{{ID: "s", ExpiresAt: time.Now().Add(time.Minute)}}, ui.ColorOptions{Verbose: true})
 	if err != nil {
 		t.Fatalf("renderSessionListWithColor verbose: %v", err)
 	}

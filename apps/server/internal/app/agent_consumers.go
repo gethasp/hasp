@@ -32,15 +32,7 @@ var (
 	agentRegisterProcessFn      = registerProtectedProcess
 	agentServeMCPFn             = mcp.Serve
 	agentLoadSupportStatusesFn  = profiles.LoadSupportStatuses
-	agentOpenSessionFn          = func(ctx context.Context, client *runtime.Client, hostLabel string, consumer store.AgentConsumer) (runtime.OpenSessionResponse, error) {
-		return client.OpenSession(ctx, runtime.OpenSessionRequest{
-			HostLabel:    hostLabel,
-			ProjectRoot:  consumer.ProjectRoot,
-			TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
-			AgentSafe:    true,
-			ConsumerName: consumer.Name,
-		})
-	}
+	agentOpenSessionFn          = openAgentSession
 )
 
 // ── Dispatch shim ─────────────────────────────────────────────────────────────
@@ -123,6 +115,21 @@ func buildAgentExecutionEnv(ctx context.Context, handle *store.Handle, consumer 
 		env = append(env, secrettypes.EnvAgentProjectRoot+"="+consumer.ProjectRoot)
 	}
 	return env, nil
+}
+
+func openAgentSession(ctx context.Context, client *runtime.Client, hostLabel string, consumer store.AgentConsumer) (runtime.OpenSessionResponse, error) {
+	return client.OpenSession(ctx, agentOpenSessionRequest(hostLabel, consumer))
+}
+
+func agentOpenSessionRequest(hostLabel string, consumer store.AgentConsumer) runtime.OpenSessionRequest {
+	return runtime.OpenSessionRequest{
+		HostLabel:    hostLabel,
+		ProjectRoot:  consumer.ProjectRoot,
+		TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
+		AgentSafe:    true,
+		ConsumerName: consumer.Name,
+		AuditHMACKey: getAuditHMACKey(),
+	}
 }
 
 // registerProtectedProcess registers a process PID with the runtime so it

@@ -80,28 +80,32 @@ func catalog() []tool {
 				"kind":          stringSchema("Secret kind"),
 				"expose":        boolSchema("Expose the secret in the repo when project_root is set"),
 			}, "name", "value")},
+			tool{Name: "hasp_secret_delete", Description: "Delete a secret from the personal vault and invalidate repo exposures", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Repo root used for audited authorization"),
+				"session_token": stringSchema("Daemon-backed session token with a persisted delete mutation grant"),
+				"host_label":    stringSchema("Optional caller label"),
+				"name":          stringSchema("Secret name"),
+			}, "project_root", "name")},
+			tool{Name: "hasp_secret_expose", Description: "Expose an existing secret in the current repo using a repo-scoped reference", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Repo root"),
+				"session_token": stringSchema("Daemon-backed session token with a persisted expose mutation grant"),
+				"host_label":    stringSchema("Optional caller label"),
+				"name":          stringSchema("Secret name"),
+			}, "project_root", "name")},
+			tool{Name: "hasp_secret_hide", Description: "Remove repo visibility for a secret without deleting it from the personal vault", InputSchema: schema(map[string]any{
+				"project_root":  stringSchema("Repo root"),
+				"session_token": stringSchema("Daemon-backed session token with a persisted hide mutation grant"),
+				"host_label":    stringSchema("Optional caller label"),
+				"name":          stringSchema("Secret name"),
+			}, "project_root", "name")},
 		)
 	}
 	tools = append(tools,
-		tool{Name: "hasp_secret_delete", Description: "Delete a secret from the personal vault and invalidate repo exposures", InputSchema: schema(map[string]any{
-			"host_label": stringSchema("Optional caller label"),
-			"name":       stringSchema("Secret name"),
-		}, "name")},
 		tool{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Optional repo root to check availability in"),
 			"host_label":   stringSchema("Optional caller label"),
 			"name":         stringSchema("Secret name"),
 		}, "name")},
-		tool{Name: "hasp_secret_expose", Description: "Expose an existing secret in the current repo using a repo-scoped reference", InputSchema: schema(map[string]any{
-			"project_root": stringSchema("Repo root"),
-			"host_label":   stringSchema("Optional caller label"),
-			"name":         stringSchema("Secret name"),
-		}, "project_root", "name")},
-		tool{Name: "hasp_secret_hide", Description: "Remove repo visibility for a secret without deleting it from the personal vault", InputSchema: schema(map[string]any{
-			"project_root": stringSchema("Repo root"),
-			"host_label":   stringSchema("Optional caller label"),
-			"name":         stringSchema("Secret name"),
-		}, "project_root", "name")},
 		tool{Name: "hasp_redact", Description: "Redact managed values from supplied text", InputSchema: schema(map[string]any{
 			"text": stringSchema("Text to redact"),
 		}, "text")},

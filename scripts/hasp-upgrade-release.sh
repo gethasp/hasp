@@ -2,6 +2,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./hasp-release-common.sh
+source "$script_dir/hasp-release-common.sh"
 
 usage() {
   cat <<'EOF'
@@ -27,9 +29,7 @@ fi
 receipt_path="$install_dir/INSTALL_RECEIPT"
 previous_version="unknown"
 if [[ -f "$receipt_path" ]]; then
-  # shellcheck disable=SC1090
-  source "$receipt_path"
-  previous_version="${installed_version:-unknown}"
+  previous_version="$(release_metadata_scalar "$receipt_path" installed_version 2>/dev/null || printf 'unknown')"
 fi
 
 bash "$script_dir/hasp-install-release.sh" "${args[@]}"

@@ -6,8 +6,3 @@ package store
 // lower cost so the test suite stays fast. The tag must be passed explicitly
 // to `go test` and is never set in release builds.
 const defaultPasswordIterations = testPasswordIterations
-
-// minPasswordIterations is relaxed to 1 under fastkdf so the resolver's
-// minimum-enforcement panic path can be exercised by unit tests with small
-// fixture values without making the overall suite slow.
-const minPasswordIterations = 1

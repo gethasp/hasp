@@ -2,9 +2,11 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$script_dir/.." && pwd)"
 check_script="$script_dir/check-go-mod-tidy.sh"
 
-tmpdir="$(mktemp -d)"
+/bin/mkdir -p "$ROOT/dist"
+tmpdir="$(mktemp -d "$ROOT/dist/test-check-go-mod-tidy.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
 repo="$tmpdir/repo"
@@ -38,7 +40,7 @@ EOF
 
 (cd packages/withsum && go mod tidy >/dev/null 2>&1)
 
-if ! bash "$check_script" >"$tmpdir/tidy-ok.log" 2>&1; then
+if ! HASP_TEST_ROOT="$repo" bash "$check_script" >"$tmpdir/tidy-ok.log" 2>&1; then
   cat "$tmpdir/tidy-ok.log" >&2
   exit 1
 fi
@@ -52,7 +54,7 @@ fi
 
 printf '\nrequire golang.org/x/text v0.14.0\n' >> packages/withsum/go.mod
 
-if bash "$check_script" >"$tmpdir/tidy-fail.log" 2>&1; then
+if HASP_TEST_ROOT="$repo" bash "$check_script" >"$tmpdir/tidy-fail.log" 2>&1; then
   cat "$tmpdir/tidy-fail.log" >&2
   echo "expected tidy check failure for modified go.mod" >&2
   exit 1

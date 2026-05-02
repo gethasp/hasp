@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "version": "v0.1.36",
+  "versionNumber": "0.1.36",
+  "createdAt": "2026-04-30T17:53:42.449Z",
+  "updatedLabel": "April 2026",
+  "sourceCommit": "207d8b314e442445c766ab817d52b2c0ad27fba2",
+  "dirty": false,
+  "defaultRouteSlug": "overview",
+  "specs": [
+    {
+      "source": "public/README.md",
+      "slug": "overview",
+      "section": "Start",
+      "order": 10,
+      "title": "Overview",
+      "description": "What HASP is, what ships in the public repo, and what the local broker does."
+    },
+    {
+      "source": "public/QUICKSTART.md",
+      "slug": "quickstart",
+      "section": "Start",
+      "order": 20,
+      "title": "Quickstart",
+      "description": "The shortest safe path to a working local HASP install."
+    },
+    {
+      "source": "public/docs/mental-model.md",
+      "slug": "mental-model",
+      "section": "Start",
+      "order": 15,
+      "title": "Mental model",
+      "description": "How to think about vaults, repo boundaries, consumers, grants, sessions, audit, and redaction."
+    },
+    {
+      "source": "public/docs/after-homebrew.md",
+      "slug": "after-homebrew",
+      "section": "Start",
+      "order": 30,
+      "title": "After Homebrew",
+      "description": "The common first-run path after installing HASP with Homebrew."
+    },
+    {
+      "source": "public/docs/install.md",
+      "slug": "install",
+      "section": "Start",
+      "order": 40,
+      "title": "Install",
+      "description": "Source builds, packaged releases, and the signed release install path."
+    },
+    {
+      "source": "public/docs/command-guide.md",
+      "slug": "command-guide",
+      "section": "Operate",
+      "order": 5,
+      "title": "Command guide",
+      "description": "What each HASP command does, when to use it, and how it compares to nearby commands."
+    },
+    {
+      "source": "public/docs/operator-guide.md",
+      "slug": "operator-guide",
+      "section": "Operate",
+      "order": 10,
+      "title": "Operator Guide",
+      "description": "Environment variables, repo guardrails, audit, backup, and safe local operation."
+    },
+    {
+      "source": "public/docs/repo-targets.md",
+      "slug": "repo-targets",
+      "section": "Operate",
+      "order": 15,
+      "title": "Repo targets",
+      "description": "Value-free repo requirements, target-scoped delivery, examples, and app/MCP target behavior."
+    },
+    {
+      "source": "docs/agent-profiles/README.md",
+      "slug": "agent-profiles",
+      "section": "Agents",
+      "order": 10,
+      "title": "Agent Profiles",
+      "description": "First-class support profile expectations and the generic broker path."
+    },
+    {
+      "source": "docs/agent-profiles/codex-cli.md",
+      "slug": "agent-profiles/codex-cli",
+      "section": "Agents",
+      "order": 20,
+      "title": "Codex CLI",
+      "description": "Connect Codex CLI through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/claude-code.md",
+      "slug": "agent-profiles/claude-code",
+      "section": "Agents",
+      "order": 30,
+      "title": "Claude Code",
+      "description": "Connect Claude Code through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/cursor.md",
+      "slug": "agent-profiles/cursor",
+      "section": "Agents",
+      "order": 40,
+      "title": "Cursor",
+      "description": "Connect Cursor through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/aider.md",
+      "slug": "agent-profiles/aider",
+      "section": "Agents",
+      "order": 50,
+      "title": "Aider",
+      "description": "Connect Aider through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/hermes.md",
+      "slug": "agent-profiles/hermes",
+      "section": "Agents",
+      "order": 60,
+      "title": "Hermes",
+      "description": "Connect Hermes through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/openclaw.md",
+      "slug": "agent-profiles/openclaw",
+      "section": "Agents",
+      "order": 70,
+      "title": "OpenClaw",
+      "description": "Connect OpenClaw through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/generic.md",
+      "slug": "agent-profiles/generic",
+      "section": "Agents",
+      "order": 80,
+      "title": "Generic Broker Path",
+      "description": "Use HASP with CLI- or MCP-capable agents that do not have first-class profiles yet."
+    },
+    {
+      "source": "public/CHANGELOG.md",
+      "slug": "changelog",
+      "section": "Release",
+      "order": 5,
+      "title": "Changelog",
+      "description": "Public release notes for shipped HASP versions."
+    },
+    {
+      "source": "public/docs/release-distribution.md",
+      "slug": "release-distribution",
+      "section": "Release",
+      "order": 10,
+      "title": "Release distribution",
+      "description": "Release assets, hosted mirrors, checksums, signatures, and Homebrew formula updates."
+    },
+    {
+      "source": "public/docs/install-and-release.md",
+      "slug": "install-and-release",
+      "section": "Release",
+      "order": 20,
+      "title": "Install and release",
+      "description": "Operator-facing release verification and install details."
+    },
+    {
+      "source": "public/docs/glossary.md",
+      "slug": "glossary",
+      "section": "Reference",
+      "order": 5,
+      "title": "Glossary",
+      "description": "HASP vocabulary used across CLI help, docs, audit events, and errors."
+    },
+    {
+      "source": "public/docs/cli-reference.md",
+      "slug": "cli-reference",
+      "section": "Reference",
+      "order": 10,
+      "title": "CLI reference",
+      "description": "Exact help output generated by the installed hasp binary."
+    },
+    {
+      "source": "public/docs/error-codes.md",
+      "slug": "error-codes",
+      "section": "Reference",
+      "order": 15,
+      "title": "Errors",
+      "description": "Error messages, stable exit buckets, JSON error codes, hints, and recovery guidance."
+    }
+  ],
+  "sourceFiles": [
+    "public/README.md",
+    "public/QUICKSTART.md",
+    "public/docs/mental-model.md",
+    "public/docs/after-homebrew.md",
+    "public/docs/install.md",
+    "public/docs/command-guide.md",
+    "public/docs/operator-guide.md",
+    "public/docs/repo-targets.md",
+    "docs/agent-profiles/README.md",
+    "docs/agent-profiles/codex-cli.md",
+    "docs/agent-profiles/claude-code.md",
+    "docs/agent-profiles/cursor.md",
+    "docs/agent-profiles/aider.md",
+    "docs/agent-profiles/hermes.md",
+    "docs/agent-profiles/openclaw.md",
+    "docs/agent-profiles/generic.md",
+    "public/CHANGELOG.md",
+    "public/docs/release-distribution.md",
+    "public/docs/install-and-release.md",
+    "public/docs/glossary.md",
+    "public/docs/cli-reference.md",
+    "public/docs/error-codes.md"
+  ],
+  "sourceFileSha256": {
+    "public/README.md": "d01bbbc4c218f111988a27257cda078849107244e10b8666f53a728df123b948",
+    "public/QUICKSTART.md": "fa9401dbab49761dbbeae720dcc871523343e4e9626a5732265b40e6ded5ed43",
+    "public/docs/mental-model.md": "092a06d1e236ed5d9a5edf92b0249eeaffef1a596b8b6062a61f05254f777fc6",
+    "public/docs/after-homebrew.md": "2c5bb7cc6fe993597c481fa17fb84f94b687a7413887602fe36c7b3f5c060422",
+    "public/docs/install.md": "a6bce6e734cb43f7d6bea8475fefebcca2ec96efb7cceacff5a78831b5344451",
+    "public/docs/command-guide.md": "f28482976ecaa888995af52e46b20cc008eed9eba02648c38a361195dfff3fd5",
+    "public/docs/operator-guide.md": "62f47f289e07dd4495b1e53cccc06b8af38ce3885f732aa1878c745a810d75c4",
+    "public/docs/repo-targets.md": "74d51f53b66d977e5b52e5b23fc0a226da24ee447750cd1a307103ed3a6750ff",
+    "docs/agent-profiles/README.md": "ec65e3a57d435b331c1d106ca98e007faa7da7042b6cd2026a9bd992496859ed",
+    "docs/agent-profiles/codex-cli.md": "2f94da04077d73fa57b99edd98d440974684c7b87324fe77c117b59a19408050",
+    "docs/agent-profiles/claude-code.md": "8a467d59b93ad97a63f02f106a6824cf67eb781acc6abdd6ff95fb4fb54113f2",
+    "docs/agent-profiles/cursor.md": "3e817ef9fee7b639be95660a47ec6c944ef4e1632986772e08cfc29c4589636c",
+    "docs/agent-profiles/aider.md": "a586717619896c4195b5ca58e1e048f80bd05a6c3fed033a75a2b1369818ad52",
+    "docs/agent-profiles/hermes.md": "3cce3f20d57a842fbe5a7487f5acbe290ec55da939d18b6605178950760789cb",
+    "docs/agent-profiles/openclaw.md": "8431c81fc33c9021e7ad0073074a151093e0721b461ddb5a640131a1155c1aef",
+    "docs/agent-profiles/generic.md": "50eeb5d1a90718aba250bb811b3c43c727d9c74bf97ac6136405f79988ae70a6",
+    "public/CHANGELOG.md": "bc3fbe8901f9c9f8839085ba1716fb93e5c3eea85d4fdafea75884c4f45d753b",
+    "public/docs/release-distribution.md": "499bf643612ef20d6a2a803115ab069084c46bf9e0584e0cec51d892a6bfaa0c",
+    "public/docs/install-and-release.md": "bbdf3fa11e1f7ea7927b54fa0588d2aa9fb0edf250ce4647f010ab9e82c14926",
+    "public/docs/glossary.md": "3a52a3c1cae66bfc3351a5e77048b552c6b282d10a821e36b5a54537f6f90fda",
+    "public/docs/cli-reference.md": "46e67e8f3eb4443756c4449a3a6d6a4f669850891c0c2276d6a2851f54dcb842",
+    "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
+  },
+  "sourceArchiveTransform": "public-docs-sanitized-v1",
+  "sourceFilesSanitized": [
+    "public/CHANGELOG.md",
+    "public/README.md",
+    "public/docs/cli-reference.md",
+    "public/docs/command-guide.md",
+    "public/docs/mental-model.md",
+    "public/docs/repo-targets.md"
+  ],
+  "sourceFileOriginalSha256": {
+    "public/README.md": "899d9a71608dfa71e908879ad219306f9cd04559647c487e9767c82e409197dc",
+    "public/QUICKSTART.md": "fa9401dbab49761dbbeae720dcc871523343e4e9626a5732265b40e6ded5ed43",
+    "public/docs/mental-model.md": "78701fba901be1fa554960082b98b5530b4aad87c18f5859ba251637eacfdaae",
+    "public/docs/after-homebrew.md": "2c5bb7cc6fe993597c481fa17fb84f94b687a7413887602fe36c7b3f5c060422",
+    "public/docs/install.md": "a6bce6e734cb43f7d6bea8475fefebcca2ec96efb7cceacff5a78831b5344451",
+    "public/docs/command-guide.md": "6b0da65188de1530b6fa50731845a24cb750739b99a7f187815bb4ae1635b9ea",
+    "public/docs/operator-guide.md": "62f47f289e07dd4495b1e53cccc06b8af38ce3885f732aa1878c745a810d75c4",
+    "public/docs/repo-targets.md": "43f37a3030094962d1aed4aa08d29523a8a3b1bd6bc218a0f5f743c2c2d3e7d2",
+    "docs/agent-profiles/README.md": "ec65e3a57d435b331c1d106ca98e007faa7da7042b6cd2026a9bd992496859ed",
+    "docs/agent-profiles/codex-cli.md": "2f94da04077d73fa57b99edd98d440974684c7b87324fe77c117b59a19408050",
+    "docs/agent-profiles/claude-code.md": "8a467d59b93ad97a63f02f106a6824cf67eb781acc6abdd6ff95fb4fb54113f2",
+    "docs/agent-profiles/cursor.md": "3e817ef9fee7b639be95660a47ec6c944ef4e1632986772e08cfc29c4589636c",
+    "docs/agent-profiles/aider.md": "a586717619896c4195b5ca58e1e048f80bd05a6c3fed033a75a2b1369818ad52",
+    "docs/agent-profiles/hermes.md": "3cce3f20d57a842fbe5a7487f5acbe290ec55da939d18b6605178950760789cb",
+    "docs/agent-profiles/openclaw.md": "8431c81fc33c9021e7ad0073074a151093e0721b461ddb5a640131a1155c1aef",
+    "docs/agent-profiles/generic.md": "50eeb5d1a90718aba250bb811b3c43c727d9c74bf97ac6136405f79988ae70a6",
+    "public/CHANGELOG.md": "36a804593a8fab688c9764a84e539a55118ff94aa2430ff0700cffec04274b55",
+    "public/docs/release-distribution.md": "499bf643612ef20d6a2a803115ab069084c46bf9e0584e0cec51d892a6bfaa0c",
+    "public/docs/install-and-release.md": "bbdf3fa11e1f7ea7927b54fa0588d2aa9fb0edf250ce4647f010ab9e82c14926",
+    "public/docs/glossary.md": "3a52a3c1cae66bfc3351a5e77048b552c6b282d10a821e36b5a54537f6f90fda",
+    "public/docs/cli-reference.md": "825a8454b5ce3433cbb97c892b7094be3721d4b65577d38861f756f817db881d",
+    "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
+  },
+  "sourceFileSanitizedSha256": {
+    "public/README.md": "d01bbbc4c218f111988a27257cda078849107244e10b8666f53a728df123b948",
+    "public/QUICKSTART.md": "fa9401dbab49761dbbeae720dcc871523343e4e9626a5732265b40e6ded5ed43",
+    "public/docs/mental-model.md": "092a06d1e236ed5d9a5edf92b0249eeaffef1a596b8b6062a61f05254f777fc6",
+    "public/docs/after-homebrew.md": "2c5bb7cc6fe993597c481fa17fb84f94b687a7413887602fe36c7b3f5c060422",
+    "public/docs/install.md": "a6bce6e734cb43f7d6bea8475fefebcca2ec96efb7cceacff5a78831b5344451",
+    "public/docs/command-guide.md": "f28482976ecaa888995af52e46b20cc008eed9eba02648c38a361195dfff3fd5",
+    "public/docs/operator-guide.md": "62f47f289e07dd4495b1e53cccc06b8af38ce3885f732aa1878c745a810d75c4",
+    "public/docs/repo-targets.md": "74d51f53b66d977e5b52e5b23fc0a226da24ee447750cd1a307103ed3a6750ff",
+    "docs/agent-profiles/README.md": "ec65e3a57d435b331c1d106ca98e007faa7da7042b6cd2026a9bd992496859ed",
+    "docs/agent-profiles/codex-cli.md": "2f94da04077d73fa57b99edd98d440974684c7b87324fe77c117b59a19408050",
+    "docs/agent-profiles/claude-code.md": "8a467d59b93ad97a63f02f106a6824cf67eb781acc6abdd6ff95fb4fb54113f2",
+    "docs/agent-profiles/cursor.md": "3e817ef9fee7b639be95660a47ec6c944ef4e1632986772e08cfc29c4589636c",
+    "docs/agent-profiles/aider.md": "a586717619896c4195b5ca58e1e048f80bd05a6c3fed033a75a2b1369818ad52",
+    "docs/agent-profiles/hermes.md": "3cce3f20d57a842fbe5a7487f5acbe290ec55da939d18b6605178950760789cb",
+    "docs/agent-profiles/openclaw.md": "8431c81fc33c9021e7ad0073074a151093e0721b461ddb5a640131a1155c1aef",
+    "docs/agent-profiles/generic.md": "50eeb5d1a90718aba250bb811b3c43c727d9c74bf97ac6136405f79988ae70a6",
+    "public/CHANGELOG.md": "bc3fbe8901f9c9f8839085ba1716fb93e5c3eea85d4fdafea75884c4f45d753b",
+    "public/docs/release-distribution.md": "499bf643612ef20d6a2a803115ab069084c46bf9e0584e0cec51d892a6bfaa0c",
+    "public/docs/install-and-release.md": "bbdf3fa11e1f7ea7927b54fa0588d2aa9fb0edf250ce4647f010ab9e82c14926",
+    "public/docs/glossary.md": "3a52a3c1cae66bfc3351a5e77048b552c6b282d10a821e36b5a54537f6f90fda",
+    "public/docs/cli-reference.md": "46e67e8f3eb4443756c4449a3a6d6a4f669850891c0c2276d6a2851f54dcb842",
+    "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
+  },
+  "sourceFileOriginalMissing": []
+}

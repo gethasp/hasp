@@ -15,8 +15,16 @@ Required environment:
 
 Optional environment:
   HASP_R2_PREFIX         defaults to hasp/releases
-  HASP_R2_PUBLISH_LATEST also refresh latest/
+  HASP_R2_PROMOTE_LATEST also refresh latest/ after immutable publish
 EOF
+}
+
+print_aws() {
+  printf 'aws'
+  for arg in "$@"; do
+    printf ' %q' "$arg"
+  done
+  printf '\n'
 }
 
 dry_run=0
@@ -44,28 +52,56 @@ fi
 : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
 
 prefix="${HASP_R2_PREFIX:-hasp/releases}"
+prefix="${prefix#/}"
+prefix="${prefix%/}"
 version_target="s3://${HASP_R2_BUCKET}/${prefix}/${release_tag}/"
+version_prefix="${prefix}/${release_tag}/"
 
-sync_args=(--endpoint-url "$HASP_R2_ENDPOINT" s3 sync "$release_dir/" "$version_target" --delete)
 if [[ "$dry_run" == "1" ]]; then
-  printf 'aws'
-  for arg in "${sync_args[@]}"; do
-    printf ' %q' "$arg"
-  done
-  printf '\n'
+  print_aws --endpoint-url "$HASP_R2_ENDPOINT" s3api list-objects-v2 --bucket "$HASP_R2_BUCKET" --prefix "$version_prefix" --max-items 1 --query 'Contents[0].Key' --output text
+  (
+    cd "$release_dir"
+    while IFS= read -r -d '' file; do
+      rel="${file#./}"
+      print_aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object --bucket "$HASP_R2_BUCKET" --key "${version_prefix}${rel}" --body "$release_dir/$rel" --if-none-match '*'
+    done < <(find . -type f -print0)
+  )
 else
-  aws "${sync_args[@]}"
+  existing="$(
+    aws --endpoint-url "$HASP_R2_ENDPOINT" s3api list-objects-v2 \
+      --bucket "$HASP_R2_BUCKET" \
+      --prefix "$version_prefix" \
+      --max-items 1 \
+      --query 'Contents[0].Key' \
+      --output text
+  )"
+  if [[ -n "$existing" && "$existing" != "None" && "$existing" != "null" ]]; then
+    echo "release prefix already contains objects, refusing to mutate immutable version path: $version_target" >&2
+    exit 1
+  fi
+  (
+    cd "$release_dir"
+    while IFS= read -r -d '' file; do
+      rel="${file#./}"
+      aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object \
+        --bucket "$HASP_R2_BUCKET" \
+        --key "${version_prefix}${rel}" \
+        --body "$release_dir/$rel" \
+        --if-none-match '*' >/dev/null
+    done < <(find . -type f -print0)
+  )
 fi
 
 if [[ "${HASP_R2_PUBLISH_LATEST:-0}" == "1" ]]; then
+  echo "HASP_R2_PUBLISH_LATEST is deprecated; use HASP_R2_PROMOTE_LATEST after Worker deployment" >&2
+  exit 2
+fi
+
+if [[ "${HASP_R2_PROMOTE_LATEST:-0}" == "1" ]]; then
   latest_target="s3://${HASP_R2_BUCKET}/${prefix}/latest/"
   latest_args=(--endpoint-url "$HASP_R2_ENDPOINT" s3 sync "$release_dir/" "$latest_target" --delete)
   if [[ "$dry_run" == "1" ]]; then
-    printf 'aws'
-    for arg in "${latest_args[@]}"; do
-      printf ' %q' "$arg"
-    done
-    printf '\n'
+    print_aws "${latest_args[@]}"
   else
     aws "${latest_args[@]}"
   fi

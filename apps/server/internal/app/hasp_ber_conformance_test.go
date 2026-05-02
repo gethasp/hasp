@@ -603,7 +603,7 @@ func (s socketStarter) Connect(ctx context.Context) (*runtime.Client, error) {
 
 func serveAppRuntimeStarter(t *testing.T, service appRuntimeService) starter {
 	t.Helper()
-	socketPath := filepath.Join("/tmp", "hasp-app-runtime-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
+	socketPath := shortSocketPath(t, "runtime-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
 	_ = os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {

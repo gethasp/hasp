@@ -1,0 +1,18 @@
+---
+permalink: "/sitemap.xml"
+eleventyExcludeFromCollections: true
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{% for url in docs | sitemapUrls %}
+  <url>
+    <loc>{{ url | absoluteUrl(site.url) }}</loc>
+  </url>
+{% endfor %}
+  <url>
+    <loc>{{ "/llms.txt" | absoluteUrl(site.url) }}</loc>
+  </url>
+  <url>
+    <loc>{{ "/llms-full.txt" | absoluteUrl(site.url) }}</loc>
+  </url>
+</urlset>

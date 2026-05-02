@@ -1,0 +1,213 @@
+---
+layout: layouts/base.njk
+title: "hasp · comparison"
+description: "A source-backed comparison of HASP against adjacent AI-agent secret, vault, gateway, and governance tools."
+permalink: "/comparison/"
+---
+
+<div class="doc compare-page">
+  <header class="compare-hero">
+    <div>
+      <div class="pid"><span>COMPARE · {{ comparison.updated_at }}</span><span>Evidence-backed</span></div>
+      <h1>Market comparison for agent-secret infrastructure. <em>Trust boundaries, strengths, and gaps.</em></h1>
+    </div>
+  </header>
+
+  <section class="compare-section compare-dark">
+    <h2><b>Tier 01 <em>· executive read</em></b></h2>
+    <div class="matrix-wrap">
+      <table class="compare-table verdict-table">
+        <thead>
+          <tr>
+            <th scope="col">System</th>
+            <th scope="col">Where it is genuinely strong</th>
+            <th scope="col">Where it is weak</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">
+              {{ comparison.haspExecutive.name }}
+              <small>{{ comparison.haspExecutive.license }}</small>
+            </th>
+            <td>
+              {% for item in comparison.haspExecutive.strong %}
+              <p>{{ item }}</p>
+              {% endfor %}
+            </td>
+            <td>
+              {% for item in comparison.haspExecutive.weak %}
+              <p>{{ item }}</p>
+              {% endfor %}
+            </td>
+          </tr>
+          {% for competitor in comparison.competitors %}
+          <tr>
+            <th scope="row">
+              <a href="{{ competitor.url }}">{{ competitor.name }}</a>
+              <small>{{ competitor.license }}</small>
+            </th>
+            <td>
+              {% for item in competitor.competitor_edge_short %}
+              <p>{{ item }}</p>
+              {% endfor %}
+            </td>
+            <td>
+              {% for item in competitor.weakness_short %}
+              <p>{{ item }}</p>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="compare-section">
+    <h2><b>Tier 02 <em>· capability matrix</em></b></h2>
+    <div class="matrix-wrap">
+      <table class="compare-table capability-table">
+        <thead>
+          <tr>
+            <th scope="col">Capability</th>
+            <th scope="col" class="hasp-col">HASP</th>
+            {% for competitor in comparison.competitors %}
+            <th scope="col">{{ competitor.name }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for feature in comparison.featureMatrix %}
+          <tr>
+            <th scope="row">{{ feature.label }}</th>
+            <td class="hasp-col{% if feature.hasp == 'Yes' %} yes-cell{% endif %}">{{ feature.hasp }}</td>
+            {% for entry in feature.entries %}
+            <td data-position="{{ entry.position }}"{% if entry.value == "Yes" %} class="yes-cell"{% endif %}>{{ entry.value }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="compare-section compare-dark">
+    <h2><b>Tier 03 <em>· operating model</em></b></h2>
+    <div class="operating-list">
+      {% for card in comparison.operatingCards %}
+      <article class="operating-row">
+        <div>
+          <span>0{{ loop.index }}</span>
+          <h3>{{ card.label }}</h3>
+          <p>{{ card.question }}</p>
+        </div>
+        <div>
+          <b>HASP</b>
+          <p>{{ card.hasp }}</p>
+        </div>
+        <div>
+          <b>Other paths</b>
+          {% for item in card.alternatives %}
+          <p>{{ item }}</p>
+          {% endfor %}
+        </div>
+        <div>
+          <b>Buyer check</b>
+          <p>{{ card.read }}</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="compare-install-cta">
+    <div class="order">
+      <div>
+        <h3>One signed binary. <em>One encrypted file. That is the whole product surface.</em></h3>
+        <p>Source-available. SBOM, SLSA provenance, code-signing status, and reproducible-build sidecar ship inside the release artifact. <code>scripts/hasp-verify-release.sh</code> verifies the signed checksum manifest plus the tarball and binary signatures before install.</p>
+      </div>
+      <div class="install" data-install-tabs>
+        <div class="install-tabs" role="tablist" aria-label="Install methods">
+          <button type="button" id="comparison-install-tab-brew" role="tab" aria-selected="true" aria-controls="comparison-install-panel-brew" data-install-tab="brew">Brew</button>
+          <button type="button" id="comparison-install-tab-source" role="tab" aria-selected="false" aria-controls="comparison-install-panel-source" tabindex="-1" data-install-tab="source">From source</button>
+          <button type="button" id="comparison-install-tab-script" role="tab" aria-selected="false" aria-controls="comparison-install-panel-script" tabindex="-1" data-install-tab="script">Install script</button>
+        </div>
+
+        <div class="install-panel" id="comparison-install-panel-brew" role="tabpanel" aria-labelledby="comparison-install-tab-brew" data-install-panel="brew">
+          <b>Homebrew</b>
+          <pre><code>$ brew tap gethasp/homebrew-tap
+$ brew install hasp
+$ hasp setup
+$ hasp app connect myapp
+$ hasp proof
+
+→ ok proof passed · 412ms
+→ ok vault unlocked · binding ./api
+→ ok agent never read</code></pre>
+        </div>
+
+        <div class="install-panel" id="comparison-install-panel-source" role="tabpanel" aria-labelledby="comparison-install-tab-source" data-install-panel="source" hidden>
+          <b>From source</b>
+          <pre><code>$ git clone https://github.com/gethasp/hasp
+$ cd hasp
+$ make build
+$ ./bin/hasp setup
+$ ./bin/hasp proof
+
+→ ok binary built from source
+→ ok vault initialized
+→ ok proof passed</code></pre>
+        </div>
+
+        <div class="install-panel" id="comparison-install-panel-script" role="tabpanel" aria-labelledby="comparison-install-tab-script" data-install-panel="script" hidden>
+          <b>Install script</b>
+          <pre><code>$ curl -fsSL https://gethasp.com/install.sh | sh
+$ hasp setup
+$ hasp app connect myapp
+$ hasp proof
+
+→ ok hasp installed on PATH
+→ ok vault unlocked · binding ./api
+→ ok agent never read</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-install-tabs]").forEach((root) => {
+    const tabs = Array.from(root.querySelectorAll("[data-install-tab]"));
+    const panels = Array.from(root.querySelectorAll("[data-install-panel]"));
+
+    const activate = (key) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.installTab === key;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.dataset.installPanel !== key;
+      });
+    };
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => activate(tab.dataset.installTab));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[nextIndex].focus();
+        activate(tabs[nextIndex].dataset.installTab);
+      });
+    });
+  });
+})();
+</script>

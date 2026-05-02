@@ -152,7 +152,7 @@ func TestSessionCommandUnknownSubcommand(t *testing.T) {
 // A panic is the only unacceptable outcome.
 func TestSessionCommandSubcommandsReachable(t *testing.T) {
 	subcommands := []string{
-		"open", "grant-plaintext", "revoke", "list", "resolve",
+		"open", "grant-plaintext", "grant-mutation", "revoke", "list", "resolve",
 	}
 	for _, sub := range subcommands {
 		t.Run(sub, func(t *testing.T) {

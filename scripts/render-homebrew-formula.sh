@@ -11,7 +11,7 @@ Render the HASP Homebrew tap formula for a released artifact.
 EOF
 }
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cat "$repo_root/VERSION")"
 
 render_formula() {
@@ -19,37 +19,31 @@ render_formula() {
   local body="$2"
   mkdir -p "$(dirname "$output_path")"
   {
-    cat <<EOF
-class Hasp < Formula
-  desc "Local-first broker for managed secrets in agent workflows"
-  homepage "https://gethasp.com"
-  version "${version}"
-  license :cannot_represent
-EOF
+    printf 'class Hasp < Formula\n'
+    printf '  desc "Local-first broker for managed secrets in agent workflows"\n'
+    printf '  homepage "https://gethasp.com"\n'
+    printf '  version "%s"\n' "$version"
+    printf '  license :cannot_represent\n'
     printf '%b\n' "$body"
-    cat <<'EOF'
-  def install
-    libexec.install "bin"
-    bin.install_symlink libexec/"bin/hasp"
-    (pkgshare/"agent-profiles").install Dir["agent-profiles/*"]
-    (pkgshare/"profiles").install Dir["profiles/*"]
-    (pkgshare/"scripts").install Dir["scripts/*"]
-    pkgshare.install "README.md", "QUICKSTART.md", "OPERATOR_GUIDE.md", "PRODUCTION_GUIDE.md", "RELEASE_MANIFEST", "LICENSE"
-  end
-
-  def caveats
-    <<~EOS
-      Add #{bin} to PATH if it is not already there.
-      Set HASP_HOME and HASP_MASTER_PASSWORD before first use.
-      Package docs and helper scripts are installed under: #{pkgshare}
-    EOS
-  end
-
-  test do
-    assert_match version.to_s, shell_output("#{bin}/hasp version")
-  end
-end
-EOF
+    printf '  def install\n'
+    printf '    libexec.install "bin"\n'
+    printf '    bin.install_symlink libexec/"bin/hasp"\n'
+    printf '    (pkgshare/"agent-profiles").install Dir["agent-profiles/*"]\n'
+    printf '    (pkgshare/"profiles").install Dir["profiles/*"]\n'
+    printf '    (pkgshare/"scripts").install Dir["scripts/*"]\n'
+    printf '    pkgshare.install "README.md", "QUICKSTART.md", "OPERATOR_GUIDE.md", "PRODUCTION_GUIDE.md", "RELEASE_MANIFEST", "LICENSE"\n'
+    printf '  end\n\n'
+    printf '  def caveats\n'
+    printf '    <<~EOS\n'
+    printf '      Add #{bin} to PATH if it is not already there.\n'
+    printf '      Set HASP_HOME and HASP_MASTER_PASSWORD before first use.\n'
+    printf '      Package docs and helper scripts are installed under: #{pkgshare}\n'
+    printf '    EOS\n'
+    printf '  end\n\n'
+    printf '  test do\n'
+    printf '    assert_match version.to_s, shell_output("#{bin}/hasp version")\n'
+    printf '  end\n'
+    printf 'end\n'
   } >"$output_path"
 }
 
@@ -65,42 +59,7 @@ if [[ "$1" == "--metadata" ]]; then
     echo "metadata file not found: $metadata_path" >&2
     exit 1
   fi
-  formula_body="$(python3 - "$metadata_path" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-assets = {(item["os"], item["arch"]): item for item in data["artifacts"]}
-
-required = [
-    ("darwin", "arm64"),
-    ("darwin", "amd64"),
-    ("linux", "arm64"),
-    ("linux", "amd64"),
-]
-for key in required:
-    if key not in assets:
-        raise SystemExit(f"missing release metadata for {key[0]} {key[1]}")
-
-def stanza(formula_os: str, asset_os: str) -> str:
-    return f'''  on_{formula_os} do
-    on_arm do
-      url "{assets[(asset_os, "arm64")]["url"]}"
-      sha256 "{assets[(asset_os, "arm64")]["sha256"]}"
-    end
-    on_intel do
-      url "{assets[(asset_os, "amd64")]["url"]}"
-      sha256 "{assets[(asset_os, "amd64")]["sha256"]}"
-    end
-  end'''
-
-print(stanza("macos", "darwin"))
-print(stanza("linux", "linux"))
-PY
-)"
+  formula_body="$(python3 "$repo_root/scripts/render_homebrew_formula_body.py" "$metadata_path" "$repo_root/scripts/release-targets.json")"
   render_formula "$output" "$formula_body"
   exit 0
 fi

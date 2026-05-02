@@ -218,6 +218,110 @@ func (h *Handle) PlaintextGrantActive(sessionToken string, itemName string, acti
 	return ok && grantIsActive(grant.Scope, grant.ExpiresAt, grant.RevokedAt, grant.UsedAt, h.store.now())
 }
 
+func normalizeSecretMutationGrant(bindingID string, sessionToken string, itemName string, action SecretMutationAction, scope GrantScope, ttl time.Duration) (string, time.Duration, error) {
+	if strings.TrimSpace(bindingID) == "" {
+		return "", 0, fmt.Errorf("binding id is required")
+	}
+	if strings.TrimSpace(sessionToken) == "" {
+		return "", 0, fmt.Errorf("session token is required")
+	}
+	itemName = strings.TrimSpace(itemName)
+	if itemName == "" {
+		return "", 0, fmt.Errorf("item name is required")
+	}
+	if action != SecretMutationDelete && action != SecretMutationExpose && action != SecretMutationHide {
+		return "", 0, fmt.Errorf("unsupported secret mutation action %q", action)
+	}
+	if scope != GrantOnce {
+		return "", 0, fmt.Errorf("secret mutation grants must use scope %q", GrantOnce)
+	}
+	if ttl <= 0 {
+		ttl = DefaultMutationGrantTTL
+	}
+	if ttl > MaxMutationGrantTTL {
+		return "", 0, fmt.Errorf("secret mutation grants may not exceed %s", MaxMutationGrantTTL)
+	}
+	return itemName, ttl, nil
+}
+
+func (h *Handle) newSecretMutationGrant(bindingID string, sessionToken string, itemName string, action SecretMutationAction, grantedBy string, ttl time.Duration) (MutationGrant, error) {
+	expiresAt := h.store.now().Add(ttl)
+	id, err := randomHex(10)
+	if err != nil {
+		return MutationGrant{}, fmt.Errorf("mint mutation grant id: %w", err)
+	}
+	grant := MutationGrant{
+		ID:           id,
+		BindingID:    bindingID,
+		ItemName:     itemName,
+		SessionToken: sessionToken,
+		Action:       action,
+		GrantedBy:    grantedBy,
+		Scope:        GrantOnce,
+		ExpiresAt:    &expiresAt,
+	}
+	return grant, nil
+}
+
+func (h *Handle) appendSecretMutationGrantAudit(bindingID string, itemName string, action SecretMutationAction, ttl time.Duration) {
+	h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{
+		"action":          "grant.secret_mutation",
+		"binding_id":      bindingID,
+		"item":            itemName,
+		"mutation_action": action,
+		"ttl_seconds":     int(ttl.Seconds()),
+	})
+}
+
+func (h *Handle) GrantSecretMutation(bindingID string, sessionToken string, itemName string, action SecretMutationAction, grantedBy string, scope GrantScope, ttl time.Duration) (MutationGrant, error) {
+	itemName, ttl, err := normalizeSecretMutationGrant(bindingID, sessionToken, itemName, action, scope, ttl)
+	if err != nil {
+		return MutationGrant{}, err
+	}
+	if !h.projectLeaseActive(bindingID, sessionToken) {
+		return MutationGrant{}, fmt.Errorf("active project lease required for secret mutation grant")
+	}
+	grant, err := h.newSecretMutationGrant(bindingID, sessionToken, itemName, action, grantedBy, ttl)
+	if err != nil {
+		return MutationGrant{}, err
+	}
+	key := mutationGrantKey(bindingID, sessionToken, itemName, action)
+	previous, hadPrevious := h.state.MutationGrants[key]
+	h.state.MutationGrants[key] = grant
+	if err := h.persist(); err != nil {
+		if hadPrevious {
+			h.state.MutationGrants[key] = previous
+		} else {
+			delete(h.state.MutationGrants, key)
+		}
+		return MutationGrant{}, err
+	}
+	h.appendSecretMutationGrantAudit(bindingID, itemName, action, ttl)
+	return grant, nil
+}
+
+func (h *Handle) ConsumeSecretMutationGrant(bindingID string, sessionToken string, itemName string, action SecretMutationAction) error {
+	itemName = strings.TrimSpace(itemName)
+	key := mutationGrantKey(bindingID, sessionToken, itemName, action)
+	grant, ok := h.state.MutationGrants[key]
+	if !ok || !h.mutationGrantActive(bindingID, sessionToken, itemName, action) {
+		return fmt.Errorf("secret mutation grant required for %s", action)
+	}
+	now := h.store.now()
+	grant.UsedAt = &now
+	h.state.MutationGrants[key] = grant
+	err := h.persist()
+	if err == nil {
+		h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{
+			"action":          "consume.secret_mutation",
+			"binding_id":      bindingID,
+			"item":            itemName,
+			"mutation_action": action,
+		})
+	}
+	return err
+}
+
 func (h *Handle) RevokeProjectLease(bindingID string, sessionToken string) error {
 	key := leaseKey(bindingID, sessionToken)
 	lease, ok := h.state.ProjectLeases[key]
@@ -231,6 +335,12 @@ func (h *Handle) RevokeProjectLease(bindingID string, sessionToken string) error
 		if grant.ProjectBindingID == bindingID && grant.LeaseID == lease.ID && grant.RevokedAt == nil {
 			grant.RevokedAt = &now
 			h.state.ConvenienceGrants[key] = grant
+		}
+	}
+	for key, grant := range h.state.MutationGrants {
+		if grant.BindingID == bindingID && grant.SessionToken == sessionToken && grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.MutationGrants[key] = grant
 		}
 	}
 	err := h.persist()
@@ -254,6 +364,13 @@ func (h *Handle) RevokeGrantsForItem(itemName string) (int, error) {
 		if grant.ItemName == itemName && grant.RevokedAt == nil {
 			grant.RevokedAt = &now
 			h.state.PlaintextGrants[key] = grant
+			revoked++
+		}
+	}
+	for key, grant := range h.state.MutationGrants {
+		if grant.ItemName == itemName && grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.MutationGrants[key] = grant
 			revoked++
 		}
 	}
@@ -295,6 +412,13 @@ func (h *Handle) RevokeAllGrants() (int, error) {
 		if grant.RevokedAt == nil {
 			grant.RevokedAt = &now
 			h.state.PlaintextGrants[key] = grant
+			revoked++
+		}
+	}
+	for key, grant := range h.state.MutationGrants {
+		if grant.RevokedAt == nil {
+			grant.RevokedAt = &now
+			h.state.MutationGrants[key] = grant
 			revoked++
 		}
 	}

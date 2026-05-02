@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -140,8 +141,13 @@ func callSecretUpsert(ctx context.Context, handle *store.Handle, call toolCall, 
 
 func callSecretDelete(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	name := stringArg(call.Arguments, "name", "")
+	projectRoot := stringArg(call.Arguments, "project_root", defaultOptionalMCPProjectRoot())
 	if name == "" {
 		return nil, errors.New("name is required")
+	}
+	item, binding, err := authorizeSecretMutationMCP(ctx, handle, call, projectRoot, name, store.SecretMutationDelete)
+	if err != nil {
+		return nil, err
 	}
 	exposures := handle.ItemExposures(name)
 	if err := handle.DeleteItem(name); err != nil {
@@ -152,14 +158,16 @@ func callSecretDelete(ctx context.Context, handle *store.Handle, call toolCall) 
 		"action":                "secret.delete",
 		"surface":               "mcp",
 		"host_label":            hostLabel,
-		"item_name":             name,
+		"item_name":             item.Name,
+		"project_root":          binding.CanonicalRoot,
 		"invalidated_exposures": len(exposures),
 		"outcome":               "deleted",
 	})
 	return map[string]any{
-		"item_name":             name,
+		"item_name":             item.Name,
+		"project_root":          binding.CanonicalRoot,
 		"invalidated_exposures": len(exposures),
-		"named_reference":       store.NamedReference(name),
+		"named_reference":       store.NamedReference(item.Name),
 		"outcome":               "deleted",
 	}, nil
 }
@@ -211,15 +219,12 @@ func callSecretExpose(ctx context.Context, handle *store.Handle, call toolCall) 
 	if name == "" || strings.TrimSpace(projectRoot) == "" {
 		return nil, errors.New("project_root and name are required")
 	}
-	if _, err := getItemMCPFn(handle, name); err != nil {
-		return nil, err
-	}
-	binding, _, err := ensureProjectBindingExplicitMCP(ctx, handle, projectRoot)
+	item, binding, err := authorizeSecretMutationMCP(ctx, handle, call, projectRoot, name, store.SecretMutationExpose)
 	if err != nil {
 		return nil, err
 	}
-	existing := existingExposureReferenceMCP(handle.ItemExposures(name), binding.CanonicalRoot)
-	reference, err := bindItemAliasMCPFn(handle, ctx, binding.CanonicalRoot, name)
+	existing := existingExposureReferenceMCP(handle.ItemExposures(item.Name), binding.CanonicalRoot)
+	reference, err := bindItemAliasMCPFn(handle, ctx, binding.CanonicalRoot, item.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -232,16 +237,16 @@ func callSecretExpose(ctx context.Context, handle *store.Handle, call toolCall) 
 		"action":       "secret.expose",
 		"surface":      "mcp",
 		"host_label":   hostLabel,
-		"item_name":    name,
+		"item_name":    item.Name,
 		"project_root": binding.CanonicalRoot,
 		"reference":    reference,
 		"outcome":      outcome,
 	})
 	return map[string]any{
-		"item_name":       name,
+		"item_name":       item.Name,
 		"project_root":    binding.CanonicalRoot,
 		"reference":       reference,
-		"named_reference": store.NamedReference(name),
+		"named_reference": store.NamedReference(item.Name),
 		"outcome":         outcome,
 	}, nil
 }
@@ -252,11 +257,11 @@ func callSecretHide(ctx context.Context, handle *store.Handle, call toolCall) (m
 	if name == "" || strings.TrimSpace(projectRoot) == "" {
 		return nil, errors.New("project_root and name are required")
 	}
-	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+	item, binding, err := authorizeSecretMutationMCP(ctx, handle, call, projectRoot, name, store.SecretMutationHide)
 	if err != nil {
 		return nil, err
 	}
-	removed, err := hideItemMCPFn(handle, ctx, root, name)
+	removed, err := hideItemMCPFn(handle, ctx, binding.CanonicalRoot, item.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -269,18 +274,42 @@ func callSecretHide(ctx context.Context, handle *store.Handle, call toolCall) (m
 		"action":       "secret.hide",
 		"surface":      "mcp",
 		"host_label":   hostLabel,
-		"item_name":    name,
-		"project_root": root,
+		"item_name":    item.Name,
+		"project_root": binding.CanonicalRoot,
 		"references":   removed,
 		"outcome":      outcome,
 	})
 	return map[string]any{
-		"item_name":       name,
-		"project_root":    root,
+		"item_name":       item.Name,
+		"project_root":    binding.CanonicalRoot,
 		"references":      removed,
-		"named_reference": store.NamedReference(name),
+		"named_reference": store.NamedReference(item.Name),
 		"outcome":         outcome,
 	}, nil
+}
+
+func authorizeSecretMutationMCP(ctx context.Context, handle *store.Handle, call toolCall, projectRoot string, name string, action store.SecretMutationAction) (store.Item, store.Binding, error) {
+	if strings.TrimSpace(projectRoot) == "" {
+		return store.Item{}, store.Binding{}, errors.New("project_root and name are required")
+	}
+	item, err := getItemMCPFn(handle, name)
+	if err != nil {
+		return store.Item{}, store.Binding{}, err
+	}
+	hostLabel := defaultMCPHostLabel(call)
+	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), hostLabel)
+	if err != nil {
+		return store.Item{}, store.Binding{}, err
+	}
+	binding, _, err := ensureProjectBindingExplicitMCP(ctx, handle, projectRoot)
+	if err != nil {
+		return store.Item{}, store.Binding{}, err
+	}
+	if err := handle.ConsumeSecretMutationGrant(binding.ID, session.Token, item.Name, action); err != nil {
+		return store.Item{}, store.Binding{}, err
+	}
+	appendAuditApproval(binding.ID, item.Name)
+	return item, binding, nil
 }
 
 func ensureProjectBindingExplicitMCP(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
@@ -323,5 +352,6 @@ func appendSecretAuditMCP(eventType string, _ string, details map[string]any) {
 	if err != nil {
 		return
 	}
+	log = log.WithKey(auditlog.GetHMACKey())
 	_, _ = log.Append(eventType, "agent", details)
 }

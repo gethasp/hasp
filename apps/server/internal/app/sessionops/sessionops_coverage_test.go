@@ -196,6 +196,9 @@ func fullSessionDeps(t *testing.T, fake *fakeSessionRPC) Deps {
 		GetItem: func(_ *store.Handle, name string) (store.Item, error) {
 			return store.Item{Name: name, Kind: store.ItemKindKV}, nil
 		},
+		ResolveBindingView: func(context.Context, *store.Handle, string) (store.Binding, []store.VisibleReference, error) {
+			return store.Binding{ID: "binding"}, nil, nil
+		},
 		NewStarter: func() (Starter, error) { return fakeSessionStarter{socketPath: socket}, nil },
 		RenderJSONOrHuman: func(_ context.Context, stdout io.Writer, _ bool, _ any, human func(io.Writer) error) error {
 			return human(stdout)
@@ -213,6 +216,18 @@ func fullSessionDeps(t *testing.T, fake *fakeSessionRPC) Deps {
 				return store.PlaintextCopy, nil
 			default:
 				return "", errors.New("action")
+			}
+		},
+		ParseMutationAction: func(value string) (store.SecretMutationAction, error) {
+			switch value {
+			case string(store.SecretMutationDelete):
+				return store.SecretMutationDelete, nil
+			case string(store.SecretMutationExpose):
+				return store.SecretMutationExpose, nil
+			case string(store.SecretMutationHide):
+				return store.SecretMutationHide, nil
+			default:
+				return "", errors.New("mutation")
 			}
 		},
 		ParseGrantScope: func(value string) store.GrantScope { return store.GrantScope(value) },
@@ -242,6 +257,11 @@ func fullSessionDeps(t *testing.T, fake *fakeSessionRPC) Deps {
 					expiresAt := fake.now.Add(time.Minute)
 					return store.PlaintextGrant{Scope: store.GrantOnce, ExpiresAt: &expiresAt}, nil
 				},
+				ApproveMutation: func(runtime.SessionView, string, store.SecretMutationAction) error { return nil },
+				UseMutationGrant: func(*store.Handle, string, string, string, store.SecretMutationAction, time.Duration) (store.MutationGrant, error) {
+					expiresAt := fake.now.Add(time.Minute)
+					return store.MutationGrant{Scope: store.GrantOnce, ExpiresAt: &expiresAt}, nil
+				},
 				LocalUser: func() (string, error) { return "me", nil },
 			}
 		},
@@ -261,6 +281,7 @@ func TestSessionCommandSuccessPaths(t *testing.T) {
 	successes := [][]string{
 		{"open", "--host-label", "agent", "--project-root", "~/repo"},
 		{"grant-plaintext", "--token", "tok", "--item", "ALPHA", "--action", "reveal"},
+		{"grant-mutation", "--token", "tok", "--item", "ALPHA", "--action", "expose"},
 		{"resolve", "--token", "tok"},
 		{"revoke", "--token", "tok"},
 		{"revoke", "--all"},
@@ -287,6 +308,15 @@ func TestSessionCommandSuccessPaths(t *testing.T) {
 		},
 	}); err != nil {
 		t.Fatalf("grant with local deps: %v", err)
+	}
+	if err := sessionGrantMutation(ctx, deps, []string{"--token", "tok", "--item", "ALPHA", "--action", "hide"}, &out, &LocalDeps{
+		ApproveMutation: func(runtime.SessionView, string, store.SecretMutationAction) error { return nil },
+		UseMutationGrant: func(*store.Handle, string, string, string, store.SecretMutationAction, time.Duration) (store.MutationGrant, error) {
+			expiresAt := time.Now()
+			return store.MutationGrant{Scope: store.GrantOnce, ExpiresAt: &expiresAt}, nil
+		},
+	}); err != nil {
+		t.Fatalf("mutation grant with local deps: %v", err)
 	}
 }
 
@@ -371,6 +401,75 @@ func TestSessionCommandErrorBranches(t *testing.T) {
 		}},
 		{"grant renderer missing", []string{"grant-plaintext", "--token", "tok", "--item", "A", "--action", "reveal"}, func(d *Deps) { d.RenderJSONOrHuman = nil }},
 		{"grant action renderer missing", []string{"grant-plaintext", "--token", "tok", "--item", "A", "--action", "reveal"}, func(d *Deps) { d.RenderSimpleAction = nil }},
+		{"mutation parse", []string{"grant-mutation", "--bad"}, nil},
+		{"mutation usage", []string{"grant-mutation"}, nil},
+		{"mutation parse action missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.ParseMutationAction = nil
+		}},
+		{"mutation parse scope missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.ParseGrantScope = nil
+		}},
+		{"mutation bad action", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "bad"}, nil},
+		{"mutation bad scope", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose", "--scope", "session"}, nil},
+		{"mutation starter missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.NewStarter = nil }},
+		{"mutation starter", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.NewStarter = func() (Starter, error) { return nil, errors.New("starter") }
+		}},
+		{"mutation ensure", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.NewStarter = func() (Starter, error) { return fakeSessionStarter{ensureErr: errors.New("ensure")}, nil }
+		}},
+		{"mutation vault missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.OpenVault = nil }},
+		{"mutation vault", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.OpenVault = func(context.Context) (*store.Handle, error) { return nil, errors.New("open") }
+		}},
+		{"mutation get missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.GetItem = nil }},
+		{"mutation get", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.GetItem = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get") }
+		}},
+		{"mutation binding missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.ResolveBindingView = nil }},
+		{"mutation binding", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.ResolveBindingView = func(context.Context, *store.Handle, string) (store.Binding, []store.VisibleReference, error) {
+				return store.Binding{}, nil, errors.New("binding")
+			}
+		}},
+		{"mutation approve local missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.DefaultLocalDeps = func() LocalDeps {
+				return LocalDeps{
+					UseMutationGrant: func(*store.Handle, string, string, string, store.SecretMutationAction, time.Duration) (store.MutationGrant, error) {
+						return store.MutationGrant{}, nil
+					},
+				}
+			}
+		}},
+		{"mutation use local missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.DefaultLocalDeps = func() LocalDeps {
+				return LocalDeps{
+					ApproveMutation: func(runtime.SessionView, string, store.SecretMutationAction) error { return nil },
+				}
+			}
+		}},
+		{"mutation approve", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.DefaultLocalDeps = func() LocalDeps {
+				return LocalDeps{
+					ApproveMutation: func(runtime.SessionView, string, store.SecretMutationAction) error { return errors.New("approve") },
+					UseMutationGrant: func(*store.Handle, string, string, string, store.SecretMutationAction, time.Duration) (store.MutationGrant, error) {
+						return store.MutationGrant{}, nil
+					},
+				}
+			}
+		}},
+		{"mutation use", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) {
+			d.DefaultLocalDeps = func() LocalDeps {
+				return LocalDeps{
+					ApproveMutation: func(runtime.SessionView, string, store.SecretMutationAction) error { return nil },
+					UseMutationGrant: func(*store.Handle, string, string, string, store.SecretMutationAction, time.Duration) (store.MutationGrant, error) {
+						return store.MutationGrant{}, errors.New("grant")
+					},
+				}
+			}
+		}},
+		{"mutation renderer missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.RenderJSONOrHuman = nil }},
+		{"mutation action renderer missing", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, func(d *Deps) { d.RenderSimpleAction = nil }},
 		{"resolve parse", []string{"resolve", "--bad"}, nil},
 		{"resolve usage", []string{"resolve"}, nil},
 		{"resolve starter missing", []string{"resolve", "--token", "tok"}, func(d *Deps) { d.NewStarter = nil }},
@@ -436,6 +535,8 @@ func TestSessionRPCErrorBranches(t *testing.T) {
 		{"open rpc", []string{"open"}, fakeSessionRPC{openErr: errors.New("open")}},
 		{"grant resolve", []string{"grant-plaintext", "--token", "tok", "--item", "A", "--action", "reveal"}, fakeSessionRPC{resolveErr: errors.New("resolve")}},
 		{"grant unsafe", []string{"grant-plaintext", "--token", "tok", "--item", "A", "--action", "reveal"}, fakeSessionRPC{agentSafe: false}},
+		{"mutation resolve", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, fakeSessionRPC{resolveErr: errors.New("resolve")}},
+		{"mutation unsafe", []string{"grant-mutation", "--token", "tok", "--item", "A", "--action", "expose"}, fakeSessionRPC{agentSafe: false}},
 		{"resolve rpc", []string{"resolve", "--token", "tok"}, fakeSessionRPC{resolveErr: errors.New("resolve")}},
 		{"revoke token rpc", []string{"revoke", "--token", "tok"}, fakeSessionRPC{revokeErr: errors.New("revoke")}},
 		{"revoke token false", []string{"revoke", "--token", "tok"}, fakeSessionRPC{revokeSessionOK: false}},
@@ -446,7 +547,7 @@ func TestSessionRPCErrorBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := tc.fake
 			deps := fullSessionDeps(t, &fake)
-			if tc.name == "grant unsafe" {
+			if tc.name == "grant unsafe" || tc.name == "mutation unsafe" {
 				fake.agentSafe = false
 			}
 			if tc.name == "revoke token false" {
@@ -465,6 +566,9 @@ func TestSessionAdditionalCommandBranches(t *testing.T) {
 	deps.DefaultLocalDeps = nil
 	if err := SessionCommand(ctx, deps, []string{"grant-plaintext", "--token", "tok", "--item", "ALPHA", "--action", "reveal"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected default local deps error")
+	}
+	if err := SessionCommand(ctx, deps, []string{"grant-mutation", "--token", "tok", "--item", "ALPHA", "--action", "expose"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("expected default mutation local deps error")
 	}
 
 	deps = fullSessionDeps(t, &fakeSessionRPC{})
@@ -529,6 +633,9 @@ func TestSessionFallbacksAndRenderHelpers(t *testing.T) {
 	}
 	if _, err := ld.UseGrant(&store.Handle{}, "tok", "A", store.PlaintextReveal, time.Second); err == nil {
 		t.Fatal("expected fallback use grant error")
+	}
+	if _, err := ld.UseMutationGrant(&store.Handle{}, "binding", "tok", "A", store.SecretMutationExpose, time.Second); err == nil {
+		t.Fatal("expected fallback use mutation grant error")
 	}
 	if _, err := ld.LocalUser(); err == nil {
 		t.Fatal("expected fallback local user error")

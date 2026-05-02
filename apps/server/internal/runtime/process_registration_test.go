@@ -137,15 +137,58 @@ func TestProcessRegistrationAndLineageEdgeBranches(t *testing.T) {
 	}
 }
 
+func TestRegisterProcessRejectsChildParentAndSiblingLineage(t *testing.T) {
+	lockRuntimeSeams(t)
+	origLineage := lineageExecCommand
+	defer func() { lineageExecCommand = origLineage }()
+	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
+		pid := args[len(args)-1]
+		switch pid {
+		case "20", "30":
+			return exec.Command("sh", "-c", "printf '10'")
+		case "10":
+			return exec.Command("sh", "-c", "printf '1'")
+		default:
+			return exec.Command("sh", "-c", "printf '0'")
+		}
+	}
+
+	if !peerSharesLineage(10, 20) {
+		t.Fatal("expected parent peer to register child request")
+	}
+	if peerSharesLineage(20, 10) {
+		t.Fatal("child peer must not register parent request")
+	}
+	if peerSharesLineage(20, 30) {
+		t.Fatal("sibling peer must not register sibling request")
+	}
+
+	broker := &brokerRPC{
+		startedAt: time.Now().UTC(),
+		sessions:  NewSessionStore(),
+		peerPID:   20,
+	}
+	session, err := broker.sessions.Open("agent", t.TempDir(), time.Minute, true, "mcp")
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	if err := broker.RegisterProcess(RegisterProcessRequest{SessionToken: session.Token, PID: 10}, &RegisterProcessResponse{}); err == nil {
+		t.Fatal("expected child-to-parent registration to be rejected")
+	}
+	if err := broker.RegisterProcess(RegisterProcessRequest{SessionToken: session.Token, PID: 30}, &RegisterProcessResponse{}); err == nil {
+		t.Fatal("expected sibling registration to be rejected")
+	}
+}
+
 func TestBrokerRPCRegisterAndResolveProcessErrors(t *testing.T) {
 	resolved, err := paths.Resolve()
 	if err != nil {
 		t.Fatalf("resolve paths: %v", err)
 	}
 	// peerPID mirrors what the per-connection serveConn path stamps. With
-		// peerPID = os.Getpid(), RegisterProcess(req.PID = os.Getpid()) passes
-		// the socket peer-PID gate so the test can exercise the downstream
-		// audit-nil / audit-non-nil branches.
+	// peerPID = os.Getpid(), RegisterProcess(req.PID = os.Getpid()) passes
+	// the socket peer-PID gate so the test can exercise the downstream
+	// audit-nil / audit-non-nil branches.
 	broker := &brokerRPC{
 		paths:     resolved,
 		startedAt: time.Now().UTC(),

@@ -56,6 +56,7 @@ func TestRunUsageAndFlagErrors(t *testing.T) {
 		{"keygen", "--bogus"},
 		{"sign", "--bogus"},
 		{"pubkey", "--bogus"},
+		{"verify", "--bogus"},
 		{"keygen"},
 		{"sign"},
 		{"pubkey"},
@@ -256,8 +257,57 @@ func TestVerifySuccessAndFailures(t *testing.T) {
 		t.Fatalf("bad tarball sig exit = %d, stderr=%q", code, stderr.String())
 	}
 
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "bad roots",
+			args: []string{"verify", "--roots-hex", "not-hex", "--keys", keysPath, "--keys-sig", keysSigPath, "--tarball", tarballPath, "--tarball-sig", tarballSigPath},
+		},
+		{
+			name: "missing keys file",
+			args: []string{"verify", "--roots-hex", rootsHex, "--keys", filepath.Join(dir, "missing-keys"), "--keys-sig", keysSigPath, "--tarball", tarballPath, "--tarball-sig", tarballSigPath},
+		},
+		{
+			name: "missing keys signature",
+			args: []string{"verify", "--roots-hex", rootsHex, "--keys", keysPath, "--keys-sig", filepath.Join(dir, "missing-keys-sig"), "--tarball", tarballPath, "--tarball-sig", tarballSigPath},
+		},
+		{
+			name: "missing tarball",
+			args: []string{"verify", "--roots-hex", rootsHex, "--keys", keysPath, "--keys-sig", keysSigPath, "--tarball", filepath.Join(dir, "missing-tarball"), "--tarball-sig", tarballSigPath},
+		},
+		{
+			name: "missing tarball signature",
+			args: []string{"verify", "--roots-hex", rootsHex, "--keys", keysPath, "--keys-sig", keysSigPath, "--tarball", tarballPath, "--tarball-sig", filepath.Join(dir, "missing-tarball-sig")},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stderr.Reset()
+			if code := run(tc.args, ioDiscard{}, &stderr); code != 1 {
+				t.Fatalf("exit = %d, stderr=%q", code, stderr.String())
+			}
+		})
+	}
+
+	badKeysSigPath := filepath.Join(dir, "bad-keys.sig")
+	if err := os.WriteFile(badKeysSigPath, bytes.Repeat([]byte{2}, ed25519.SignatureSize), 0o644); err != nil {
+		t.Fatalf("write bad keys sig: %v", err)
+	}
+	stderr.Reset()
+	if code := run([]string{"verify", "--roots-hex", rootsHex, "--keys", keysPath, "--keys-sig", badKeysSigPath, "--tarball", tarballPath, "--tarball-sig", tarballSigPath}, ioDiscard{}, &stderr); code != 1 {
+		t.Fatalf("bad KEYS sig exit = %d, stderr=%q", code, stderr.String())
+	}
+
+	roots, err := parseRootsHex("," + rootsHex + ",")
+	if err != nil || len(roots) != 1 {
+		t.Fatalf("parse roots with empty fields = len %d err %v", len(roots), err)
+	}
 	if _, err := parseRootsHex("not-hex"); err == nil {
 		t.Fatal("expected bad root hex error")
+	}
+	if _, err := parseRootsHex("00"); err == nil {
+		t.Fatal("expected wrong root length error")
 	}
 	if _, err := parseRootsHex(""); err == nil {
 		t.Fatal("expected empty roots error")

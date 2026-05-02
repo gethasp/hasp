@@ -66,6 +66,50 @@ func TestAppendWritesWithInstalledKey(t *testing.T) {
 	}
 }
 
+func TestEnsureKeyedChainSeed(t *testing.T) {
+	t.Setenv(paths.EnvHome, t.TempDir())
+	origNewLog := NewLogFn
+	origEvents := EventsFn
+	key := []byte("0123456789abcdef0123456789abcdef")
+	t.Cleanup(func() {
+		NewLogFn = origNewLog
+		EventsFn = origEvents
+		ClearHMACKey()
+	})
+
+	NewLogFn = audit.New
+	SetHMACKey(key)
+	EnsureKeyedChainSeed()
+	EnsureKeyedChainSeed()
+
+	log, err := audit.New()
+	if err != nil {
+		t.Fatalf("audit.New: %v", err)
+	}
+	events, err := log.WithKey(key).Events()
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(events) != 1 || events[0].Scheme != audit.SchemeHMACSHA256V1 {
+		t.Fatalf("expected one keyed seed event, got %+v", events)
+	}
+	if err := log.WithKey(key).Verify(); err != nil {
+		t.Fatalf("verify seeded chain: %v", err)
+	}
+
+	ClearHMACKey()
+	EnsureKeyedChainSeed()
+	NewLogFn = func() (*audit.Log, error) { return nil, errors.New("new log fail") }
+	SetHMACKey(key)
+	EnsureKeyedChainSeed()
+	NewLogFn = audit.New
+	EventsFn = func(*audit.Log) ([]audit.Event, error) { return nil, errors.New("events fail") }
+	EnsureKeyedChainSeed()
+	NewLogFn = func() (*audit.Log, error) { return &audit.Log{}, nil }
+	EventsFn = func(*audit.Log) ([]audit.Event, error) { return []audit.Event{{Type: audit.EventInit}}, nil }
+	EnsureKeyedChainSeed()
+}
+
 func TestActorLabelFallbacks(t *testing.T) {
 	origUser := CurrentUserFn
 	t.Cleanup(func() { CurrentUserFn = origUser })

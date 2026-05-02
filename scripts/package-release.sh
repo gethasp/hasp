@@ -68,6 +68,7 @@ bash ./scripts/generate-supply-chain-artifacts.sh "$artifact_dir" >/dev/null
 packaged_scripts=(
   hasp-common.sh
   hasp-release-common.sh
+  release-public-key-trust.sh
   hasp-install-release.sh
   hasp-upgrade-release.sh
   hasp-uninstall-release.sh
@@ -86,275 +87,80 @@ done
 /bin/cp -f "$repo_root/docs/agent-profiles/"*.md "$artifact_dir/agent-profiles/"
 /bin/cp -f "$repo_root/apps/server/profiles/"*.json "$artifact_dir/profiles/"
 
-cat >"$artifact_dir/RELEASE_MANIFEST" <<EOF
-artifact_name_expected='$artifact_name'
-name='$artifact_name'
-version='$version'
-os='$os_name'
-arch='$arch_name'
-release_files=(
-  'LICENSE'
-  'README.md'
-  'QUICKSTART.md'
-  'OPERATOR_GUIDE.md'
-  'PRODUCTION_GUIDE.md'
-  'RELEASE_MANIFEST'
-  'CODE_SIGNING_STATUS.json'
-  'REPRODUCIBLE_BUILD.json'
-  'sbom.spdx.json'
-  'slsa-provenance.json'
-  'bin/hasp'
-  'agent-profiles/README.md'
-  'agent-profiles/generic.md'
-  'profiles/aider.json'
-  'profiles/claude-code.json'
-  'profiles/codex-cli.json'
-  'profiles/cursor.json'
-  'profiles/hermes.json'
-  'profiles/openclaw.json'
-  'profiles/release-gates.json'
-  'scripts/hasp-install-release.sh'
-  'scripts/hasp-upgrade-release.sh'
-  'scripts/hasp-uninstall-release.sh'
-  'scripts/hasp-verify-release.sh'
-  'scripts/generate-supply-chain-artifacts.sh'
-  'scripts/render-homebrew-formula.sh'
+{
+  printf '# HASP packaged release\n\n'
+  printf 'Included artifacts:\n\n'
+  printf -- "- \`%s\`\n" \
+    bin/hasp \
+    LICENSE \
+    RELEASE_MANIFEST \
+    QUICKSTART.md \
+    OPERATOR_GUIDE.md \
+    PRODUCTION_GUIDE.md \
+    agent-profiles/ \
+    profiles/ \
+    scripts/
+  printf '\nDay-zero release files next to the tarball:\n\n'
+  printf -- "- \`%s\`\n" \
+    SHA256SUMS \
+    SHA256SUMS.asc \
+    hasp-release-public-key.asc \
+    '<artifact>.tar.gz.asc' \
+    '<artifact>_bin.asc' \
+    Formula/hasp.rb \
+    sbom.spdx.json \
+    slsa-provenance.json \
+    CODE_SIGNING_STATUS.json \
+    REPRODUCIBLE_BUILD.json
+  printf '\nStart with:\n\n'
+  printf "1. verify the tarball with \`./scripts/hasp-verify-release.sh <tarball>\`\n"
+  printf "2. run \`./bin/hasp version\`\n"
+  printf "3. read \`QUICKSTART.md\`\n"
+  printf "4. read \`PRODUCTION_GUIDE.md\` if you are testing V1 on a real machine\n"
+  printf "5. use \`./scripts/hasp-upgrade-release.sh\` and \`./scripts/hasp-uninstall-release.sh\` for lifecycle work\n"
+} >"$artifact_dir/README.md"
+
+copy_first_existing() {
+  local dest="$1"
+  shift
+  local candidate
+  for candidate in "$@"; do
+    if [[ -f "$candidate" ]]; then
+      /bin/cp -f "$candidate" "$dest"
+      return 0
+    fi
+  done
+  printf 'missing release documentation source for %s\n' "$dest" >&2
+  return 1
+}
+
+copy_first_existing "$artifact_dir/QUICKSTART.md" "$repo_root/public/QUICKSTART.md" "$repo_root/QUICKSTART.md"
+# shellcheck disable=SC2016
+python3 -c '
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace("## 1. Build or download a release", "## 1. Verify or install this packaged release")
+text = text.replace(
+    "From source:\n\n```bash\nmake build\nbin/hasp version\n```\n\n",
+    "",
 )
-EOF
-
-cat >"$artifact_dir/README.md" <<'EOF'
-# HASP packaged release
-
-Included artifacts:
-
-- `bin/hasp`
-- `LICENSE`
-- `RELEASE_MANIFEST`
-- `QUICKSTART.md`
-- `OPERATOR_GUIDE.md`
-- `PRODUCTION_GUIDE.md`
-- `agent-profiles/`
-- `profiles/`
-- `scripts/`
-
-Day-zero release files next to the tarball:
-
-- `SHA256SUMS`
-- `SHA256SUMS.asc`
-- `hasp-release-public-key.asc`
-- `<artifact>.tar.gz.asc`
-- `<artifact>_bin.asc`
-- `Formula/hasp.rb`
-- `sbom.spdx.json`
-- `slsa-provenance.json`
-- `CODE_SIGNING_STATUS.json`
-- `REPRODUCIBLE_BUILD.json`
-
-Start with:
-
-1. verify the tarball with `./scripts/hasp-verify-release.sh <tarball>`
-2. run `./bin/hasp version`
-3. read `QUICKSTART.md`
-4. read `PRODUCTION_GUIDE.md` if you are testing V1 on a real machine
-5. use `./scripts/hasp-upgrade-release.sh` and `./scripts/hasp-uninstall-release.sh` for lifecycle work
-EOF
-
-cat >"$artifact_dir/QUICKSTART.md" <<'EOF'
-# Quickstart
-
-## Verify and install the release
-
-```bash
-./scripts/hasp-verify-release.sh <tarball>
-./scripts/hasp-install-release.sh --verify <tarball> <install-dir>
-```
-
-The verifier expects these sidecars next to the tarball:
-
-- `SHA256SUMS`
-- `SHA256SUMS.asc`
-- `hasp-release-public-key.asc`
-- `<tarball>.asc`
-- `<artifact>_bin.asc`
-
-## Verify the binary
-
-```bash
-./bin/hasp version
-```
-
-## Initialize
-
-```bash
-export HASP_MASTER_PASSWORD='choose-a-strong-password'
-./bin/hasp init
-```
-
-## Import
-
-```bash
-./bin/hasp import .env
-./bin/hasp import service-account.json
-```
-
-## Rescue pasted values or shell-export snippets
-
-If you already pasted credentials into a shell session or have an
-`export FOO=bar` snippet you want to move into the vault without creating a
-repo-visible env file, pipe it on stdin. HASP strips the `export ` prefix and
-imports the values with the same preview/commit flow as file-based import:
-
-```bash
-printf 'export API_TOKEN=abc123\n' | ./bin/hasp import --preview --format env -
-printf 'export API_TOKEN=abc123\n' | ./bin/hasp import --format env -
-```
-
-The stdin/paste path is an explicit human-driven capture flow. It does not
-replace the agent-safe broker contract.
-
-## Support profile bootstrap
-
-```bash
-./bin/hasp bootstrap \
-  --profile claude-code \
-  --project-root /path/to/repo \
-  --alias secret_01=API_TOKEN
-```
-
-For agents that are not first-class support profiles yet, use the generic broker path in `agent-profiles/generic.md`.
-
-If you already enabled automatic repo adoption and want to enroll several local
-git repos at once, use:
-
-```bash
-./bin/hasp project adopt --under /path/to/workspaces --preview
-./bin/hasp project adopt --under /path/to/workspaces
-```
-
-That scans for git-backed project roots, skips non-project directories, and
-binds the matching repos using the machine defaults from `hasp setup`.
-
-## Safe command execution
-
-```bash
-./bin/hasp run \
-  --project-root /path/to/repo \
-  --env API_TOKEN=@API_TOKEN \
-  --grant-project window \
-  --grant-secret session \
-  --grant-window 15m \
-  -- sh -c 'printf "%s" "$API_TOKEN"'
-```
-
-## Convenience materialization
-
-```bash
-./bin/hasp write-env \
-  --project-root /path/to/repo \
-  --output /path/to/repo/.env.local \
-  --env API_TOKEN=@API_TOKEN \
-  --grant-project window \
-  --grant-secret session \
-  --grant-convenience window
-```
-
-## Upgrade and uninstall
-
-```bash
-./scripts/hasp-upgrade-release.sh --verify <new-tarball> <install-dir>
-./scripts/hasp-uninstall-release.sh <install-dir>
-```
-
-The default uninstall path removes the installed release tree only. It does not remove `HASP_HOME` or repo hooks unless you ask for that explicitly.
-
-## V1 threat-model limits
-
-Before you rely on HASP, know what V1 is and is not:
-
-- V1 reduces accidental exposure and common local leaks on a normal developer machine.
-- V1 does not provide strong same-user local isolation.
-- V1 does not defend against malicious same-user local processes.
-- Shell exports and pasted values are not a protected boundary. Route them through the stdin import path above instead of relying on ambient shell hygiene.
-
-See `OPERATOR_GUIDE.md` for the full operator-facing limits.
-
-## Licensing and usage
-
-- `LICENSE` in this release is the authoritative release-facing licensing statement.
-- HASP is source-available. The preferred licensing direction is documented in `docs/adr/0005-licensing-direction.md` in the repo.
-- Evaluate, run, and extend HASP locally under the terms of the `LICENSE` file.
-- Licensing language will not add entitlement checks that change V1 runtime behavior or weaken the local-first agent-safe path.
-EOF
-
-cat >"$artifact_dir/OPERATOR_GUIDE.md" <<'EOF'
-# Operator guide
-
-## Environment variables
-
-- `HASP_HOME`
-- `HASP_MASTER_PASSWORD`
-- `HASP_BACKUP_PASSPHRASE`
-
-## Release trust path
-
-Verify a packaged release before install:
-
-```bash
-./scripts/hasp-verify-release.sh <tarball>
-./scripts/hasp-install-release.sh --verify <tarball> <install-dir>
-```
-
-The packaged installer verifies the signed checksum manifest, the tarball signature, and the packaged binary signature before it stages the install tree.
-
-## Repo guardrails
-
-Bulk-adopt local git repos into HASP-managed project bindings:
-
-```bash
-./bin/hasp project adopt --under /path/to/workspaces --preview
-./bin/hasp project adopt --under /path/to/workspaces
-```
-
-Behavior:
-
-- scans under the given directory for git-backed project roots
-- skips non-project directories
-- uses machine defaults for hook installation and default capture policy
-- does not require background crawling or always-on discovery
-
-Packaged helpers:
-
-- `./scripts/hasp-pre-commit.sh`
-- `./scripts/hasp-pre-push.sh`
-- `./scripts/hasp-deploy.sh`
-
-Manual repo scan:
-
-```bash
-./bin/hasp check-repo --project-root /path/to/repo
-```
-
-Audited override:
-
-```bash
-./bin/hasp check-repo --project-root /path/to/repo --allow-managed-secrets
-HASP_ALLOW_MANAGED_SECRETS=1 ./scripts/hasp-deploy.sh /path/to/repo -- <deploy command...>
-```
-
-## Upgrade and uninstall
-
-- `./scripts/hasp-upgrade-release.sh` stages a new release tree and swaps it into the target prefix only after verification succeeds.
-- `./scripts/hasp-uninstall-release.sh` removes the release tree only by default.
-- `HASP_HOME` stays untouched unless the operator passes an explicit purge flag.
-- repo hooks stay untouched unless the operator passes explicit repo paths for cleanup.
-
-## Threat-model limits
-
-- V1 reduces accidental exposure and common local leaks on a normal developer machine.
-- V1 does not provide strong same-user local isolation.
-- V1 does not defend against malicious same-user local processes.
-- shell exports and pasted values remain operator hygiene risks, not a protected boundary.
-EOF
+text = text.replace(
+    "From a packaged release:\n\n```bash\nscripts/hasp-verify-release.sh dist/release/hasp_<version>_<os>_<arch>.tar.gz\nscripts/hasp-install-release.sh --verify dist/release/hasp_<version>_<os>_<arch>.tar.gz\n```",
+    "From the directory containing this tarball and sidecars:\n\n```bash\n./scripts/hasp-verify-release.sh ../hasp_<version>_<os>_<arch>.tar.gz\n./scripts/hasp-install-release.sh --verify ../hasp_<version>_<os>_<arch>.tar.gz\n```",
+)
+text = text.replace(
+    "export HASP_MASTER_PASSWORD='\''choose-a-strong-password'\''\nbin/hasp init",
+    "export HASP_MASTER_PASSWORD='\''choose-a-strong-password'\''\n./bin/hasp init",
+)
+text = re.sub(r"(?<![./])bin/hasp(?=\s)", "./bin/hasp", text)
+text = re.sub(r"(?<![./])scripts/(hasp-(?:upgrade|uninstall)-release\.sh)", r"./scripts/\1", text)
+path.write_text(text, encoding="utf-8")
+' "$artifact_dir/QUICKSTART.md"
+copy_first_existing "$artifact_dir/OPERATOR_GUIDE.md" "$repo_root/public/docs/operator-guide.md" "$repo_root/docs/operator-guide.md"
 
 production_guide_source="$repo_root/docs/v1-production-guide.md"
 if [[ ! -f "$production_guide_source" && -f "$repo_root/docs/install.md" ]]; then
@@ -362,12 +168,37 @@ if [[ ! -f "$production_guide_source" && -f "$repo_root/docs/install.md" ]]; the
 fi
 /bin/cp -f "$production_guide_source" "$artifact_dir/PRODUCTION_GUIDE.md"
 
-/usr/bin/tar -C "$release_root" -czf "$tarball" "$artifact_name"
+write_release_manifest() {
+  local file=""
+  local rel=""
+  {
+    printf "artifact_name_expected='%s'\n" "$artifact_name"
+    printf "name='%s'\n" "$artifact_name"
+    printf "version='%s'\n" "$version"
+    printf "os='%s'\n" "$os_name"
+    printf "arch='%s'\n" "$arch_name"
+    printf 'release_files=(\n'
+    printf "  'RELEASE_MANIFEST'\n"
+    while IFS= read -r file; do
+      rel="${file#"$artifact_dir"/}"
+      [[ "$rel" != "RELEASE_MANIFEST" ]] || continue
+      if [[ "$rel" == *"'"* ]] || ! release_validate_manifest_path "$rel"; then
+        printf 'unsafe release file path: %s\n' "$rel" >&2
+        return 1
+      fi
+      printf "  '%s'\n" "$rel"
+    done < <(find "$artifact_dir" -type f -print | LC_ALL=C sort)
+    printf ')\n'
+  } >"$artifact_dir/RELEASE_MANIFEST"
+}
+
+write_release_manifest
+release_tar -C "$release_root" -czf "$tarball" "$artifact_name"
 
 bash "$repo_root/scripts/hasp-sign-release.sh" "$artifact_dir" "$tarball" >/dev/null
 bash "$repo_root/scripts/render-homebrew-formula.sh" "${HASP_RELEASE_URL:-file://$tarball}" "$(release_sha256 "$tarball")" "$formula_path" >/dev/null
 
-for required_path in "$tarball" "$tarball_sig_path" "$binary_sig_path" "$checksum_path" "$checksum_sig_path" "$public_key_path" "$formula_path"; do
+for required_path in "$tarball" "$tarball_sig_path" "$binary_sig_path" "$checksum_path" "$checksum_sig_path" "$public_key_path" "$fingerprint_path" "$formula_path"; do
   if [[ ! -f "$required_path" ]]; then
     printf 'missing packaged release output: %s\n' "$required_path" >&2
     exit 1

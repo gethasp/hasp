@@ -109,6 +109,15 @@ func TestSecretPlaintextPolicyHelpers(t *testing.T) {
 	if _, err := parsePlaintextAction("bogus"); err == nil {
 		t.Fatal("expected parsePlaintextAction failure")
 	}
+	if _, err := parseSecretMutationAction("bogus"); err == nil {
+		t.Fatal("expected parseSecretMutationAction failure")
+	}
+	if action, err := parseSecretMutationAction("delete"); err != nil || action != store.SecretMutationDelete {
+		t.Fatalf("parseSecretMutationAction(delete) = %q err=%v", action, err)
+	}
+	if action, err := parseSecretMutationAction("hide"); err != nil || action != store.SecretMutationHide {
+		t.Fatalf("parseSecretMutationAction(hide) = %q err=%v", action, err)
+	}
 	if _, _, ok, err := secretSessionFromEnv(context.Background()); err != nil || ok {
 		t.Fatalf("expected secretSessionFromEnv empty, got ok=%v err=%v", ok, err)
 	}

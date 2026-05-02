@@ -57,6 +57,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "daemon", text: daemonHelpText},
 	{key: "session", text: sessionHelpText},
 	{key: "session grant-plaintext", text: sessionGrantPlaintextHelpText},
+	{key: "session grant-mutation", text: sessionGrantMutationHelpText},
 	{key: "vault", text: vaultHelpText},
 	{key: "vault lock", text: vaultLockHelpText},
 	{key: "vault forget-device", text: vaultForgetDeviceHelpText},
@@ -1027,6 +1028,7 @@ Subcommands
   open      open a session for one repo boundary
   list      list active broker sessions (--mine restricts to the calling user)
   grant-plaintext  grant one-time plaintext reveal/copy for a protected session
+  grant-mutation   grant one-time secret delete/expose/hide for MCP mutation
   resolve   inspect an existing token
   revoke    revoke an existing token
 
@@ -1047,6 +1049,7 @@ session resolve / revoke flags
 
 Examples
   hasp session open --host-label local-cli --project-root .
+  hasp session grant-mutation --token $HASP_SESSION_TOKEN --item API_TOKEN --action expose
   hasp session list --mine
   hasp session resolve --token $HASP_SESSION_TOKEN
   hasp session revoke --token $HASP_SESSION_TOKEN
@@ -1073,6 +1076,27 @@ Flags
 Examples
   hasp session grant-plaintext --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action reveal --grant-window 60s
   hasp session grant-plaintext --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action copy --grant-window 60s
+`
+
+const sessionGrantMutationHelpText = `hasp session grant-mutation
+
+Grant one-time secret delete/expose/hide authority for an agent-safe session.
+
+Use this as an explicit local operator step before enabling MCP destructive
+secret tools. The MCP request still names the item and action, but only this
+persisted, one-time grant authorizes the mutation.
+
+Flags
+  --token <token>              agent-safe session token to grant against
+  --item <name>                vault item name to permit mutation for
+  --action <delete|expose|hide>  mutation action to permit
+  --scope <scope>              grant scope (default: once)
+  --grant-window <dur>         maximum lifetime for the grant (default: 60s)
+  --json                       emit machine-readable result on stdout
+
+Examples
+  hasp session grant-mutation --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action expose --grant-window 60s
+  hasp session grant-mutation --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action hide --grant-window 60s
 `
 
 const vaultHelpText = `hasp vault

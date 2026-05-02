@@ -204,6 +204,9 @@ func readState(vaultKey []byte, blob sealedBlob) (persistedState, error) {
 	if state.PlaintextGrants == nil {
 		state.PlaintextGrants = map[string]PlaintextGrant{}
 	}
+	if state.MutationGrants == nil {
+		state.MutationGrants = map[string]MutationGrant{}
+	}
 	if state.ManifestReviews == nil {
 		state.ManifestReviews = map[string]ManifestReview{}
 	}

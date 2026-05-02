@@ -225,6 +225,34 @@ func fullRuntimeDeps(t *testing.T, fake *fakeRuntimeRPC) Deps {
 	}
 }
 
+func TestRenderStatusHumanFallbackOptionalFields(t *testing.T) {
+	degradedAt := time.Date(2026, 5, 1, 2, 0, 0, 0, time.UTC)
+	reply := runtime.StatusResponse{
+		SocketPath:                    "/tmp/hasp.sock",
+		PID:                           123,
+		StartedAt:                     degradedAt.Add(-time.Minute),
+		ActiveSessions:                2,
+		AuditDegraded:                 true,
+		AuditDegradedAt:               &degradedAt,
+		ProcessIdentityDegraded:       true,
+		ProcessIdentityDegradedReason: "identity probe unavailable",
+	}
+	var out bytes.Buffer
+	if err := renderStatusHumanFallback(&out, reply, nil); err != nil {
+		t.Fatalf("render status fallback: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"audit_degraded_at",
+		"process_identity_degraded_reason",
+		"identity probe unavailable",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("fallback output missing %q in %q", want, text)
+		}
+	}
+}
+
 func TestRuntimeCommandSuccessPaths(t *testing.T) {
 	ctx := context.Background()
 	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})

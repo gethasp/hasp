@@ -52,6 +52,7 @@ func TestHelpTopicsCoverPublishedTopics(t *testing.T) {
 		{[]string{"daemon"}, "Manage the local runtime daemon"},
 		{[]string{"session"}, "Work with broker sessions"},
 		{[]string{"session", "grant-plaintext"}, "Grant one-time plaintext reveal/copy"},
+		{[]string{"session", "grant-mutation"}, "Grant one-time secret delete/expose/hide"},
 		{[]string{"status"}, "Show local daemon and vault status"},
 		{[]string{"ping"}, "Check whether the local daemon"},
 		{[]string{"audit"}, "Print the local audit log"},

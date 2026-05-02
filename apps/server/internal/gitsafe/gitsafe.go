@@ -81,6 +81,9 @@ func buildSafeEnv() []string {
 	if path := pathFromEnv(); path != "" {
 		env = append(env, "PATH="+path)
 	}
+	if ceiling := os.Getenv("GIT_CEILING_DIRECTORIES"); ceiling != "" {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+ceiling)
+	}
 	env = append(env, safeEnvOverrides...)
 	return env
 }

@@ -6,22 +6,76 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: public-release
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  release-targets:
     if: github.repository == 'gethasp/hasp' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubicloud-standard-2
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - id: targets
+        run: python3 scripts/release_targets.py github-output >> "$GITHUB_OUTPUT"
+
+  release-smoke:
+    name: Release Smoke (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: release-targets
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-targets.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: stable
           cache: false
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Smoke release artifact
+        env:
+          HASP_RUN_BREW_INSTALL_SMOKE: ${{ matrix.goos == 'darwin' && '1' || '0' }}
+        run: bash ./scripts/release-smoke.sh --target "${{ matrix.goos }}/${{ matrix.goarch }}"
+
+  build-public-release:
+    needs: release-smoke
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Bootstrap web tools
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm -C apps/web install --frozen-lockfile
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Validate release tag matches VERSION
         run: test "v$(cat VERSION)" = "${GITHUB_REF_NAME}"
+      - name: Verify release tag commit is on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Run release gate
+        run: make release-gate
       - name: Import release signing key
         env:
           HASP_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.HASP_RELEASE_GPG_PRIVATE_KEY }}
@@ -32,8 +86,6 @@ jobs:
           chmod 700 "$GNUPGHOME"
           printf '%s' "$HASP_RELEASE_GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
           echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-      - name: Verify public release lane
-        run: make verify
       - name: Extract release notes from changelog
         run: bash ./scripts/release-notes-from-changelog.sh "${GITHUB_REF_NAME}" > release-notes.md
       - name: Build public release set
@@ -44,41 +96,243 @@ jobs:
           HASP_UPGRADE_SIGNING_KEY_B64: ${{ secrets.HASP_UPGRADE_SIGNING_KEY_B64 }}
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases
         run: bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
-      - name: Upload release artifacts to Cloudflare R2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-release
+          path: |
+            dist/public-release/${{ github.ref_name }}/**/*
+            release-notes.md
+
+  publish-r2:
+    needs: build-public-release
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
+      - name: Publish immutable release assets to Cloudflare R2
         env:
           HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
           HASP_R2_BUCKET: ${{ secrets.HASP_R2_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.HASP_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HASP_R2_SECRET_ACCESS_KEY }}
-          HASP_R2_PUBLISH_LATEST: "1"
         run: |
-          if [[ -n "$HASP_R2_ENDPOINT" && -n "$HASP_R2_BUCKET" && -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
-            bash ./scripts/publish-release-to-r2.sh "dist/public-release/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
-          else
-            echo "R2 secrets are not fully configured; skipping R2 publication"
-          fi
+          : "${HASP_R2_ENDPOINT:?HASP_R2_ENDPOINT is required}"
+          : "${HASP_R2_BUCKET:?HASP_R2_BUCKET is required}"
+          : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
+          : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+          release_dir="dist/public-release/${GITHUB_REF_NAME}"
+          test -d "$release_dir"
+          bash ./scripts/publish-release-to-r2.sh "$release_dir" "${GITHUB_REF_NAME}"
+
+  deploy-download-worker:
+    needs: publish-r2
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Bootstrap web tools
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm -C apps/web install --frozen-lockfile
+      - name: Rotate Worker release metadata guards
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          release_dir="dist/public-release/${GITHUB_REF_NAME}"
+          metadata_path="$release_dir/release-metadata.json"
+          metadata_url="https://downloads.gethasp.com/hasp/releases/${GITHUB_REF_NAME}/release-metadata.json"
+          test -f "$metadata_path"
+          metadata_sha256="$(shasum -a 256 "$metadata_path" | awk '{print $1}')"
+          release_sequence="$(python3 - <<'PY' "$metadata_path"
+          import json
+          import sys
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              print(json.load(handle)["release_sequence"])
+          PY
+          )"
+          {
+            printf 'HASP_EXPECTED_RELEASE_VERSION=%s\n' "${GITHUB_REF_NAME#v}"
+            printf 'HASP_EXPECTED_RELEASE_SEQUENCE=%s\n' "$release_sequence"
+          } >> "$GITHUB_ENV"
+          printf '%s' "$metadata_sha256" | pnpm -C apps/web exec wrangler secret put HASP_RELEASE_METADATA_SHA256 --config downloads/wrangler.toml
+          printf '%s' "$release_sequence" | pnpm -C apps/web exec wrangler secret put HASP_RELEASE_MIN_SEQUENCE --config downloads/wrangler.toml
+          printf '%s' "$metadata_url" | pnpm -C apps/web exec wrangler secret put HASP_RELEASE_METADATA_URL --config downloads/wrangler.toml
+          pnpm -C apps/web exec wrangler deploy --config downloads/wrangler.toml
+      - name: Smoke download Worker release endpoint
+        run: |
+          retry_curl() {
+            local output="$1"
+            local url="$2"
+            local attempt
+            for attempt in $(seq 1 12); do
+              if curl -fsS "$url" -o "$output"; then
+                return 0
+              fi
+              sleep 10
+            done
+            curl -fsS "$url" -o "$output"
+          }
+          retry_curl /tmp/hasp-release.json https://download.gethasp.com/api/release
+          retry_curl /tmp/hasp-release-metadata.json https://download.gethasp.com/api/release-metadata
+          retry_curl /tmp/hasp-release-metadata.asc https://download.gethasp.com/api/release-metadata.asc
+          retry_curl /tmp/hasp-release-public-key.asc https://download.gethasp.com/api/release-public-key.asc
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+          source scripts/release-public-key-trust.sh
+          trusted_fingerprints="$(sed -E 's/#.*$//; s/[[:space:]]+//g; /^$/d' scripts/release-trusted-gpg-fingerprints.txt | paste -sd, -)"
+          release_trust_import_public_key_bundle /tmp/hasp-release-public-key.asc "$GNUPGHOME" "$trusted_fingerprints"
+          gpgv --keyring "$release_trust_keyring_path" /tmp/hasp-release-metadata.asc /tmp/hasp-release-metadata.json
+          while read -r goos goarch _runner; do
+            expected_location="https://downloads.gethasp.com/hasp/releases/${GITHUB_REF_NAME}/hasp_${GITHUB_REF_NAME#v}_${goos}_${goarch}.tar.gz"
+            for attempt in $(seq 1 12); do
+              redirect_location="$(curl -fsSI "https://download.gethasp.com/download/${goos}/${goarch}" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/\r$/, "", $2); print $2; exit}')"
+              if [[ "$redirect_location" == "$expected_location" ]]; then
+                break
+              fi
+              if [[ "$attempt" == "12" ]]; then
+                printf 'unexpected %s/%s download redirect: %s\n' "$goos" "$goarch" "$redirect_location" >&2
+                exit 1
+              fi
+              sleep 10
+            done
+          done < <(python3 scripts/release_targets.py shell)
+          python3 - <<'PY'
+          import os
+          import json
+          with open("/tmp/hasp-release.json", "r", encoding="utf-8") as handle:
+              metadata = json.load(handle)
+          with open("/tmp/hasp-release-metadata.json", "r", encoding="utf-8") as handle:
+              signed_metadata = json.load(handle)
+          expected_version = os.environ["HASP_EXPECTED_RELEASE_VERSION"]
+          expected_sequence = int(os.environ["HASP_EXPECTED_RELEASE_SEQUENCE"])
+          if metadata.get("version") != expected_version:
+              raise SystemExit(f"download Worker returned version {metadata.get('version')}, want {expected_version}")
+          if metadata.get("release_sequence") != expected_sequence:
+              raise SystemExit(f"download Worker returned sequence {metadata.get('release_sequence')}, want {expected_sequence}")
+          if signed_metadata.get("version") != expected_version:
+              raise SystemExit("download Worker served stale release metadata")
+          PY
+      - name: Promote latest release mirror
+        env:
+          HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
+          HASP_R2_BUCKET: ${{ secrets.HASP_R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.HASP_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.HASP_R2_SECRET_ACCESS_KEY }}
+          HASP_R2_PROMOTE_LATEST: "1"
+        run: |
+          release_dir="dist/public-release/${GITHUB_REF_NAME}"
+          test -d "$release_dir"
+          bash ./scripts/publish-release-to-r2.sh "$release_dir" "${GITHUB_REF_NAME}"
+      - name: Verify latest release mirror
+        run: |
+          release_dir="dist/public-release/${GITHUB_REF_NAME}"
+          retry_latest_diff() {
+            local asset="$1"
+            local tmp="/tmp/hasp-latest-${asset//\//-}"
+            local attempt
+            for attempt in $(seq 1 12); do
+              if curl -fsS "https://downloads.gethasp.com/hasp/releases/latest/${asset}" -o "$tmp" && diff -u "$release_dir/$asset" "$tmp"; then
+                return 0
+              fi
+              sleep 10
+            done
+            curl -fsS "https://downloads.gethasp.com/hasp/releases/latest/${asset}" -o "$tmp"
+            diff -u "$release_dir/$asset" "$tmp"
+          }
+          for asset in release-metadata.json release-metadata.json.asc hasp-release-public-key.asc; do
+            retry_latest_diff "$asset"
+          done
+
+  homebrew-formula-smoke:
+    needs: publish-r2
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
+      - name: Smoke packaged Homebrew formula
+        run: |
+          brew install --formula "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb"
+          hasp version
+
+  publish-homebrew-tap:
+    needs:
+      - deploy-download-worker
+      - homebrew-formula-smoke
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
       - name: Publish Homebrew tap
         env:
           HASP_HOMEBREW_TAP_TOKEN: ${{ secrets.HASP_HOMEBREW_TAP_TOKEN }}
           HASP_HOMEBREW_TAP_PUSH_KEY: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY }}
         run: |
           if [[ -n "$HASP_HOMEBREW_TAP_TOKEN" ]]; then
-            git clone "https://x-access-token:${HASP_HOMEBREW_TAP_TOKEN}@github.com/gethasp/homebrew-tap.git" tap-repo
-            bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
-          elif [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
+            askpass="$(mktemp)"
+            trap 'rm -f "${askpass:-}"' EXIT
+            {
+              printf '%s\n' '#!/usr/bin/env sh'
+              printf '%s\n' 'case "$1" in'
+              printf '%s\n' '  *Username*) printf "%s\n" "x-access-token" ;;'
+              printf '%s\n' '  *Password*) printf "%s\n" "${HASP_HOMEBREW_TAP_TOKEN:?}" ;;'
+              printf '%s\n' '  *) exit 1 ;;'
+              printf '%s\n' 'esac'
+            } >"$askpass"
+            chmod 700 "$askpass"
+            GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git clone https://github.com/gethasp/homebrew-tap.git tap-repo
+          else
+            test -n "$HASP_HOMEBREW_TAP_PUSH_KEY"
             eval "$(ssh-agent -s)"
             printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" | base64 --decode > tap_key
             chmod 600 tap_key
             ssh-add tap_key
             git clone git@github.com:gethasp/homebrew-tap.git tap-repo
-            bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
-          else
-            echo "Homebrew tap key is not configured; skipping tap publication"
           fi
+          bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
+
+  published-homebrew-tap-smoke:
+    needs: publish-homebrew-tap
+    runs-on: macos-15
+    steps:
+      - name: Smoke published Homebrew tap
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/hasp https://github.com/gethasp/homebrew-tap.git
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install gethasp/hasp/hasp
+          hasp version
+
+  github-release:
+    needs:
+      - publish-r2
+      - deploy-download-worker
+      - publish-homebrew-tap
+      - published-homebrew-tap-smoke
+    runs-on: ubicloud-standard-2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           body_path: release-notes.md
           fail_on_unmatched_files: true
           files: |
-            dist/public-release/${{ github.ref_name }}/**/*
+            dist/public-release/${{ github.ref_name }}/*

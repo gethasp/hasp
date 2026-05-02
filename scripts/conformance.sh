@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 stop_scoped_daemon() {
@@ -52,7 +52,7 @@ pid_matches_scoped_daemon() {
 make verify-ci
 bash ./scripts/release-smoke.sh
 make evals
-make release-smoke
+make benchmark-smoke
 
 temp_home="$(mktemp -d)"
 conformance_gpg_home="$(mktemp -d)"

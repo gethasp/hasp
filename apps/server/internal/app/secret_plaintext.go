@@ -230,6 +230,19 @@ func parsePlaintextAction(value string) (store.PlaintextAction, error) {
 	}
 }
 
+func parseSecretMutationAction(value string) (store.SecretMutationAction, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case string(store.SecretMutationDelete):
+		return store.SecretMutationDelete, nil
+	case string(store.SecretMutationExpose):
+		return store.SecretMutationExpose, nil
+	case string(store.SecretMutationHide):
+		return store.SecretMutationHide, nil
+	default:
+		return "", fmt.Errorf("unsupported secret mutation action %q", value)
+	}
+}
+
 func secretSessionFromEnv(ctx context.Context) (runtime.SessionView, string, bool, error) {
 	token := strings.TrimSpace(os.Getenv(secrettypes.EnvSessionToken))
 	if token == "" {

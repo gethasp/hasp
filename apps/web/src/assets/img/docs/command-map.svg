@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" viewBox="0 0 1120 620">
+  <title id="title">HASP command map</title>
+  <desc id="desc">HASP commands grouped by setup, secrets, project boundaries, delivery, consumers, runtime, and recovery.</desc>
+  <rect width="1120" height="620" fill="#f3f1ec"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#11161c">
+    <text x="54" y="62" font-size="13" font-weight="700" letter-spacing="5">THE CLI BY JOB</text>
+    <text x="54" y="103" font-size="32" font-weight="800">Start with the thing you are trying to change.</text>
+  </g>
+  <g fill="none" stroke="#11161c" stroke-width="2">
+    <rect x="52" y="134" width="316" height="154"/>
+    <rect x="402" y="134" width="316" height="154"/>
+    <rect x="752" y="134" width="316" height="154"/>
+    <rect x="52" y="330" width="316" height="154"/>
+    <rect x="402" y="330" width="316" height="154"/>
+    <rect x="752" y="330" width="316" height="154"/>
+    <path d="M368 211h34M718 211h34M368 407h34M718 407h34"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#11161c">
+    <text x="82" y="174" font-size="13" font-weight="700" letter-spacing="4">CREATE LOCAL STATE</text>
+    <text x="82" y="213" font-size="29" font-weight="800">setup, init</text>
+    <text x="82" y="249" font-size="18" fill="#5f6368">Create the vault, guided setup,</text>
+    <text x="82" y="275" font-size="18" fill="#5f6368">and first machine state.</text>
+    <text x="432" y="174" font-size="13" font-weight="700" letter-spacing="4">ADD VALUES</text>
+    <text x="432" y="213" font-size="29" font-weight="800">import, secret</text>
+    <text x="432" y="249" font-size="18" fill="#5f6368">Create, update, rotate, expose,</text>
+    <text x="432" y="275" font-size="18" fill="#5f6368">hide, reveal, and list items.</text>
+    <text x="782" y="174" font-size="13" font-weight="700" letter-spacing="4">SET BOUNDARIES</text>
+    <text x="782" y="213" font-size="29" font-weight="800">project, bootstrap</text>
+    <text x="782" y="249" font-size="18" fill="#5f6368">Bind repo roots and prepare</text>
+    <text x="782" y="275" font-size="18" fill="#5f6368">agent profiles for that repo.</text>
+    <text x="82" y="370" font-size="13" font-weight="700" letter-spacing="4">DELIVER SAFELY</text>
+    <text x="82" y="409" font-size="29" font-weight="800">run, inject, proof</text>
+    <text x="82" y="445" font-size="18" fill="#5f6368">Resolve at execution time,</text>
+    <text x="82" y="471" font-size="18" fill="#5f6368">then prove the path works.</text>
+    <text x="432" y="370" font-size="13" font-weight="700" letter-spacing="4">CONNECT CONSUMERS</text>
+    <text x="432" y="409" font-size="29" font-weight="800">app, agent, mcp</text>
+    <text x="432" y="445" font-size="18" fill="#5f6368">Let apps and coding agents</text>
+    <text x="432" y="471" font-size="18" fill="#5f6368">ask through the broker.</text>
+    <text x="782" y="370" font-size="13" font-weight="700" letter-spacing="4">REPAIR AND PROVE</text>
+    <text x="782" y="409" font-size="29" font-weight="800">doctor, audit, check</text>
+    <text x="782" y="445" font-size="18" fill="#5f6368">Diagnose runtime state, scan</text>
+    <text x="782" y="471" font-size="18" fill="#5f6368">repos, recover, and review logs.</text>
+  </g>
+  <g fill="#11161c">
+    <path d="M402 211l-14-8v16z"/>
+    <path d="M752 211l-14-8v16z"/>
+    <path d="M402 407l-14-8v16z"/>
+    <path d="M752 407l-14-8v16z"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#5f6368">
+    <text x="54" y="552" font-size="18">Most problems are one missing object: vault, item, project binding, consumer profile, grant, daemon, or audit evidence.</text>
+  </g>
+</svg>

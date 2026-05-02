@@ -16,6 +16,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
+	"github.com/gethasp/hasp/apps/server/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -29,6 +30,12 @@ func TestMain(m *testing.M) {
 		}
 		return
 	}
+	cleanupTempRoot, err := configureAppTestTempRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configure app test temp root: %v\n", err)
+		os.Exit(2)
+	}
+	restoreEnvelopeDurability := store.ConfigureEnvelopeDurabilityForTests()
 	// Always redirect HASP_HOME to a safe temp dir so no test can accidentally
 	// write to the real ~/.hasp directory even when HASP_HOME is set in the
 	// caller's shell environment.  Individual tests call
@@ -44,7 +51,13 @@ func TestMain(m *testing.M) {
 	if dir != "" {
 		os.RemoveAll(dir)
 	}
+	restoreEnvelopeDurability()
+	cleanupTempRoot()
 	os.Exit(code)
+}
+
+func configureAppTestTempRoot() (func(), error) {
+	return testutil.ConfigurePackageTempRoot("app")
 }
 
 type fakeStarter struct {
@@ -503,7 +516,7 @@ func TestRunUsesRealRuntimeStarterForPingStatusAndSessions(t *testing.T) {
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
 	t.Setenv("HASP_HOME", homeDir)
-	t.Setenv("HASP_SOCKET", filepath.Join("/tmp", fmt.Sprintf("hasp-real-%d.sock", time.Now().UnixNano())))
+	t.Setenv("HASP_SOCKET", shortSocketPath(t, fmt.Sprintf("hasp-real-%d.sock", time.Now().UnixNano())))
 	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
 	manager, err := runtime.NewManager()
 	if err != nil {
@@ -618,8 +631,15 @@ func TestRunUsesRealRuntimeStarterForPingStatusAndSessions(t *testing.T) {
 }
 
 func run(name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) == 3 && args[0] == "-C" && args[2] == "init" {
+		return initTestGitRepo(args[1])
+	}
 	cmd := exec.Command(name, args...)
 	return cmd.CombinedOutput()
+}
+
+func initTestGitRepo(root string) ([]byte, error) {
+	return testutil.InitMinimalGitRepo(root)
 }
 
 func newDaemonTestStarter(t *testing.T) starter {

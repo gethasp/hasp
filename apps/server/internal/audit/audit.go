@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -55,9 +56,23 @@ type Event struct {
 }
 
 type Log struct {
-	path string
-	now  func() time.Time
-	key  []byte
+	mu          sync.Mutex
+	path        string
+	now         func() time.Time
+	key         []byte
+	cachedLast  *Event
+	cachedState fileState
+	cacheValid  bool
+}
+
+type fileState struct {
+	size        int64
+	modUnixNano int64
+	ctimeSec    int64
+	ctimeNsec   int64
+	dev         uint64
+	ino         uint64
+	cacheable   bool
 }
 
 type auditWriter interface {
@@ -66,8 +81,9 @@ type auditWriter interface {
 }
 
 var (
-	auditMkdirAll = os.MkdirAll
-	openAuditFile = func(path string) (auditWriter, error) {
+	auditMkdirAll  = os.MkdirAll
+	auditFileState = auditFileStateFromInfo
+	openAuditFile  = func(path string) (auditWriter, error) {
 		return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	}
 )
@@ -93,6 +109,8 @@ func (l *Log) WithKey(key []byte) *Log {
 	if l == nil {
 		return nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if len(key) == 0 {
 		l.key = nil
 	} else {
@@ -102,7 +120,10 @@ func (l *Log) WithKey(key []byte) *Log {
 }
 
 func (l *Log) Append(eventType string, actor string, details map[string]any) (Event, error) {
-	last, sequence, err := l.readLast()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	last, sequence, err := l.readLastLocked()
 	if err != nil {
 		return Event{}, err
 	}
@@ -134,6 +155,7 @@ func (l *Log) Append(eventType string, actor string, details map[string]any) (Ev
 	if _, err := file.Write(append(payload, '\n')); err != nil {
 		return Event{}, fmt.Errorf("append audit event: %w", err)
 	}
+	l.cacheEvent(event)
 	return event, nil
 }
 
@@ -211,7 +233,10 @@ func (l *Log) Events() ([]Event, error) {
 }
 
 func (l *Log) Checkpoint() (int64, string, error) {
-	last, sequence, err := l.readLast()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	last, sequence, err := l.readLastLocked()
 	if err != nil {
 		return 0, "", err
 	}
@@ -221,12 +246,23 @@ func (l *Log) Checkpoint() (int64, string, error) {
 	return sequence, last.Hash, nil
 }
 
-func (l *Log) readLast() (*Event, int64, error) {
-	file, err := os.Open(l.path)
+func (l *Log) readLastLocked() (*Event, int64, error) {
+	stat, err := os.Stat(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			l.clearCache()
 			return nil, 0, nil
 		}
+		return nil, 0, fmt.Errorf("stat audit log: %w", err)
+	}
+	state := auditFileState(stat)
+	if state.cacheable && l.cacheValid && l.cachedLast != nil && l.cachedState == state {
+		cached := *l.cachedLast
+		return &cached, cached.Sequence, nil
+	}
+
+	file, err := os.Open(l.path)
+	if err != nil {
 		return nil, 0, fmt.Errorf("open audit log: %w", err)
 	}
 	defer file.Close()
@@ -246,7 +282,42 @@ func (l *Log) readLast() (*Event, int64, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, 0, fmt.Errorf("scan audit log: %w", err)
 	}
+	if last == nil {
+		l.clearCache()
+		return nil, 0, nil
+	}
+	if !state.cacheable {
+		l.clearCache()
+		return last, count, nil
+	}
+	cached := *last
+	l.cachedLast = &cached
+	l.cachedState = state
+	l.cacheValid = true
 	return last, count, nil
+}
+
+func (l *Log) cacheEvent(event Event) {
+	stat, err := os.Stat(l.path)
+	if err != nil {
+		l.clearCache()
+		return
+	}
+	state := auditFileState(stat)
+	if !state.cacheable {
+		l.clearCache()
+		return
+	}
+	cached := event
+	l.cachedLast = &cached
+	l.cachedState = state
+	l.cacheValid = true
+}
+
+func (l *Log) clearCache() {
+	l.cachedLast = nil
+	l.cachedState = fileState{}
+	l.cacheValid = false
 }
 
 // keyForScheme picks the right key for verifying an event under its

@@ -32,9 +32,11 @@ var sessionCurrentUserFn = user.Current
 // "session list --mine" filters on. Tests construct a local instance
 // to inject deterministic outcomes without touching package-level vars.
 type sessionLocalDeps struct {
-	Approve   func(session runtime.SessionView, itemName string, action store.PlaintextAction) error
-	UseGrant  func(handle *store.Handle, token string, itemName string, action store.PlaintextAction, window time.Duration) (store.PlaintextGrant, error)
-	LocalUser func() (string, error)
+	Approve          func(session runtime.SessionView, itemName string, action store.PlaintextAction) error
+	UseGrant         func(handle *store.Handle, token string, itemName string, action store.PlaintextAction, window time.Duration) (store.PlaintextGrant, error)
+	ApproveMutation  func(session runtime.SessionView, itemName string, action store.SecretMutationAction) error
+	UseMutationGrant func(handle *store.Handle, bindingID string, token string, itemName string, action store.SecretMutationAction, window time.Duration) (store.MutationGrant, error)
+	LocalUser        func() (string, error)
 }
 
 func defaultSessionLocalDeps() sessionLocalDeps {
@@ -42,6 +44,12 @@ func defaultSessionLocalDeps() sessionLocalDeps {
 		Approve: confirmPlaintextGrant,
 		UseGrant: func(handle *store.Handle, token string, itemName string, action store.PlaintextAction, window time.Duration) (store.PlaintextGrant, error) {
 			return handle.GrantPlaintextUse(token, itemName, action, "user", store.GrantOnce, window)
+		},
+		ApproveMutation: func(session runtime.SessionView, itemName string, action store.SecretMutationAction) error {
+			return confirmPlaintextGrantWithDeps(session, itemName, store.PlaintextAction("secret-"+string(action)), defaultConfirmPlaintextGrantDeps())
+		},
+		UseMutationGrant: func(handle *store.Handle, bindingID string, token string, itemName string, action store.SecretMutationAction, window time.Duration) (store.MutationGrant, error) {
+			return handle.GrantSecretMutation(bindingID, token, itemName, action, "user", store.GrantOnce, window)
 		},
 		LocalUser: func() (string, error) {
 			u, err := sessionCurrentUserFn()
@@ -155,9 +163,11 @@ func sessionGrantPlaintextCommandWithDeps(ctx context.Context, args []string, st
 	}
 	deps.DefaultLocalDeps = func() sessionops.LocalDeps {
 		return sessionops.LocalDeps{
-			Approve:   ld.Approve,
-			UseGrant:  ld.UseGrant,
-			LocalUser: ld.LocalUser,
+			Approve:          ld.Approve,
+			UseGrant:         ld.UseGrant,
+			ApproveMutation:  ld.ApproveMutation,
+			UseMutationGrant: ld.UseMutationGrant,
+			LocalUser:        ld.LocalUser,
 		}
 	}
 	return sessionops.SessionCommand(ctx, deps, append([]string{"grant-plaintext"}, args...), nil, stdout, io.Discard)

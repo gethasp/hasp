@@ -342,6 +342,11 @@ func TestBrokerRPCOpenSessionAndRevokeWriteAuditEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create audit log: %v", err)
 	}
+	auditKey := []byte("0123456789abcdef0123456789abcdef")
+	if _, err := log.WithKey(auditKey).Append(audit.EventInit, "user", map[string]any{"version": "test"}); err != nil {
+		t.Fatalf("seed keyed audit log: %v", err)
+	}
+	log.WithKey(nil)
 	broker := &brokerRPC{
 		paths:     paths.Paths{SocketPath: filepath.Join(dir, "daemon.sock")},
 		startedAt: time.Now().UTC(),
@@ -351,9 +356,10 @@ func TestBrokerRPCOpenSessionAndRevokeWriteAuditEntries(t *testing.T) {
 
 	var openReply OpenSessionResponse
 	if err := broker.OpenSession(OpenSessionRequest{
-		HostLabel:   "agent",
-		ProjectRoot: dir,
-		TTLSeconds:  60,
+		HostLabel:    "agent",
+		ProjectRoot:  dir,
+		TTLSeconds:   60,
+		AuditHMACKey: auditKey,
 	}, &openReply); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -364,6 +370,35 @@ func TestBrokerRPCOpenSessionAndRevokeWriteAuditEntries(t *testing.T) {
 	}
 	if !revokeReply.Revoked {
 		t.Fatal("expected revoke to succeed")
+	}
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected init, open, and revoke audit events, got %d", len(events))
+	}
+	for _, event := range events {
+		if event.Scheme != audit.SchemeHMACSHA256V1 {
+			t.Fatalf("event %d scheme = %q, want %q", event.Sequence, event.Scheme, audit.SchemeHMACSHA256V1)
+		}
+	}
+	if err := log.WithKey(auditKey).Verify(); err != nil {
+		t.Fatalf("verify keyed daemon audit chain: %v", err)
+	}
+
+	var rejectedReply OpenSessionResponse
+	wrongKey := []byte("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	if err := broker.OpenSession(OpenSessionRequest{
+		HostLabel:    "agent",
+		ProjectRoot:  dir,
+		TTLSeconds:   60,
+		AuditHMACKey: wrongKey,
+	}, &rejectedReply); err == nil {
+		t.Fatal("expected untrusted audit key to be rejected")
+	}
+	if err := log.WithKey(auditKey).Verify(); err != nil {
+		t.Fatalf("wrong caller key must not corrupt keyed daemon audit chain: %v", err)
 	}
 }
 

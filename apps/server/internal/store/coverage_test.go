@@ -59,6 +59,9 @@ func TestCoverageRandomIDAndSmallHelperBranches(t *testing.T) {
 	if _, err := h.GrantPlaintextUse("session", "api", PlaintextReveal, "agent", GrantOnce, time.Minute); err == nil || !strings.Contains(err.Error(), "mint plaintext grant id") {
 		t.Fatalf("expected plaintext grant id error, got %v", err)
 	}
+	if _, err := h.GrantSecretMutation("binding", "session", "api", SecretMutationExpose, "agent", GrantOnce, time.Minute); err == nil || !strings.Contains(err.Error(), "mint mutation grant id") {
+		t.Fatalf("expected mutation grant id error, got %v", err)
+	}
 
 	if uniformPassword("") {
 		t.Fatal("empty password should not count as uniform")
@@ -94,6 +97,17 @@ func TestCoverageEnvelopeErrorBranches(t *testing.T) {
 		renameEnvelopeFn = origRename
 		removeEnvelopeFileFn = origRemove
 	})
+
+	syncTarget := filepath.Join(t.TempDir(), "sync-target")
+	if err := os.WriteFile(syncTarget, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write sync target: %v", err)
+	}
+	openEnvelopeFileFn = func(string) (*os.File, error) {
+		return os.OpenFile(syncTarget, os.O_RDWR, 0o600)
+	}
+	if err := defaultFsyncDir(t.TempDir()); err != nil {
+		t.Fatalf("expected defaultFsyncDir success, got %v", err)
+	}
 
 	openEnvelopeFileFn = func(string) (*os.File, error) { return nil, errors.New("open") }
 	if err := defaultFsyncDir(t.TempDir()); err == nil {

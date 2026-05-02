@@ -13,6 +13,8 @@ const (
 const (
 	DefaultPlaintextGrantTTL = 60 * time.Second
 	MaxPlaintextGrantTTL     = 2 * time.Minute
+	DefaultMutationGrantTTL  = 60 * time.Second
+	MaxMutationGrantTTL      = 2 * time.Minute
 )
 
 type Operation string
@@ -30,6 +32,14 @@ type PlaintextAction string
 const (
 	PlaintextReveal PlaintextAction = "reveal"
 	PlaintextCopy   PlaintextAction = "copy"
+)
+
+type SecretMutationAction string
+
+const (
+	SecretMutationDelete SecretMutationAction = "delete"
+	SecretMutationExpose SecretMutationAction = "expose"
+	SecretMutationHide   SecretMutationAction = "hide"
 )
 
 type ProjectLease struct {
@@ -77,6 +87,19 @@ type PlaintextGrant struct {
 	ExpiresAt    *time.Time      `json:"expires_at,omitempty"`
 	RevokedAt    *time.Time      `json:"revoked_at,omitempty"`
 	UsedAt       *time.Time      `json:"used_at,omitempty"`
+}
+
+type MutationGrant struct {
+	ID           string               `json:"id"`
+	BindingID    string               `json:"binding_id"`
+	ItemName     string               `json:"item_name"`
+	SessionToken string               `json:"session_token"`
+	Action       SecretMutationAction `json:"action"`
+	GrantedBy    string               `json:"granted_by"`
+	Scope        GrantScope           `json:"scope"`
+	ExpiresAt    *time.Time           `json:"expires_at,omitempty"`
+	RevokedAt    *time.Time           `json:"revoked_at,omitempty"`
+	UsedAt       *time.Time           `json:"used_at,omitempty"`
 }
 
 type AccessRequest struct {

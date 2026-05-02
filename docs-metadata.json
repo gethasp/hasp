@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "latest": "v0.1.40",
+  "updatedLabel": "April 2026",
+  "sourceFiles": [
+    "public/README.md",
+    "public/QUICKSTART.md",
+    "public/docs/mental-model.md",
+    "public/docs/value-free-manifests.md",
+    "public/docs/install.md",
+    "public/docs/after-homebrew.md",
+    "public/docs/command-guide.md",
+    "public/docs/operator-guide.md",
+    "public/docs/repo-targets.md",
+    "public/docs/v1-production-guide.md",
+    "docs/agent-profiles/README.md",
+    "docs/agent-profiles/codex-cli.md",
+    "docs/agent-profiles/claude-code.md",
+    "docs/agent-profiles/cursor.md",
+    "docs/agent-profiles/aider.md",
+    "docs/agent-profiles/hermes.md",
+    "docs/agent-profiles/openclaw.md",
+    "docs/agent-profiles/generic.md",
+    "public/CHANGELOG.md",
+    "public/docs/release-distribution.md",
+    "public/docs/install-and-release.md",
+    "public/docs/glossary.md",
+    "public/docs/cli-reference.md",
+    "public/docs/error-codes.md"
+  ],
+  "specs": [
+    {
+      "source": "public/README.md",
+      "slug": "overview",
+      "section": "Start",
+      "order": 10,
+      "title": "Overview",
+      "description": "What HASP is, what ships in the public repo, and what the local broker does."
+    },
+    {
+      "source": "public/QUICKSTART.md",
+      "slug": "quickstart",
+      "section": "Start",
+      "order": 20,
+      "title": "Quickstart",
+      "description": "The shortest safe path to a working local HASP install."
+    },
+    {
+      "source": "public/docs/mental-model.md",
+      "slug": "mental-model",
+      "section": "Start",
+      "order": 15,
+      "title": "Mental model",
+      "description": "How to think about vaults, repo boundaries, consumers, grants, sessions, audit, and redaction."
+    },
+    {
+      "source": "public/docs/value-free-manifests.md",
+      "slug": "value-free-manifests",
+      "section": "Start",
+      "order": 18,
+      "title": "Value-free manifests",
+      "description": "The committed .hasp.manifest.json contract for requirements, targets, examples, delivery, and safety rules."
+    },
+    {
+      "source": "public/docs/install.md",
+      "slug": "install",
+      "section": "Start",
+      "order": 30,
+      "title": "Install",
+      "description": "Homebrew install, upgrade, uninstall, packaged releases, and source builds."
+    },
+    {
+      "source": "public/docs/after-homebrew.md",
+      "slug": "after-homebrew",
+      "section": "Start",
+      "order": 40,
+      "title": "After Install",
+      "description": "The common first-run path after installing HASP."
+    },
+    {
+      "source": "public/docs/command-guide.md",
+      "slug": "command-guide",
+      "section": "Operate",
+      "order": 5,
+      "title": "Command guide",
+      "description": "What each HASP command does, when to use it, and how it compares to nearby commands."
+    },
+    {
+      "source": "public/docs/operator-guide.md",
+      "slug": "operator-guide",
+      "section": "Operate",
+      "order": 10,
+      "title": "Operator Guide",
+      "description": "Environment variables, repo guardrails, audit, backup, and safe local operation."
+    },
+    {
+      "source": "public/docs/repo-targets.md",
+      "slug": "repo-targets",
+      "section": "Operate",
+      "order": 15,
+      "title": "Repo targets",
+      "description": "Value-free repo requirements, target-scoped delivery, examples, and app/MCP target behavior."
+    },
+    {
+      "source": "public/docs/v1-production-guide.md",
+      "slug": "v1-production-guide",
+      "section": "Operate",
+      "order": 20,
+      "title": "V1 production guide",
+      "description": "Production-facing local broker, keychain, daemon, import, binding, and whole-program verification notes."
+    },
+    {
+      "source": "docs/agent-profiles/README.md",
+      "slug": "agent-profiles",
+      "section": "Agents",
+      "order": 10,
+      "title": "Agent Profiles",
+      "description": "First-class support profile expectations and the generic broker path."
+    },
+    {
+      "source": "docs/agent-profiles/codex-cli.md",
+      "slug": "agent-profiles/codex-cli",
+      "section": "Agents",
+      "order": 20,
+      "title": "Codex CLI",
+      "description": "Connect Codex CLI through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/claude-code.md",
+      "slug": "agent-profiles/claude-code",
+      "section": "Agents",
+      "order": 30,
+      "title": "Claude Code",
+      "description": "Connect Claude Code through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/cursor.md",
+      "slug": "agent-profiles/cursor",
+      "section": "Agents",
+      "order": 40,
+      "title": "Cursor",
+      "description": "Connect Cursor through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/aider.md",
+      "slug": "agent-profiles/aider",
+      "section": "Agents",
+      "order": 50,
+      "title": "Aider",
+      "description": "Connect Aider through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/hermes.md",
+      "slug": "agent-profiles/hermes",
+      "section": "Agents",
+      "order": 60,
+      "title": "Hermes",
+      "description": "Connect Hermes through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/openclaw.md",
+      "slug": "agent-profiles/openclaw",
+      "section": "Agents",
+      "order": 70,
+      "title": "OpenClaw",
+      "description": "Connect OpenClaw through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/generic.md",
+      "slug": "agent-profiles/generic",
+      "section": "Agents",
+      "order": 80,
+      "title": "Generic Broker Path",
+      "description": "Use HASP with CLI- or MCP-capable agents that do not have first-class profiles yet."
+    },
+    {
+      "source": "public/CHANGELOG.md",
+      "slug": "changelog",
+      "section": "Release",
+      "order": 5,
+      "title": "Changelog",
+      "description": "Public release notes for shipped HASP versions."
+    },
+    {
+      "source": "public/docs/release-distribution.md",
+      "slug": "release-distribution",
+      "section": "Release",
+      "order": 10,
+      "title": "Release distribution",
+      "description": "Release assets, hosted mirrors, checksums, signatures, and Homebrew formula updates."
+    },
+    {
+      "source": "public/docs/install-and-release.md",
+      "slug": "install-and-release",
+      "section": "Release",
+      "order": 20,
+      "title": "Install and release",
+      "description": "Operator-facing release verification and install details."
+    },
+    {
+      "source": "public/docs/glossary.md",
+      "slug": "glossary",
+      "section": "Reference",
+      "order": 5,
+      "title": "Glossary",
+      "description": "HASP vocabulary used across CLI help, docs, audit events, and errors."
+    },
+    {
+      "source": "public/docs/cli-reference.md",
+      "slug": "cli-reference",
+      "section": "Reference",
+      "order": 10,
+      "title": "CLI reference",
+      "description": "Exact help output generated by the installed hasp binary."
+    },
+    {
+      "source": "public/docs/error-codes.md",
+      "slug": "error-codes",
+      "section": "Reference",
+      "order": 15,
+      "title": "Errors",
+      "description": "Error messages, stable exit buckets, JSON error codes, hints, and recovery guidance."
+    }
+  ]
+}

@@ -6,7 +6,7 @@ if [[ "$profile" == "--profile" ]]; then
   profile="${2:-lint}"
 fi
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 tools_bin="$repo_root/bin/tools"

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{% set resolvedCanonicalUrl = (canonicalUrl or page.url) | absoluteUrl(site.url) %}
+<title>{{ title or site.title }}</title>
+<meta name="description" content="{{ description or site.description }}">
+<link rel="canonical" href="{{ resolvedCanonicalUrl }}">
+<meta property="og:title" content="{{ title or site.title }}">
+<meta property="og:description" content="{{ description or site.description }}">
+<meta property="og:type" content="{{ ogType or 'website' }}">
+<meta property="og:url" content="{{ resolvedCanonicalUrl }}">
+<meta name="twitter:card" content="summary_large_image">
+{% structuredData site, page, docs, title, description, docPage, docHome %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300;400;500;600;700;800&family=Funnel+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/plate.css">
+</head>
+<body>
+<header class="site-nav-wrap">
+  <nav class="site-nav" aria-label="Primary">
+    <a class="nav-brand" href="/" aria-label="{{ site.name }} homepage">
+      <span>{{ site.name }}</span>
+      <small>{{ site.class }}</small>
+    </a>
+    <div class="nav-links">
+      <a href="/#features"{% if page.url == "/" %} aria-current="page"{% endif %}>Features</a>
+      <a href="/#outcomes">Outcomes</a>
+      <a href="/#install">Install</a>
+      <a href="/docs/"{% if page.url and page.url.startsWith("/docs/") %} aria-current="page"{% endif %}>Docs</a>
+      <a href="/about"{% if page.url == "/about/" %} aria-current="page"{% endif %}>About</a>
+      <a href="/comparison/"{% if page.url == "/comparison/" %} aria-current="page"{% endif %}>Comparison</a>
+      <a href="{{ site.githubUrl }}">GitHub</a>
+    </div>
+  </nav>
+</header>
+{{ content | safe }}
+<footer class="site-footer">
+  <div>{{ site.name }} · model {{ site.model }} · spec sheet · {{ site.version }} · {{ site.filed }} · Created by Wraxle LLC</div>
+  <div><a href="{{ site.changelogUrl }}">Changelog</a><a href="{{ site.githubUrl }}">GitHub</a></div>
+</footer>
+</body>
+</html>

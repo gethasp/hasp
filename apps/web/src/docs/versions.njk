@@ -1,0 +1,31 @@
+---
+layout: layouts/base.njk
+title: "Docs versions · hasp docs"
+description: "Open HASP documentation by release version."
+permalink: "/docs/versions/"
+---
+
+<div class="doc docs-versions-page">
+  <header class="docs-versions-hero">
+    <div class="pid"><span>DOCS VERSIONS</span><span>Updated {{ docs.updated }}</span></div>
+    <h1>Open the docs for the HASP version you have installed.</h1>
+    <p>Use the latest stable docs for a new install. Use a versioned copy when a machine is pinned to an older binary.</p>
+  </header>
+
+  <section class="docs-versions-list" aria-labelledby="docs-versions-title">
+    <h2 id="docs-versions-title"><b>Available versions</b></h2>
+    <div class="docs-version-rows">
+      {% for version in docs.versions %}
+      <a href="{{ version.url }}">
+        <b>{{ version.label }}</b>
+        {% if version.latest %}
+        <span>Latest stable</span>
+        {% else %}
+        <span>Archived release</span>
+        {% endif %}
+        <small>{{ version.url }}</small>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+</div>

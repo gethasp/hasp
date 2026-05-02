@@ -1,0 +1,556 @@
+{
+  "competitors": [
+    {
+      "benefits_over_hasp": [
+        "Better first-run onboarding for centrally managed teams.",
+        "Stronger hosted identity and org attribution story.",
+        "Clearer centralized governance and dashboard positioning.",
+        "MIT licensing is easier to adopt and trust than HASP's source-available direction, even though HASP now has a repo-level licensing artifact."
+      ],
+      "feature_rows": [
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "local_vault",
+          "notes": "Kontext resolves managed credentials from a backend/provider path; HASP stores them locally.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "hosted_identity",
+          "notes": "OIDC login, refresh token storage, and backend session identity are first-class in Kontext.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "short_lived_exchange",
+          "notes": "Kontext\u2019s RFC 8693 exchange is stronger for centrally managed provider credentials.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "agent_safe_brokered_run",
+          "notes": "Kontext injects credentials into the agent environment; HASP mediates secret use through brokered flows.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "Convenience-only",
+          "key": "direct_env_injection",
+          "notes": "Direct env injection is Kontext\u2019s default model; HASP treats workspace materialization as a warned convenience path.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "explicit_grants",
+          "notes": "Kontext\u2019s shipped repo does not implement a comparable once/session/window approval surface.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "repo_scan_block",
+          "notes": "HASP has local repo leak detection and block-by-default managed hook/deploy paths.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "audited_override",
+          "notes": "HASP explicitly supports audited override on repo guardrails.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "agent_secret_capture",
+          "notes": "Kontext is a launcher and telemetry surface, not a local managed secret lifecycle tool.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "backup_restore",
+          "notes": "HASP has local encrypted backup/restore primitives; Kontext\u2019s repo does not expose an equivalent.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "hosted_dashboard",
+          "notes": "Kontext\u2019s repo is explicitly oriented around backend sessions and dashboard-visible traces.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Weak",
+          "hasp": "Strong",
+          "key": "offline_local_use",
+          "notes": "Kontext\u2019s main happy path depends on backend services; HASP can operate locally.",
+          "position": "hasp"
+        }
+      ],
+      "id": "kontext-cli",
+      "license": "MIT",
+      "name": "Kontext CLI",
+      "summary": "Early cloud-first agent launcher with OIDC login, short-lived token exchange, direct env injection, sidecar hook telemetry, and Claude-only shipped support in the public repo.",
+      "url": "https://github.com/kontext-security/kontext-cli"
+    },
+    {
+      "benefits_over_hasp": [
+        "Faster self-serve onboarding with a full dashboard and bundled local stack.",
+        "Stronger HTTP-native policy controls, including manual approval and rate limiting.",
+        "Bitwarden-backed external-vault fallback.",
+        "Apache-2.0 licensing is simpler for permissive-OSS buyers."
+      ],
+      "feature_rows": [
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "local_vault",
+          "notes": "OneCLI's primary store is the gateway/database stack, not a local encrypted vault.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Optional",
+          "hasp": "No",
+          "key": "hosted_identity",
+          "notes": "OneCLI can stay local, but it does support Google OAuth for team identity.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Partial",
+          "hasp": "No",
+          "key": "short_lived_exchange",
+          "notes": "OneCLI can refresh OAuth app tokens and do request-time external-vault lookups, but it is not centered on generic short-lived exchange.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Partial",
+          "hasp": "Yes",
+          "key": "agent_safe_brokered_run",
+          "notes": "OneCLI keeps provider keys out of HTTP clients, but it is not a general brokered local execution surface.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Convenience-only",
+          "key": "direct_env_injection",
+          "notes": "Neither product makes direct env injection the core happy path.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Policy approvals only",
+          "hasp": "Yes",
+          "key": "explicit_grants",
+          "notes": "OneCLI has gateway policy rules and manual approval, but not HASP's once/session/window grant model.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "repo_scan_block",
+          "notes": "HASP's repo leak scanning and block-by-default flow are absent in OneCLI.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "audited_override",
+          "notes": "OneCLI does not expose a repo-guardrail override model because it does not ship the repo guardrail layer.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "agent_secret_capture",
+          "notes": "OneCLI is a gateway and secret store, not an agent-assisted local capture system.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "backup_restore",
+          "notes": "HASP has explicit local encrypted backup and restore primitives.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "hosted_dashboard",
+          "notes": "OneCLI ships a web dashboard and team-facing management surface.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Moderate",
+          "hasp": "Strong",
+          "key": "offline_local_use",
+          "notes": "OneCLI can run locally, but it still depends on a gateway/web/database stack that is heavier than HASP's local path.",
+          "position": "hasp"
+        }
+      ],
+      "id": "onecli",
+      "license": "Apache-2.0",
+      "name": "OneCLI",
+      "summary": "Self-serve AI credential gateway with one-container dashboard+gateway setup, request-time injection, policy rules, full API-call audit trail, and Bitwarden-backed human-approval integration.",
+      "url": "https://github.com/onecli/onecli"
+    },
+    {
+      "benefits_over_hasp": [
+        "Much broader provider catalog and provider-switching ergonomics.",
+        "Smoother ordinary developer workflow through shell auto-load and direct exec.",
+        "Short-lived credential leases for cloud and Vault-style credentials are already present.",
+        "MIT licensing, Rust implementation, and Cargo/mise distribution lower adoption friction."
+      ],
+      "feature_rows": [
+        {
+          "competitor": "Partial",
+          "hasp": "Yes",
+          "key": "local_vault",
+          "notes": "fnox can keep encrypted secrets in committed config and local providers, but it is not a dedicated local vault like HASP.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Provider-specific only",
+          "hasp": "No",
+          "key": "hosted_identity",
+          "notes": "fnox inherits identity from configured providers; it does not ship its own hosted org identity plane.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "short_lived_exchange",
+          "notes": "fnox leases can vend temporary AWS, GCP, Azure, and Vault-style credentials.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Partial",
+          "hasp": "Yes",
+          "key": "agent_safe_brokered_run",
+          "notes": "fnox MCP exec has redaction, but the main exec/shell model materializes secrets into env vars.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "Convenience-only",
+          "key": "direct_env_injection",
+          "notes": "Direct env injection is fnox's core compatibility path.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "explicit_grants",
+          "notes": "fnox has provider auth and MCP allowlists, not HASP-style once/session/window grants.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "repo_scan_block",
+          "notes": "The current fnox scan command is present but not implemented; HASP has scan and block-by-default hook/deploy paths.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "audited_override",
+          "notes": "fnox does not expose a comparable audited override flow for repo leaks.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "agent_secret_capture",
+          "notes": "fnox supports user set/import/sync, but not HASP-style agent-assisted audited capture into managed storage.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Config/provider-based",
+          "hasp": "Yes",
+          "key": "backup_restore",
+          "notes": "fnox relies on committed config and provider storage; HASP has local encrypted backup/restore primitives.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "No",
+          "key": "hosted_dashboard",
+          "notes": "Neither product ships a hosted dashboard in the evaluated surface.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Strong when local/encrypted providers are configured",
+          "hasp": "Strong",
+          "key": "offline_local_use",
+          "notes": "Both can work locally; fnox remote providers and leases depend on their upstream services.",
+          "position": "mixed"
+        }
+      ],
+      "id": "fnox",
+      "license": "MIT",
+      "name": "fnox",
+      "summary": "Flexible Rust secret manager with encrypted-in-git config, broad provider references, direct env exec, shell auto-load, MCP get/exec tools, temp-file secrets, and short-lived cloud credential leases.",
+      "url": "https://github.com/jdx/fnox"
+    },
+    {
+      "benefits_over_hasp": [
+        "Broader interface-agnostic coverage for HTTP(S) traffic: API, CLI, SDK, and MCP paths converge at the proxy.",
+        "First-class container sandbox mode can make egress non-cooperative by forcing TCP traffic through the proxy.",
+        "Local web UI, service catalog, proposal workflow, vault roles, request logs, and rate limits are stronger operator UX than HASP V1.",
+        "Permissive MIT Expat license for non-ee code is easier to evaluate and adopt."
+      ],
+      "feature_rows": [
+        {
+          "competitor": "Yes",
+          "hasp": "Yes",
+          "key": "local_vault",
+          "notes": "Both have local encrypted vaults.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Local users/session roles; Infisical ecosystem path exists but Agent Vault is local-first today",
+          "hasp": "No hosted identity",
+          "key": "hosted_identity",
+          "notes": "Neither directly solves hosted org identity in the reviewed local path.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Scoped vault sessions for proxy access",
+          "hasp": "Daemon-backed local sessions and grants",
+          "key": "short_lived_exchange",
+          "notes": "Both have scoped sessions, not generic provider token exchange.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Yes, for HTTP(S) traffic via proxy",
+          "hasp": "Yes, for command/MCP/file/repo brokered flows",
+          "key": "agent_safe_brokered_run",
+          "notes": "Agent Vault leads on HTTP; HASP leads on non-HTTP local workflows.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Proxy and CA env injection, not raw provider secrets",
+          "hasp": "Convenience-only for values; wrappers set safe-mode/session env",
+          "key": "direct_env_injection",
+          "notes": "Agent Vault uses env for routing; HASP treats secret materialization as convenience.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Vault roles plus proposal approval",
+          "hasp": "Once/session/window grants plus plaintext approval",
+          "key": "explicit_grants",
+          "notes": "Different approval grains.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "repo_scan_block",
+          "notes": "HASP leads on local repo guardrails.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No repo-guardrail override model",
+          "hasp": "Yes",
+          "key": "audited_override",
+          "notes": "HASP has explicit audited override for repo guardrails.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes, via proposal/request workflow and vault credential management",
+          "hasp": "Yes, via secret add/capture flows",
+          "key": "agent_secret_capture",
+          "notes": "Agent Vault proposals are stronger UX; HASP capture is integrated with repo exposure and grants.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Not surfaced as a primary CLI feature in reviewed docs",
+          "hasp": "Yes",
+          "key": "backup_restore",
+          "notes": "HASP has explicit encrypted backup/restore.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Local web dashboard; Infisical commercial path exists",
+          "hasp": "No",
+          "key": "hosted_dashboard",
+          "notes": "Agent Vault has a stronger admin UI.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Strong local/self-host path",
+          "hasp": "Strong local path",
+          "key": "offline_local_use",
+          "notes": "Both can run locally; Agent Vault is heavier server/proxy/UI, HASP is lighter daemon/CLI.",
+          "position": "mixed"
+        }
+      ],
+      "id": "agent-vault",
+      "license": "MIT Expat for non-ee code; enterprise features reserved for ee/ Infisical license",
+      "name": "Infisical Agent Vault",
+      "summary": "Research-preview HTTP credential proxy and vault for AI agents. Agents receive scoped sessions and HTTPS proxy/CA-trust environment, while Agent Vault injects credentials at the network layer and recommends container/network egress lockdown for stronger isolation.",
+      "url": "https://github.com/Infisical/agent-vault"
+    },
+    {
+      "benefits_over_hasp": [
+        "Much stronger hosted identity, attribution, and centralized AI usage reporting.",
+        "Full request/response capture, tool-use logging, and SIEM/S3 export.",
+        "Centralized MCP aggregation and access control.",
+        "Self-serve managed deployment for teams already on Tailscale."
+      ],
+      "feature_rows": [
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "local_vault",
+          "notes": "Aperture centralizes provider keys in the gateway; it does not ship a local encrypted vault model.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "hosted_identity",
+          "notes": "Aperture's strongest differentiator is Tailscale-backed identity and attribution.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "No",
+          "hasp": "No",
+          "key": "short_lived_exchange",
+          "notes": "Aperture centralizes provider API keys, but it is not presented as a generic short-lived credential exchange layer.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Partial",
+          "hasp": "Yes",
+          "key": "agent_safe_brokered_run",
+          "notes": "Aperture keeps provider keys out of clients for proxied LLM/MCP traffic, but it is not a general local execution broker.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Convenience-only",
+          "key": "direct_env_injection",
+          "notes": "Neither product centers its value on direct env injection.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "Identity grants and quotas",
+          "hasp": "Yes",
+          "key": "explicit_grants",
+          "notes": "Aperture has central grants, but not HASP's once/session/window grant model.",
+          "position": "mixed"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "repo_scan_block",
+          "notes": "Repo leak detection and local block-by-default flows remain a clear HASP advantage.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "audited_override",
+          "notes": "Aperture's governance is centralized, but it does not expose HASP's local audited-override pattern.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "agent_secret_capture",
+          "notes": "Aperture is a centralized AI access plane, not an agent-assisted local secret lifecycle tool.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "No",
+          "hasp": "Yes",
+          "key": "backup_restore",
+          "notes": "HASP has explicit local encrypted backup/restore primitives.",
+          "position": "hasp"
+        },
+        {
+          "competitor": "Yes",
+          "hasp": "No",
+          "key": "hosted_dashboard",
+          "notes": "Aperture ships a centralized dashboard and analytics surface.",
+          "position": "competitor"
+        },
+        {
+          "competitor": "Weak",
+          "hasp": "Strong",
+          "key": "offline_local_use",
+          "notes": "Aperture requires a Tailscale network and managed service; HASP can operate locally and offline.",
+          "position": "hasp"
+        }
+      ],
+      "id": "tailscale-aperture",
+      "license": "Proprietary managed service",
+      "name": "Tailscale Aperture",
+      "summary": "Managed beta Tailscale AI gateway for centralized LLM access, identity-backed routing, quotas, pre-LLM guardrails, configurable log retention, administrator audit logging, and experimental MCP aggregation.",
+      "url": "https://tailscale.com/docs/aperture"
+    }
+  ],
+  "features": [
+    {
+      "key": "local_vault",
+      "label": "Local encrypted vault as primary secret store"
+    },
+    {
+      "key": "hosted_identity",
+      "label": "Hosted identity and org attribution"
+    },
+    {
+      "key": "short_lived_exchange",
+      "label": "Short-lived credential exchange from managed providers"
+    },
+    {
+      "key": "agent_safe_brokered_run",
+      "label": "Brokered execution that keeps secret values out of agent-visible output"
+    },
+    {
+      "key": "direct_env_injection",
+      "label": "Direct env injection into agent process"
+    },
+    {
+      "key": "explicit_grants",
+      "label": "Explicit once/session/window grants"
+    },
+    {
+      "key": "repo_scan_block",
+      "label": "Repo leak scan and block-by-default hook/deploy path"
+    },
+    {
+      "key": "audited_override",
+      "label": "Audited override for blocked repo leaks"
+    },
+    {
+      "key": "agent_secret_capture",
+      "label": "Agent-assisted secret capture into managed storage"
+    },
+    {
+      "key": "backup_restore",
+      "label": "Local encrypted backup and restore"
+    },
+    {
+      "key": "hosted_dashboard",
+      "label": "Hosted dashboard / centralized session telemetry"
+    },
+    {
+      "key": "offline_local_use",
+      "label": "Meaningful local/offline use without remote control plane"
+    }
+  ],
+  "hasp": {
+    "license": "Source-available with FCL-1.0-ALv2 as the preferred license (ADR 0005); a repo-root LICENSE artifact now signals the current terms.",
+    "name": "HASP",
+    "summary": "Local-first runtime secret broker with project-scoped bindings, repo guardrails, protected agent process-tree sessions, one-time plaintext approval grants, and agent-safe brokered flows that avoid returning managed values to agent context.",
+    "version": "v0.1.32 / V1"
+  },
+  "updated_at": "2026-04-29"
+}

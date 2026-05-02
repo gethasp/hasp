@@ -43,6 +43,10 @@ type OpenSessionRequest struct {
 	TTLMillis    int    `json:"ttl_millis,omitempty"`
 	AgentSafe    bool   `json:"agent_safe,omitempty"`
 	ConsumerName string `json:"consumer_name,omitempty"`
+	// AuditHMACKey lets an already-unlocked caller hand the daemon the
+	// vault-derived audit key for daemon-owned session lifecycle events. It is
+	// process-local RPC data over the protected daemon socket, never persisted.
+	AuditHMACKey []byte `json:"audit_hmac_key,omitempty"`
 }
 
 type OpenSessionResponse struct {

@@ -24,9 +24,13 @@ git push origin v0.1.0
 1. `main` contains the public code and docs you want to ship
 2. the release workflow in `.github/workflows/release.yml` is current
 3. `CHANGELOG.md` contains a `## [vX.Y.Z]` section for the tag
-4. the public release secrets are available:
+4. `make release-gate` passes. This runs the maintainer verification suite,
+   integration-tagged tests, conformance, release smoke, and the Go coverage
+   gate with `HASP_COVERAGE_TARGET=100`.
+5. the public release secrets are available:
    - base64-encoded GPG signing key material
    - `HASP_RELEASE_GPG_PASSPHRASE` if that key is passphrase-protected
+   - `HASP_UPGRADE_TRUST_ROOTS_HEX` and `HASP_UPGRADE_SIGNING_KEY_B64`
    - Cloudflare R2 credentials, if artifact mirroring is enabled
 
 ## What the release publishes

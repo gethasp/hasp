@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,6 +76,15 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_update", Arguments: map[string]any{"name": "API_TOKEN", "value": "abc123"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
 		t.Fatalf("expected default update refusal, got %v", err)
 	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{"name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default delete refusal, got %v", err)
+	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default expose refusal, got %v", err)
+	}
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": gitRoot, "name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), mcpEnvUnsafeWriteTools) {
+		t.Fatalf("expected default hide refusal, got %v", err)
+	}
 	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_add", Arguments: map[string]any{"name": "API_TOKEN", "value": "abc123"}}); err != nil {
 		t.Fatalf("callTool secret_add: %v", err)
@@ -87,8 +95,8 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "API_TOKEN"}}); err != nil {
 		t.Fatalf("callTool secret_get existing: %v", err)
 	}
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{"name": "API_TOKEN"}}); err != nil {
-		t.Fatalf("callTool secret_delete: %v", err)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{"name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), "project_root and name are required") {
+		t.Fatalf("expected delete without project root to fail closed, got %v", err)
 	}
 
 	if _, err := callSecretAdd(context.Background(), handle, toolCall{Name: "hasp_secret_add", Arguments: map[string]any{}}); err == nil {
@@ -155,8 +163,30 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if err := os.MkdirAll(gitRoot, 0o755); err != nil {
 		t.Fatalf("mkdir git root: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", gitRoot, "init").CombinedOutput(); err != nil {
+	if out, err := initTestGitRepo(gitRoot); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
+	}
+	mutationBinding, err := handle.UpsertBinding(context.Background(), gitRoot, map[string]string{}, store.PolicySession, false)
+	if err != nil {
+		t.Fatalf("upsert mutation binding: %v", err)
+	}
+	if _, err := handle.GrantProjectLease(mutationBinding.ID, "session-token", store.GrantSession, 0); err != nil {
+		t.Fatalf("grant mutation project lease: %v", err)
+	}
+	grantMutation := func(itemName string, action store.SecretMutationAction) {
+		t.Helper()
+		if _, err := handle.GrantSecretMutation(mutationBinding.ID, "session-token", itemName, action, "user", store.GrantOnce, store.DefaultMutationGrantTTL); err != nil {
+			t.Fatalf("grant mutation %s/%s: %v", itemName, action, err)
+		}
+	}
+	mutationArgs := func(values map[string]any) map[string]any {
+		args := map[string]any{
+			"project_root": gitRoot,
+		}
+		for key, value := range values {
+			args[key] = value
+		}
+		return args
 	}
 
 	nonRepo := t.TempDir()
@@ -172,7 +202,8 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	bindItemAliasMCPFn = func(*store.Handle, context.Context, string, string) (string, error) {
 		return "", errors.New("bind fail")
 	}
-	if _, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE"}}); err == nil || !strings.Contains(err.Error(), "bind fail") {
+	grantMutation("INLINE", store.SecretMutationExpose)
+	if _, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: mutationArgs(map[string]any{"name": "INLINE"})}); err == nil || !strings.Contains(err.Error(), "bind fail") {
 		t.Fatalf("expected expose bind failure, got %v", err)
 	}
 	bindItemAliasMCPFn = origBindAlias
@@ -180,44 +211,60 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 		t.Fatal("expected hide missing args failure")
 	}
 	canonicalProjectRootMCPFn = func(context.Context, string) (string, error) { return "", errors.New("hide canonical fail") }
-	if _, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE"}}); err == nil || !strings.Contains(err.Error(), "hide canonical fail") {
+	grantMutation("INLINE", store.SecretMutationHide)
+	if _, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"project_root": t.TempDir(), "name": "INLINE"})}); err == nil || !strings.Contains(err.Error(), "hide canonical fail") {
 		t.Fatalf("expected hide canonical failure, got %v", err)
 	}
 	canonicalProjectRootMCPFn = origCanonical
 	hideItemMCPFn = func(*store.Handle, context.Context, string, string) ([]string, error) {
 		return nil, errors.New("hide fail")
 	}
-	if _, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": nonRepo, "name": "INLINE"}}); err == nil || !strings.Contains(err.Error(), "hide fail") {
+	grantMutation("INLINE", store.SecretMutationHide)
+	if _, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"name": "INLINE"})}); err == nil || !strings.Contains(err.Error(), "hide fail") {
 		t.Fatalf("expected hide store failure, got %v", err)
 	}
 	hideItemMCPFn = origHideItem
-	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": nonRepo, "name": "INLINE"}}); err != nil || result["outcome"] != "already_hidden" {
-		t.Fatalf("expected already_hidden on non-git root, got %+v err=%v", result, err)
+	grantMutation("INLINE", store.SecretMutationHide)
+	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"name": "INLINE"})}); err != nil || result["outcome"] != "already_hidden" {
+		t.Fatalf("expected already_hidden result, got %+v err=%v", result, err)
 	}
 
-	if _, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil {
+	grantMutation("INLINE", store.SecretMutationExpose)
+	if _, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil {
 		t.Fatalf("secret expose: %v", err)
 	}
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil {
+	grantMutation("INLINE", store.SecretMutationExpose)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_expose", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil {
 		t.Fatalf("callTool secret_expose: %v", err)
 	}
-	if result, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil || result["outcome"] != "already_exposed" {
+	grantMutation("INLINE", store.SecretMutationExpose)
+	if result, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil || result["outcome"] != "already_exposed" {
 		t.Fatalf("expected already_exposed result, got %+v err=%v", result, err)
 	}
-	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil || result["outcome"] != "hidden" {
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "grant_write": true}}); err == nil || !strings.Contains(err.Error(), "secret mutation grant required") {
+		t.Fatalf("expected expose without grants to fail closed, got %v", err)
+	}
+	grantMutation("INLINE", store.SecretMutationHide)
+	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil || result["outcome"] != "hidden" {
 		t.Fatalf("expected hidden result, got %+v err=%v", result, err)
 	}
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil {
+	grantMutation("INLINE", store.SecretMutationHide)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil {
 		t.Fatalf("callTool secret_hide: %v", err)
 	}
-	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: map[string]any{"project_root": gitRoot, "name": "INLINE", "host_label": "claude-code"}}); err != nil || result["outcome"] != "already_hidden" {
+	grantMutation("INLINE", store.SecretMutationHide)
+	if result, err := callSecretHide(context.Background(), handle, toolCall{Name: "hasp_secret_hide", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil || result["outcome"] != "already_hidden" {
 		t.Fatalf("expected already_hidden result, got %+v err=%v", result, err)
 	}
 	if _, err := callSecretDelete(context.Background(), handle, toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("expected delete missing args failure")
 	}
-	if _, err := callSecretDelete(context.Background(), handle, toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{"name": "MISSING"}}); !errors.Is(err, store.ErrItemNotFound) {
+	if _, err := callSecretDelete(context.Background(), handle, toolCall{Name: "hasp_secret_delete", Arguments: mutationArgs(map[string]any{"name": "MISSING"})}); !errors.Is(err, store.ErrItemNotFound) {
 		t.Fatalf("expected delete missing secret failure, got %v", err)
+	}
+	grantMutation("INLINE", store.SecretMutationDelete)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_delete", Arguments: mutationArgs(map[string]any{"name": "INLINE", "host_label": "claude-code"})}); err != nil {
+		t.Fatalf("callTool secret_delete: %v", err)
 	}
 
 	if got := existingExposureReferenceMCP(nil, gitRoot); got != "" {
@@ -235,7 +282,7 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if err := os.MkdirAll(unboundGitRoot, 0o755); err != nil {
 		t.Fatalf("mkdir unbound git root: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", unboundGitRoot, "init").CombinedOutput(); err != nil {
+	if out, err := initTestGitRepo(unboundGitRoot); err != nil {
 		t.Fatalf("git init unbound project: %v: %s", err, out)
 	}
 	if _, _, err := ensureProjectBindingExplicitMCP(context.Background(), handle, unboundGitRoot); err == nil || !strings.Contains(err.Error(), "load fail") {

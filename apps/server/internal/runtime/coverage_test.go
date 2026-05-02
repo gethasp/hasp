@@ -32,8 +32,8 @@ func TestRuntimeCoverageServerAndLineageBranches(t *testing.T) {
 	if !peerSharesLineage(uint32(os.Getpid()), cmd.Process.Pid) {
 		t.Fatal("parent peer should share lineage with child request")
 	}
-	if !peerSharesLineage(uint32(cmd.Process.Pid), os.Getpid()) {
-		t.Fatal("child peer should share lineage with parent request")
+	if peerSharesLineage(uint32(cmd.Process.Pid), os.Getpid()) {
+		t.Fatal("child peer must not register a parent request")
 	}
 
 	server := &rpcServer{auditState: newAuditState(nil)}

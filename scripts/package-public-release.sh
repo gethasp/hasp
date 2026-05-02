@@ -32,29 +32,34 @@ release_tag="${release_tag#v}"
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || pwd)"
 release_root="${2:-$repo_root/dist/public-release/v${release_tag}}"
 release_root="$(release_abs_path "$release_root")"
-base_url="${HASP_RELEASE_BASE_URL:-https://downloads.gethasp.com/hasp/releases}/v${release_tag}"
+base_url_root="${HASP_RELEASE_BASE_URL:-https://downloads.gethasp.com/hasp/releases}"
+release_require_publication_base "$base_url_root"
+base_url="${base_url_root%/}/v${release_tag}"
+package_public_tmp="$(release_mktemp_dir hpp)"
+
+package_public_cleanup() {
+  if [[ -n "$package_public_tmp" && -d "$package_public_tmp" ]]; then
+    /bin/rm -rf "$package_public_tmp" || true
+  fi
+  release_cleanup
+}
+trap package_public_cleanup EXIT
 
 /bin/rm -rf "$release_root"
 /bin/mkdir -p "$release_root"
 
-targets=(
-  "linux amd64"
-  "linux arm64"
-  "darwin amd64"
-  "darwin arm64"
-)
-
-for target in "${targets[@]}"; do
-  read -r goos goarch <<<"$target"
+while read -r goos goarch _runner; do
   (
     export GOOS="$goos"
     export GOARCH="$goarch"
-    /bin/rm -rf "$repo_root/dist/release"
+    target_release_root="$package_public_tmp/${goos}-${goarch}"
+    /bin/rm -rf "$target_release_root"
+    /bin/mkdir -p "$target_release_root"
+    export HASP_RELEASE_ROOT="$target_release_root"
     bash "$repo_root/scripts/package-release.sh" >/dev/null
-    /bin/cp -f "$repo_root"/dist/release/*.tar.gz "$release_root"/
-    /bin/rm -rf "$repo_root/dist/release"
+    /bin/cp -f "$target_release_root"/*.tar.gz "$release_root"/
   )
-done
+done < <(python3 "$repo_root/scripts/release_targets.py" shell)
 
 bash "$repo_root/scripts/assemble-public-release.sh" "$release_root" "$base_url"
 

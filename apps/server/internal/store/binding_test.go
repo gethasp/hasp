@@ -227,6 +227,33 @@ func TestBindingOperationsHandlePersistFailureAndNilAudit(t *testing.T) {
 }
 
 func run(name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) == 3 && args[0] == "-C" && args[2] == "init" {
+		return initTestGitRepo(args[1])
+	}
 	cmd := exec.Command(name, args...)
 	return cmd.CombinedOutput()
+}
+
+func initTestGitRepo(root string) ([]byte, error) {
+	gitDir := filepath.Join(root, ".git")
+	for _, dir := range []string{
+		filepath.Join(gitDir, "objects"),
+		filepath.Join(gitDir, "refs", "heads"),
+		filepath.Join(gitDir, "info"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		return nil, err
+	}
+	config := []byte("[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n")
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), config, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte(""), 0o600); err != nil {
+		return nil, err
+	}
+	return []byte("Initialized empty Git repository in " + gitDir + "\n"), nil
 }

@@ -87,6 +87,7 @@ func (s *Store) Init(_ context.Context, masterPassword string) error {
 		SecretGrants:      map[string]SecretGrant{},
 		ConvenienceGrants: map[string]ConvenienceGrant{},
 		PlaintextGrants:   map[string]PlaintextGrant{},
+		MutationGrants:    map[string]MutationGrant{},
 		ManifestReviews:   map[string]ManifestReview{},
 	}
 	if err := s.writeEnvelope(vaultKey, state, envelopeHeader{

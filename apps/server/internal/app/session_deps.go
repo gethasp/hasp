@@ -23,12 +23,16 @@ func defaultSessionDeps() sessionops.Deps {
 			_, _, _, err := ensureProjectBinding(ctx, handle, root)
 			return err
 		},
-		GetItem:                    secretGetItemFn,
+		GetItem: secretGetItemFn,
+		ResolveBindingView: func(ctx context.Context, handle *store.Handle, root string) (store.Binding, []store.VisibleReference, error) {
+			return handle.ResolveBindingView(ctx, root)
+		},
 		RenderJSONOrHuman:          renderJSONOrHuman,
 		RenderSimpleAction:         renderSimpleAction,
 		IsHelpArg:                  isHelpArg,
 		PrintHelpTopic:             printHelpTopic,
 		ParsePlaintextAction:       parsePlaintextAction,
+		ParseMutationAction:        parseSecretMutationAction,
 		ParseGrantScope:            parseGrantScope,
 		RenderSessionOpenResult:    renderSessionOpenResult,
 		RenderSessionResolveResult: renderSessionResolveResult,
@@ -50,9 +54,11 @@ func defaultSessionDeps() sessionops.Deps {
 		DefaultLocalDeps: func() sessionops.LocalDeps {
 			ld := defaultSessionLocalDeps()
 			return sessionops.LocalDeps{
-				Approve:   ld.Approve,
-				UseGrant:  ld.UseGrant,
-				LocalUser: ld.LocalUser,
+				Approve:          ld.Approve,
+				UseGrant:         ld.UseGrant,
+				ApproveMutation:  ld.ApproveMutation,
+				UseMutationGrant: ld.UseMutationGrant,
+				LocalUser:        ld.LocalUser,
 			}
 		},
 		DefaultConfirmPlaintextGrantDeps: func() sessionops.ConfirmPlaintextGrantDeps {

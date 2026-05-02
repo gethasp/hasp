@@ -1,14 +1,12 @@
 package store
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -28,10 +26,7 @@ type ImportedItem struct {
 	Alias string   `json:"alias,omitempty"`
 }
 
-var (
-	ErrReferenceNotFound  = errors.New("reference not found")
-	ErrReferenceAmbiguous = errors.New("reference is ambiguous")
-)
+var ErrReferenceNotFound = errors.New("reference not found")
 
 type ResolvedReference struct {
 	Reference      string   `json:"reference"`
@@ -90,32 +85,17 @@ func (h *Handle) ImportEnvFile(path string) ([]Item, error) {
 	}
 	defer file.Close()
 
-	items := make([]Item, 0)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			return nil, fmt.Errorf("invalid env line %q", line)
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if unquoted, err := strconv.Unquote(value); err == nil {
-			value = unquoted
-		}
-		value = strings.Trim(value, `"'`)
-		item, err := h.UpsertItem(key, ItemKindKV, []byte(value), ItemMetadata{})
+	entries, err := ParseDotEnv(file)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]Item, 0, len(entries))
+	for _, entry := range entries {
+		item, err := h.UpsertItem(entry.Key, ItemKindKV, []byte(entry.Value), ItemMetadata{})
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan env file: %w", err)
 	}
 	return items, nil
 }

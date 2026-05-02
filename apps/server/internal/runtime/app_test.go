@@ -523,7 +523,11 @@ func TestSessionHelpers(t *testing.T) {
 	if view.ID != session.ID || view.ProjectRoot != session.ProjectRoot {
 		t.Fatalf("unexpected session view: %+v", view)
 	}
-	if len(mustRandomHex(8)) != 16 {
+	random, err := randomHex(8)
+	if err != nil {
+		t.Fatalf("random hex: %v", err)
+	}
+	if len(random) != 16 {
 		t.Fatalf("unexpected random hex length")
 	}
 }

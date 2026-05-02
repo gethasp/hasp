@@ -1,7 +1,11 @@
 package runtime
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,5 +55,48 @@ func TestNewRPCServerMarksAuditDegradedWhenAuditInitFails(t *testing.T) {
 	degraded, degradedAt := server.auditState.Snapshot()
 	if !degraded || degradedAt == nil || !degradedAt.Equal(server.startedAt) {
 		t.Fatalf("expected startup audit degradation, got degraded=%t at=%v started=%v", degraded, degradedAt, server.startedAt)
+	}
+}
+
+func TestInstallAuditHMACKeyRejectsUntrustedInputs(t *testing.T) {
+	t.Setenv("HASP_HOME", t.TempDir())
+	log, err := audit.New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	if err := installAuditHMACKey(log, []byte("short")); err == nil || !strings.Contains(err.Error(), "32 bytes") {
+		t.Fatalf("expected short key rejection, got %v", err)
+	}
+
+	original := newRuntimeAuditLog
+	t.Cleanup(func() { newRuntimeAuditLog = original })
+	newRuntimeAuditLog = func() (*audit.Log, error) { return nil, errors.New("audit init failed") }
+	if err := installAuditHMACKey(log, bytes.Repeat([]byte{1}, 32)); err == nil || !strings.Contains(err.Error(), "verify audit HMAC key") {
+		t.Fatalf("expected verifier init error, got %v", err)
+	}
+	newRuntimeAuditLog = original
+
+	t.Setenv("HASP_HOME", t.TempDir())
+	log, err = audit.New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	if err := installAuditHMACKey(log, bytes.Repeat([]byte{2}, 32)); err == nil || !strings.Contains(err.Error(), "existing keyed audit chain") {
+		t.Fatalf("expected missing keyed chain rejection, got %v", err)
+	}
+
+	t.Setenv("HASP_HOME", t.TempDir())
+	if err := os.MkdirAll(os.Getenv("HASP_HOME"), 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HASP_HOME"), "audit.jsonl"), []byte("{bad-json\n"), 0o600); err != nil {
+		t.Fatalf("write corrupt audit log: %v", err)
+	}
+	log, err = audit.New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	if err := installAuditHMACKey(log, bytes.Repeat([]byte{3}, 32)); err == nil || !strings.Contains(err.Error(), "verify audit HMAC key") {
+		t.Fatalf("expected audit events error, got %v", err)
 	}
 }

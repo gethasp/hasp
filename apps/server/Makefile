@@ -1,6 +1,6 @@
 .PHONY: build build-debug build-min-size test test-integration test-race evals coverage benchmarks benchmark-smoke lint staticcheck vulncheck
 
-REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../..)
 
 build:
 	@bash ../../scripts/build.sh

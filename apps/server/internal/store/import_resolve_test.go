@@ -79,7 +79,7 @@ func TestImportEnvFileHandlesExportsCommentsAndQuotes(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	envPath := filepath.Join(t.TempDir(), ".env")
-	data := "# comment\nexport API_TOKEN=\"abc123\"\nDATABASE_URL='postgres://localhost'\n\n"
+	data := "# comment\nexport API_TOKEN=\"abc123\\\"\"\nDATABASE_URL='postgres://localhost'\nTRAILING_QUOTE=plain'\n\n"
 	if err := os.WriteFile(envPath, []byte(data), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
@@ -87,12 +87,20 @@ func TestImportEnvFileHandlesExportsCommentsAndQuotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import env: %v", err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 imported items, got %d", len(items))
+	if len(items) != 3 {
+		t.Fatalf("expected 3 imported items, got %d", len(items))
 	}
 	apiToken, err := handle.GetItem("API_TOKEN")
-	if err != nil || string(apiToken.Value) != "abc123" {
+	if err != nil || string(apiToken.Value) != "abc123\"" {
 		t.Fatalf("expected quoted export value to import cleanly, got %+v err=%v", apiToken, err)
+	}
+	databaseURL, err := handle.GetItem("DATABASE_URL")
+	if err != nil || string(databaseURL.Value) != "postgres://localhost" {
+		t.Fatalf("expected single-quoted value to import cleanly, got %+v err=%v", databaseURL, err)
+	}
+	trailingQuote, err := handle.GetItem("TRAILING_QUOTE")
+	if err != nil || string(trailingQuote.Value) != "plain'" {
+		t.Fatalf("expected plain trailing quote to survive import, got %+v err=%v", trailingQuote, err)
 	}
 }
 

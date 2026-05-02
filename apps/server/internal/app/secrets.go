@@ -60,9 +60,13 @@ func init() {
 	cmddispatch.YesFlagFn = func(ctx context.Context) bool { return globalFlagsFromContext(ctx).yes }
 }
 
-func setAuditHMACKey(key []byte) { auditlog.SetHMACKey(key) }
-func getAuditHMACKey() []byte    { return auditlog.GetHMACKey() }
-func clearAuditHMACKey()         { auditlog.ClearHMACKey() }
+func setAuditHMACKey(key []byte) {
+	auditlog.SetHMACKey(key)
+	auditlog.EnsureKeyedChainSeed()
+}
+func getAuditHMACKey() []byte { return auditlog.GetHMACKey() }
+func clearAuditHMACKey()      { auditlog.ClearHMACKey() }
+
 var newVaultStoreFn = func() (*store.Store, error) {
 	return store.New(store.NewDefaultKeyring())
 }

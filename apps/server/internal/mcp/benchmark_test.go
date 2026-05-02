@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -152,7 +153,12 @@ func setupBenchmarkMCPState(b *testing.B) string {
 	b.Helper()
 	baseDir := b.TempDir()
 	b.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
-	b.Setenv(paths.EnvSocket, filepath.Join(os.TempDir(), fmt.Sprintf("hasp-bench-%d.sock", time.Now().UnixNano())))
+	socketDir, err := os.MkdirTemp("/tmp", "hasp-bench-")
+	if err != nil {
+		b.Fatalf("create benchmark socket dir: %v", err)
+	}
+	b.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	b.Setenv(paths.EnvSocket, filepath.Join(socketDir, "s.sock"))
 	b.Setenv("HASP_MASTER_PASSWORD", "secret-password")
 
 	vaultStore, err := store.New(store.NewDefaultKeyring())
@@ -166,6 +172,9 @@ func setupBenchmarkMCPState(b *testing.B) string {
 	if err != nil {
 		b.Fatalf("open handle: %v", err)
 	}
+	auditlog.SetHMACKey(handle.AuditHMACKey())
+	auditlog.EnsureKeyedChainSeed()
+	b.Cleanup(auditlog.ClearHMACKey)
 	projectRoot := filepath.Join(baseDir, "project")
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
 		b.Fatalf("mkdir project: %v", err)
@@ -186,9 +195,10 @@ func setupBenchmarkMCPState(b *testing.B) string {
 	}
 	defer client.Close()
 	sessionReply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{
-		HostLabel:   "bench",
-		ProjectRoot: projectRoot,
-		TTLSeconds:  int(runtime.DefaultSessionTTL.Seconds()),
+		HostLabel:    "bench",
+		ProjectRoot:  projectRoot,
+		TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
+		AuditHMACKey: auditlog.GetHMACKey(),
 	})
 	if err != nil {
 		b.Fatalf("open session: %v", err)

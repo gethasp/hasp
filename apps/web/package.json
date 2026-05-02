@@ -1,0 +1,24 @@
+{
+  "name": "@hasp/web",
+  "private": true,
+  "type": "module",
+  "description": "Docs site for HASP",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev": "pnpm exec eleventy --serve --quiet",
+    "build": "rm -rf _site && pnpm exec eleventy",
+    "check": "pnpm build && pnpm check:docs-versioning && pnpm test:downloads-worker",
+    "check:docs-versioning": "node scripts/check-docs-versioning.mjs",
+    "test:docs-versioning": "node scripts/test-docs-versioning.mjs",
+    "test:downloads-worker": "node downloads/src/worker.test.mjs",
+    "clean": "rm -rf _site .cache",
+    "docs:snapshot": "node scripts/snapshot-docs.mjs"
+  },
+  "devDependencies": {
+    "@11ty/eleventy": "^3.0.0",
+    "wrangler": "4.87.0"
+  }
+}

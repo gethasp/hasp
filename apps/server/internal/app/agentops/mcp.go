@@ -38,7 +38,7 @@ func agentMCPHandler(ctx context.Context, deps Deps, args []string, stdin io.Rea
 		return err
 	}
 	if token := envValue(env, secrettypes.EnvSessionToken); token != "" {
-		if err := deps.AgentRegisterProcess(ctx, starter, token, os.Getppid()); err != nil {
+		if err := deps.AgentRegisterProcess(ctx, starter, token, os.Getpid()); err != nil {
 			return err
 		}
 	}

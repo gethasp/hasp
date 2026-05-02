@@ -24,8 +24,7 @@ var (
 	ErrKeyringUnavailable  = errors.New("keyring convenience unlock unavailable")
 	// passwordIterations is retained only for PBKDF2 metadata/backward-
 	// compatibility reporting. New vaults use argon2id parameters below.
-	// Do not read HASP_KDF_ITERATIONS at package init: even `hasp --help`
-	// must survive a bad shell environment.
+	// Its production/test value is selected only by build tags.
 	passwordIterations = defaultPasswordIterations
 )
 
@@ -155,6 +154,7 @@ type persistedState struct {
 	SecretGrants      map[string]SecretGrant      `json:"secret_grants"`
 	ConvenienceGrants map[string]ConvenienceGrant `json:"convenience_grants"`
 	PlaintextGrants   map[string]PlaintextGrant   `json:"plaintext_grants"`
+	MutationGrants    map[string]MutationGrant    `json:"mutation_grants"`
 	AppConsumers      map[string]AppConsumer      `json:"app_consumers"`
 	AgentConsumers    map[string]AgentConsumer    `json:"agent_consumers"`
 	ManifestReviews   map[string]ManifestReview   `json:"manifest_reviews,omitempty"`

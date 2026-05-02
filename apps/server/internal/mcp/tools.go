@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -75,12 +76,21 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 		}
 		return callSecretUpdate(ctx, handle, call)
 	case "hasp_secret_delete":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callSecretDelete(ctx, handle, call)
 	case "hasp_secret_get":
 		return callSecretGet(ctx, handle, call)
 	case "hasp_secret_expose":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callSecretExpose(ctx, handle, call)
 	case "hasp_secret_hide":
+		if !mcpUnsafeSecretWriteToolsEnabled() {
+			return nil, unsafeSecretWriteToolDisabled(call.Name)
+		}
 		return callSecretHide(ctx, handle, call)
 	case "hasp_redact":
 		text := stringArg(call.Arguments, "text", "")
@@ -100,7 +110,7 @@ func mcpUnsafeSecretWriteToolsEnabled() bool {
 }
 
 func unsafeSecretWriteToolDisabled(name string) error {
-	return fmt.Errorf("%s is disabled by default because raw secret values would pass through the MCP transcript; use the hasp CLI or set %s=1 only in a trusted local harness", name, mcpEnvUnsafeWriteTools)
+	return fmt.Errorf("%s is disabled by default because it mutates vault or project secret state through the MCP transcript; use the hasp CLI or set %s=1 only in a trusted local harness", name, mcpEnvUnsafeWriteTools)
 }
 
 func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
@@ -404,10 +414,17 @@ func openHandle(ctx context.Context) (*store.Handle, error) {
 	if err != nil {
 		return nil, err
 	}
+	var handle *store.Handle
 	if strings.TrimSpace(password) != "" {
-		return vaultStore.OpenWithPassword(ctx, password)
+		handle, err = vaultStore.OpenWithPassword(ctx, password)
+	} else {
+		handle, err = vaultStore.OpenWithConvenienceUnlock(ctx)
 	}
-	return vaultStore.OpenWithConvenienceUnlock(ctx)
+	if err == nil && handle != nil {
+		auditlog.SetHMACKey(handle.AuditHMACKey())
+		auditlog.EnsureKeyedChainSeed()
+	}
+	return handle, err
 }
 
 func defaultMCPProjectRoot() string {
@@ -518,6 +535,7 @@ func appendAuditApproval(bindingID string, itemName string) {
 	if err != nil {
 		return
 	}
+	log = log.WithKey(auditlog.GetHMACKey())
 	_, _ = log.Append(audit.EventApprove, "agent", map[string]any{"action": "capture.write_grant", "binding_id": bindingID, "item_name": itemName})
 }
 

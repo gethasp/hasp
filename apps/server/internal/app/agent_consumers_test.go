@@ -457,6 +457,38 @@ func TestAgentCommandAndEnvBuilderBranches(t *testing.T) {
 	}
 }
 
+func TestAgentOpenSessionRequestIncludesAuditHMACKey(t *testing.T) {
+	lockAppSeams(t)
+	clearAuditHMACKey()
+	t.Cleanup(clearAuditHMACKey)
+
+	auditKey := make([]byte, 32)
+	for i := range auditKey {
+		auditKey[i] = byte(i + 1)
+	}
+	setAuditHMACKey(auditKey)
+	req := agentOpenSessionRequest("agent:claude-code", store.AgentConsumer{
+		Name:        "claude-code",
+		ProjectRoot: "/tmp/project",
+	})
+	if !bytes.Equal(req.AuditHMACKey, auditKey) {
+		t.Fatalf("AuditHMACKey = %x, want %x", req.AuditHMACKey, auditKey)
+	}
+	if req.HostLabel != "agent:claude-code" || req.ProjectRoot != "/tmp/project" || !req.AgentSafe || req.ConsumerName != "claude-code" {
+		t.Fatalf("unexpected request: %+v", req)
+	}
+	auditKey[0] ^= 0xff
+	if bytes.Equal(req.AuditHMACKey, auditKey) {
+		t.Fatal("request reused caller-owned audit key slice")
+	}
+
+	clearAuditHMACKey()
+	req = agentOpenSessionRequest("agent:claude-code", store.AgentConsumer{Name: "claude-code"})
+	if len(req.AuditHMACKey) != 0 {
+		t.Fatalf("expected empty AuditHMACKey without cached key, got %d bytes", len(req.AuditHMACKey))
+	}
+}
+
 func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	lockAppSeams(t)
 

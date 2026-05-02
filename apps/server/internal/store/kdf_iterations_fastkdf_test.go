@@ -16,7 +16,4 @@ func TestPasswordIterationsUseFastKDFConstantsUnderTag(t *testing.T) {
 	if defaultPasswordIterations != testPasswordIterations {
 		t.Fatalf("defaultPasswordIterations = %d under hasp_test_fastkdf, want %d", defaultPasswordIterations, testPasswordIterations)
 	}
-	if minPasswordIterations != 1 {
-		t.Fatalf("minPasswordIterations = %d under hasp_test_fastkdf, want 1", minPasswordIterations)
-	}
 }

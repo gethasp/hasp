@@ -89,4 +89,3 @@ func TestCheckRepoLeakIsTaggedWithRepoLeakCode(t *testing.T) {
 		t.Fatalf("message %q does not mention 'managed'", envelope.Message)
 	}
 }
-

@@ -1,0 +1,20 @@
+---
+permalink: "/llms-full.txt"
+eleventyExcludeFromCollections: true
+---
+# hasp full documentation bundle
+
+Version: {{ docs.version }}
+Docs root: {{ site.url }}/docs/
+GitHub: {{ site.githubUrl }}
+
+{% for page in docs.pages %}
+================================================================================
+{{ page.section }} / {{ page.title }}
+URL: {{ site.url }}{{ page.url }}
+Source: {{ page.githubUrl }}
+--------------------------------------------------------------------------------
+
+{{ page.searchText }}
+
+{% endfor %}

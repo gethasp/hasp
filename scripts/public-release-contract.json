@@ -1,0 +1,145 @@
+{
+  "private_makefile_targets": {
+    "verify-core": {
+      "recipe_in_order": [
+        "$(MAKE) check-links",
+        "$(MAKE) check-tidy",
+        "$(MAKE) check-docs-portability",
+        "$(MAKE) workflow-lint",
+        "$(MAKE) shellcheck",
+        "$(MAKE) test-scripts",
+        "$(MAKE) web-check",
+        "HASP_DOCS_VERSIONING_PREBUILT=1 $(MAKE) docs-versioning",
+        "$(MAKE) test",
+        "$(MAKE) lint"
+      ]
+    },
+    "verify-ci": {
+      "deps_include": ["verify-core", "public-export-check"]
+    },
+    "test-release-publication": {
+      "recipe_in_order": ["bash ./scripts/test-release-publication.sh"]
+    },
+    "release-gate": {
+      "recipe_in_order": [
+        "$(MAKE) verify-core",
+        "$(MAKE) public-export-check",
+        "$(MAKE) test-release-publication",
+        "$(MAKE) evals",
+        "$(MAKE) vulncheck",
+        "HASP_COVERAGE_TARGET=100 $(MAKE) coverage",
+        "$(MAKE) conformance"
+      ]
+    }
+  },
+  "public_makefile_targets": {
+    "verify-ci": {
+      "deps_exact": ["check-links", "check-tidy", "workflow-lint", "shellcheck", "test-scripts", "web-check", "test", "lint"]
+    },
+    "test-release-publication": {
+      "recipe_in_order": ["bash ./scripts/test-release-publication.sh"]
+    },
+    "release-gate": {
+      "recipe_in_order": [
+        "$(MAKE) verify-ci",
+        "$(MAKE) test-release-publication",
+        "$(MAKE) evals",
+        "$(MAKE) vulncheck",
+        "$(MAKE) test-integration",
+        "$(MAKE) test-race",
+        "HASP_COVERAGE_TARGET=100 $(MAKE) coverage",
+        "$(MAKE) conformance"
+      ]
+    }
+  },
+  "scripts": {
+    "scripts/conformance.sh": {
+      "commands_in_order": [
+        "make verify-ci",
+        "bash ./scripts/release-smoke.sh",
+        "make evals",
+        "make benchmark-smoke"
+      ]
+    }
+  },
+  "files": {
+    "apps/web/Makefile": {
+      "contains": ["pnpm check", "wrangler deploy --dry-run"]
+    },
+    "apps/web/package.json": {
+      "contains": ["check:docs-versioning", "test:downloads-worker"]
+    },
+    "apps/web/eleventy.config.js": {
+      "contains": ["addPassthroughCopy", "src/public"]
+    },
+    "apps/web/scripts/check-docs-versioning.mjs": {
+      "contains": ["check-public-docs-versioning.py", "Docs versioning output looks consistent"]
+    },
+    "apps/web/src/_data/public-docs.js": {
+      "contains": ["publicDocSpecs", "blockedDocSources"]
+    }
+  },
+  "workflows": {
+    "private_verify": {
+      "path": ".github/workflows/verify.yml",
+      "jobs": {
+        "fork-pr-verify": {
+          "run_contains": ["make release-gate"]
+        },
+        "release-smoke-matrix": {
+          "run_contains": ["make coverage-audit-platform"]
+        }
+      }
+    },
+    "public_ci": {
+      "path": ".github/workflows/ci.yml",
+      "forbid_contains": ["paths:"],
+      "jobs": {
+        "fork-pr-verify": {
+          "runs_on_contains": "ubuntu-latest",
+          "run_contains": ["make verify-ci", "make coverage"],
+          "env_contains": ["HASP_COVERAGE_TARGET: \"100\""]
+        },
+        "merge-gate": {
+          "run_contains": ["make release-gate"]
+        },
+        "darwin-audit-coverage": {
+          "runs_on_contains": "macos-15",
+          "run_contains": ["make coverage-audit-platform"]
+        }
+      }
+    },
+    "public_release": {
+      "path": ".github/workflows/release.yml",
+      "jobs": {
+        "deploy-download-worker": {
+          "needs_include": ["publish-r2"],
+          "run_contains": [
+            "retry_curl",
+            "release_trust_import_public_key_bundle /tmp/hasp-release-public-key.asc \"$GNUPGHOME\" \"$trusted_fingerprints\"",
+            "gpgv --keyring \"$release_trust_keyring_path\" /tmp/hasp-release-metadata.asc /tmp/hasp-release-metadata.json",
+            "retry_latest_diff"
+          ]
+        },
+        "publish-homebrew-tap": {
+          "needs_include": ["deploy-download-worker", "homebrew-formula-smoke"]
+        },
+        "published-homebrew-tap-smoke": {
+          "needs_include": ["publish-homebrew-tap"],
+          "run_contains": [
+            "brew tap gethasp/hasp https://github.com/gethasp/homebrew-tap.git",
+            "brew install gethasp/hasp/hasp"
+          ]
+        },
+        "github-release": {
+          "needs_include": ["published-homebrew-tap-smoke"]
+        }
+      },
+      "step_names_in_order": [
+        "Smoke download Worker release endpoint",
+        "Promote latest release mirror",
+        "Verify latest release mirror"
+      ]
+    }
+  }
+}

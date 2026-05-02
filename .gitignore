@@ -10,6 +10,9 @@
 codedb.snapshot
 bin/
 dist/
+__pycache__/
+.testtmp/
+.testsock/
 
 # IDE / tools
 .omx/

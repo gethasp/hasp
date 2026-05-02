@@ -1,0 +1,181 @@
+---
+layout: layouts/base.njk
+pagination:
+  data: docs.homes
+  size: 1
+  alias: docHome
+permalink: "{{ docHome.url }}"
+eleventyComputed:
+  title: "hasp docs"
+  description: "Install, operate, and connect HASP with coding agents from one documentation entry point."
+---
+
+<div class="doc docs-home">
+  <header class="docs-hero">
+    <div>
+      <div class="pid"><span>DOCS</span><span>Updated {{ docs.updated }}</span></div>
+      <h1>Documentation is the product manual. <em>Start here, then keep moving.</em></h1>
+      <p>Install HASP, prove one brokered run, bind a repo, connect an agent, and verify releases without leaving the docs surface.</p>
+    </div>
+    <div class="docs-search-panel" data-docs-search>
+      <div class="docs-version-picker">
+        <label for="docs-version-home">Docs version</label>
+        <div>
+          <span class="docs-select-wrap">
+            <select id="docs-version-home" data-docs-version-select>
+              {% for option in docHome.versionOptions %}
+              <option value="{{ option.url }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </span>
+          <a href="{{ docHome.versionIndexUrl }}">All versions</a>
+        </div>
+      </div>
+      <label for="docs-search">Search docs</label>
+      <input id="docs-search" type="search" autocomplete="off" placeholder="Try errors, grants, Codex, backup, proof">
+      <div class="docs-search-results" data-docs-search-results aria-live="polite"></div>
+    </div>
+  </header>
+
+  <section class="docs-start-grid" aria-labelledby="docs-start-title">
+    <h2 id="docs-start-title"><b>Start path <em>· the shortest route to proof</em></b></h2>
+    <div class="docs-cards">
+      {% for card in docHome.startCards %}
+      <a href="{{ card.url }}">
+        <span>{{ card.number }}</span>
+        <b>{{ card.title }}</b>
+        <p>{{ card.description }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="docs-directory" aria-labelledby="docs-directory-title">
+    <h2 id="docs-directory-title"><b>Directory <em>· generated from repo docs</em></b></h2>
+    <div class="docs-directory-grid">
+      {% for section in docHome.sections %}
+      <div>
+        <h3>{{ section.title }}</h3>
+        <ul>
+          {% for page in section.pages %}
+          <li>
+            <a href="{{ page.url }}">{{ page.title }}</a>
+            <p>{{ page.description }}</p>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+      <div>
+        <h3>Versions</h3>
+        <ul>
+          <li>
+            <a href="{{ docHome.versionIndexUrl }}">Docs versions</a>
+            <p>Open the docs that match an installed HASP release.</p>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-docs-version-select]").forEach((select) => {
+    select.addEventListener("change", () => {
+      if (select.value) window.location.href = select.value;
+    });
+  });
+
+  const index = {{ docHome.search | json | safe }};
+  const root = document.querySelector("[data-docs-search]");
+  if (!root) return;
+  const input = root.querySelector("input");
+  const results = root.querySelector("[data-docs-search-results]");
+
+  const normalize = (value) => String(value || "")
+    .toLowerCase()
+    .replace(/[_/-]+/g, " ")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const escapeHtml = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+  const termVariants = (term) => {
+    const variants = new Set([term]);
+    if (term.endsWith("s") && term.length > 3) variants.add(term.slice(0, -1));
+    if (!term.endsWith("s") && term.length > 2) variants.add(`${term}s`);
+    return [...variants];
+  };
+
+  const fieldScore = (field, term, weight) => {
+    const normalized = normalize(field);
+    if (!normalized) return 0;
+    let best = 0;
+    for (const variant of termVariants(term)) {
+      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(normalized)) {
+        best = Math.max(best, weight);
+      } else if (new RegExp(`(^|\\s)${escaped}`).test(normalized)) {
+        best = Math.max(best, weight * 0.75);
+      } else if (normalized.includes(variant)) {
+        best = Math.max(best, weight * 0.45);
+      }
+    }
+    return best;
+  };
+
+  const scoreItem = (item, terms) => {
+    let matchedTerms = 0;
+    const score = terms.reduce((sum, term) => {
+      const termScore =
+        fieldScore(item.title, term, 24) +
+        fieldScore(item.heading, term, 20) +
+        fieldScore(item.pageTitle, term, 16) +
+        fieldScore(item.description, term, 9) +
+        fieldScore(item.section, term, 4) +
+        fieldScore(item.text, term, 2);
+      if (termScore > 0) matchedTerms += 1;
+      return sum + termScore;
+    }, item.kind === "Section" ? 3 : 0);
+    return matchedTerms === terms.length ? score + 6 : score - ((terms.length - matchedTerms) * 4);
+  };
+
+  const render = (query) => {
+    const terms = normalize(query).split(/\s+/).filter((term) => term.length > 1);
+    if (!terms.length) {
+      results.innerHTML = "<p>Search across install, operator, release, and agent docs.</p>";
+      return;
+    }
+
+    const matches = index
+      .map((item) => {
+        return { item, score: scoreItem(item, terms) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.item.pageTitle.localeCompare(b.item.pageTitle) || a.item.title.localeCompare(b.item.title))
+      .slice(0, 8);
+
+    if (!matches.length) {
+      results.innerHTML = "<p>No matching docs yet.</p>";
+      return;
+    }
+
+    results.innerHTML = matches.map(({ item }) => `
+      <a href="${item.url}">
+        <span>${escapeHtml(item.section)} · ${escapeHtml(item.kind)}</span>
+        <b>${escapeHtml(item.kind === "Section" ? `${item.pageTitle} / ${item.title}` : item.title)}</b>
+        <small>${escapeHtml(item.description)}</small>
+      </a>
+    `).join("");
+  };
+
+  input.addEventListener("input", () => render(input.value));
+  render("");
+})();
+</script>

@@ -46,6 +46,7 @@ signature_file="$release_dir/SHA256SUMS.asc"
 public_key_file="$release_dir/hasp-release-public-key.asc"
 fingerprint_file="$release_dir/RELEASE-SIGNING-FINGERPRINT.txt"
 metadata_file="$release_dir/release-metadata.json"
+metadata_signature_file="${metadata_file}.asc"
 formula_dir="$release_dir/Formula"
 formula_path="$formula_dir/hasp.rb"
 tmp_extract="$(mktemp -d)"
@@ -131,11 +132,15 @@ fi
 
 /bin/mkdir -p "$formula_dir"
 release_export_public_key "$signing_key" "$public_key_file"
-signing_fingerprint="$(release_gpg --list-keys --with-colons "$signing_key" | awk -F: '/^fpr:/ {print $10; exit}')"
+signing_fingerprint="$(release_signing_fingerprint "$signing_key")"
+release_require_allowed_signing_fingerprint "$signing_fingerprint" "release signing key"
 printf '%s\n' "$signing_fingerprint" >"$fingerprint_file"
 : >"$checksum_file"
 
 release_version="$(cat "$repo_root/VERSION")"
+read -r release_sequence release_issued_at release_expires_at < <(
+  HASP_RELEASE_METADATA_TTL_DAYS="${HASP_RELEASE_METADATA_TTL_DAYS:-397}" python3 "$script_dir/release_metadata_window.py" "$release_version"
+)
 upgrade_signing_key="$(resolve_upgrade_signing_key)"
 upgrade_pubkey="$(release_sign_tool pubkey --key "$upgrade_signing_key")"
 upgrade_keys_file="$release_dir/KEYS-v${release_version}"
@@ -169,8 +174,9 @@ for tarball in "${tarballs[@]}"; do
   topdir="$(release_detect_topdir "$tarball")"
   work_dir="$tmp_extract/$artifact_name"
   /bin/mkdir -p "$work_dir"
-  /usr/bin/tar -xzf "$tarball" -C "$work_dir"
+  release_tar -xzf "$tarball" -C "$work_dir"
   artifact_dir="$work_dir/$topdir"
+  release_validate_extracted_tree "$artifact_dir"
 
   if [[ ! -f "$artifact_dir/bin/hasp" ]]; then
     echo "packaged release is missing bin/hasp: $tarball_name" >&2
@@ -198,12 +204,13 @@ for tarball in "${tarballs[@]}"; do
   metadata_entries+=("    {\"name\":\"$artifact_name\",\"version\":\"$version\",\"os\":\"$os\",\"arch\":\"$arch\",\"tarball\":\"$tarball_name\",\"url\":\"$base_url/$tarball_name\",\"sha256\":\"$(release_sha256 "$tarball")\"}")
 done
 
-release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
-
 {
   printf '{\n'
   printf '  "tag_base_url": "%s",\n' "$base_url"
-  printf '  "version": "%s",\n' "$(cat "$repo_root/VERSION")"
+  printf '  "version": "%s",\n' "$release_version"
+  printf '  "release_sequence": %s,\n' "$release_sequence"
+  printf '  "issued_at": "%s",\n' "$release_issued_at"
+  printf '  "expires_at": "%s",\n' "$release_expires_at"
   printf '  "artifacts": [\n'
   for i in "${!metadata_entries[@]}"; do
     printf '%s' "${metadata_entries[$i]}"
@@ -216,9 +223,16 @@ release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
   printf '}\n'
 } >"$metadata_file"
 
+release_detached_sign "$signing_key" "$metadata_file" "$metadata_signature_file"
+{
+  printf '%s  %s\n' "$(release_sha256 "$metadata_file")" "$(basename "$metadata_file")"
+  printf '%s  %s\n' "$(release_sha256 "$metadata_signature_file")" "$(basename "$metadata_signature_file")"
+} >>"$checksum_file"
+release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
+
 bash "$script_dir/render-homebrew-formula.sh" --metadata "$metadata_file" "$formula_path" >/dev/null
 
-if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$metadata_file" || ! -s "$formula_path" || ! -s "$upgrade_keys_file" || ! -s "$upgrade_keys_sig_file" ]]; then
+if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$metadata_file" || ! -s "$metadata_signature_file" || ! -s "$formula_path" || ! -s "$upgrade_keys_file" || ! -s "$upgrade_keys_sig_file" ]]; then
   echo "public release assembly output incomplete" >&2
   exit 1
 fi

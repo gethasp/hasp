@@ -1,0 +1,358 @@
+---
+layout: layouts/base.njk
+title: "hasp · model 01 · spec sheet"
+---
+
+<div class="doc">
+
+  <header class="plate">
+    <div class="left">
+      <div class="pid"><span>SPEC SHEET · {{ site.model }}</span><span>Sheet 1 of 1</span></div>
+      <h1>Hand the agent the keys.<em>Without actually handing it the keys.</em></h1>
+      <p class="lede">A local broker that holds your secrets in one encrypted vault on your machine and hands them to apps and coding agents at the moment they need them &mdash; only inside the project boundary you bound, only for the time window you allowed, and never as a value the agent can see.</p>
+      <button class="hero-install" type="button" data-copy-text="curl -fsSL https://gethasp.com/install.sh | sh" aria-label="Copy install script">
+        <span class="hero-prompt" aria-hidden="true">$</span>
+        <code>curl -fsSL https://gethasp.com/install.sh | sh</code>
+        <span class="copy-icon" aria-hidden="true"></span>
+        <span class="copy-status" aria-live="polite"></span>
+      </button>
+    </div>
+
+    <div class="right">
+      <div class="diagram">
+        <div class="stack">
+          <div class="node"><b>Vault</b><span>1 file</span><small>Argon2id · AEAD</small></div>
+          <div class="node"><b>Audit log</b><span>chained HMAC</span><small>append-only</small></div>
+        </div>
+        <div class="midcol">
+          <div class="conn">resolves<br>at exec</div>
+          <div class="node mid"><b>hasp</b><span>broker</span><small>{{ site.version }} · daemon</small></div>
+          <div class="conn">redacts<br>11 enc.</div>
+        </div>
+        <div class="stack2">
+          <div class="node"><b>Agent</b><span>MCP / CLI</span><small>6 first-class</small></div>
+          <div class="node"><b>App</b><span>launcher on PATH</span><small>env · file · dotenv</small></div>
+        </div>
+      </div>
+      <div class="legend">
+        <div><b>Plaintext path</b>only inside the brokered child process</div>
+        <div><b>Cleartext at rest</b>never. memory only while unlocked</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="specs">
+    <div>
+      <div class="tag">Spec 01</div>
+      <div class="n">11<sup>enc</sup></div>
+      <h3>Streaming output redactor</h3>
+      <p>Raw, base64-std, base64-url, base32, hex (lower &amp; upper), URL-encoded, JSON-escaped, HTML entity, double-percent, Unicode escape. Marker tokens preserve line counts.</p>
+    </div>
+    <div>
+      <div class="tag">Spec 02</div>
+      <div class="n">24<sup>h</sup></div>
+      <h3>Hard grant ceiling</h3>
+      <p>Once · session · window. Window accepts durations like 15m or 1h. The 24-hour ceiling is enforced inside the daemon. No policy can lift it.</p>
+    </div>
+    <div>
+      <div class="tag">Spec 03</div>
+      <div class="n">6<sup>+1</sup></div>
+      <h3>First-class agent profiles</h3>
+      <p>claude-code, codex-cli, cursor, aider, hermes, openclaw &mdash; plus a generic profile for anything else that speaks MCP or runs a CLI.</p>
+    </div>
+    <div>
+      <div class="tag">Spec 04</div>
+      <div class="n">0<sup>cloud</sup></div>
+      <h3>Local-first, end to end</h3>
+      <p>No account. No control plane. No telemetry. Works on a plane, in a SCIF, on a laptop with no network. Source-available critical path. Signed release with SBOM &amp; SLSA.</p>
+    </div>
+  </div>
+
+  <section id="surface">
+    <h2><b>Surface <em>· the actual product, in three nouns</em></b></h2>
+    <div class="surface">
+      <div>
+        <b>Noun 01</b>
+        <h4>Vault</h4>
+        <p>One personal encrypted local store under your home directory. Argon2id with memory-hard parameters (64&nbsp;MB · 3 iterations · 4 lanes). AEAD encryption at rest. All your secrets live here once.</p>
+      </div>
+      <div>
+        <b>Noun 02</b>
+        <h4>Apps</h4>
+        <p>Normal applications you connect to the vault &mdash; your dev server, your data tool, your CLI. After connecting, you launch them by name and the right values are present. Three delivery modes: env var, temp file 0600, temp dotenv outside the repo.</p>
+      </div>
+      <div>
+        <b>Noun 03</b>
+        <h4>Agents</h4>
+        <p>Coding agents you connect to the vault. After connecting, the agent works through hasp instead of around it. MCP tool surface returns references and metadata, not values. The agent never reads the value.</p>
+      </div>
+    </div>
+    <p class="surface-cap">Setup is explicit, once. <em>Runtime&nbsp;is invisible, every time after.</em></p>
+  </section>
+
+  <section id="features" class="feature-map">
+    <h2><b>Features <em>· the whole local broker, organized by job</em></b></h2>
+    <div class="feature-shell">
+      <div class="feature-lead">
+        <span>01 · System model</span>
+        <h3>One local trust boundary, four moving parts.</h3>
+        <p>HASP stays small on purpose: secrets live in one encrypted vault, repo roots define where they may be used, repo targets choose the workflow subset, apps and agents connect once, and short-lived grants deliver values only to a specific brokered run.</p>
+      </div>
+
+      <dl class="feature-concepts">
+        <div>
+          <dt>Vault</dt>
+          <dd>Encrypted local store of named secrets under <code>HASP_HOME</code>.</dd>
+        </div>
+        <div>
+          <dt>Repo</dt>
+          <dd>A bound project root plus optional value-free targets for workflow-specific delivery.</dd>
+        </div>
+        <div>
+          <dt>Agent</dt>
+          <dd>A connected app or coding agent that gets brokered access.</dd>
+        </div>
+        <div>
+          <dt>Grant</dt>
+          <dd>Short-lived, scoped permission to deliver a secret to one run.</dd>
+        </div>
+      </dl>
+
+      <dl class="feature-board">
+        <div>
+          <dt>Start and prove</dt>
+          <dd>Guided setup, repo bootstrap, first vault creation, health diagnosis, and the brokered first-proof check.</dd>
+          <dd class="cmds"><code>setup</code><code>bootstrap</code><code>init</code><code>doctor</code><code>proof</code></dd>
+        </div>
+        <div>
+          <dt>Keep secrets named</dt>
+          <dd>Add, import, capture, update, reveal, copy, expose, and hide values without turning them into loose project files.</dd>
+          <dd class="cmds"><code>secret</code><code>import</code><code>set</code><code>capture</code></dd>
+        </div>
+        <div>
+          <dt>Bind the repo edge</dt>
+          <dd>Project roots become policy boundaries. Inspect requirements, list targets, adopt repos, unbind stale ones, and scan for leaked managed values.</dd>
+          <dd class="cmds"><code>project</code><code>check-repo</code></dd>
+        </div>
+        <div>
+          <dt>Run without revealing</dt>
+          <dd>Resolve env and file refs at exec time, or expand a manifest target. Convenience env files exist, but only as an explicit operator request.</dd>
+          <dd class="cmds"><code>run</code><code>inject</code><code>write-env</code></dd>
+        </div>
+        <div>
+          <dt>Apps and agents</dt>
+          <dd>Connect app profiles and coding-agent profiles once. MCP and CLI surfaces return references and metadata, not secret values.</dd>
+          <dd class="cmds"><code>app</code><code>agent</code><code>mcp</code></dd>
+        </div>
+        <div>
+          <dt>Lock, backup, restore</dt>
+          <dd>Lock session material, export encrypted backups, and restore a vault without making recovery a plaintext workflow.</dd>
+          <dd class="cmds"><code>vault</code><code>export-backup</code><code>restore-backup</code></dd>
+        </div>
+        <div>
+          <dt>Runtime and grants</dt>
+          <dd>Start or inspect the daemon, open or revoke broker sessions, check reachability, and see current vault and daemon state.</dd>
+          <dd class="cmds"><code>daemon</code><code>session</code><code>status</code><code>ping</code></dd>
+        </div>
+        <div>
+          <dt>Evidence and maintenance</dt>
+          <dd>Print audit history, upgrade signed releases, generate completions and docs, report versions, and keep the deprecated TUI path visible.</dd>
+          <dd class="cmds"><code>audit</code><code>upgrade</code><code>completion</code><code>docs</code><code>version</code><code>tui</code></dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section id="outcomes">
+    <h2><b>Outcomes <em>· what stops being your problem</em></b></h2>
+    <div class="ladder">
+      <div class="head">Mechanism</div>
+      <div class="head">What it actually does</div>
+      <div class="head">What you stop having to think about</div>
+
+      <div><b>Brokered run</b>hasp run · hasp inject</div>
+      <div>Secrets injected into the child process at exec. The agent never enters the value into its context window or any readable surface.</div>
+      <div>You let the agent run while you make coffee, take a meeting, or sleep.</div>
+
+      <div><b>Process-tree-bound grant</b>once · session · window</div>
+      <div>Only the process tree the agent launched can use the grant. Hard 24-hour ceiling no policy can lift.</div>
+      <div>One bad day stops being a permanent breach.</div>
+
+      <div><b>Repo guardrails</b>scan · pre-commit · pre-push · deploy wrapper</div>
+      <div>Managed values are caught before they reach a commit, a push, or a deploy. Audited override for the rare case you need to ship a flagged file.</div>
+      <div>You let the agent edit files without proofreading every diff like a hawk.</div>
+
+      <div><b>Streaming redactor</b>across 11 encodings</div>
+      <div>Every encoded form of every managed value is masked in real time. Markers preserve line counts so logs still parse.</div>
+      <div>The traceback you copy-pasted into Slack is safe to send.</div>
+
+      <div><b>One vault, many apps</b>launcher on PATH</div>
+      <div>After hasp app connect &lt;name&gt;, you type &lt;name&gt;. Rotation is one operation, not a search-and-replace.</div>
+      <div>You get back the half hour you lost every time you booted a project.</div>
+
+      <div><b>Append-only audit</b>chained-hash HMAC</div>
+      <div>Every grant, reveal, and brokered run lands in a tamper-evident local log you own. Verify the chain. Package an evidence bundle.</div>
+      <div>"Did the agent touch the prod token?" gets answered in three seconds.</div>
+
+      <div><b>Fail-closed everywhere</b>no silent downgrade</div>
+      <div>If the broker cannot enforce the rule, it refuses the operation. Failed safe injection does not fall back to writing an env file.</div>
+      <div>You stop carrying the suspicion that the tool you trust is lying in small ways.</div>
+    </div>
+  </section>
+
+  <section id="about" class="climate">
+    <h2><b>The climate this arrives in <em>· seven anchors from the last 30 days</em></b></h2>
+    <div class="seven">
+      <div><div class="num">9s<em>nine seconds</em></div><p>A coding agent powered by a frontier model deleted a production database and its volume backups, on a single API call, after finding a credential in an unrelated file.</p><a class="src" href="https://techstartups.com/2026/04/28/claude-powered-ai-coding-agent-deletes-production-database-and-backups-in-9-seconds/">TechStartups</a></div>
+      <div><div class="num">2<em>npm</em></div><p>A second-tier disclosure: a popular coding agent's settings file silently records environment variables and ships them inside published npm packages.</p><a class="src" href="https://securitybrief.asia/story/claude-code-can-leak-secrets-in-public-npm-packages">SecurityBrief</a></div>
+      <div><div class="num">1<em>line</em></div><p>A third disclosure: a one-line command-injection bug in another agent lets a crafted repository steal the developer's active model API key on clone-and-open.</p><a class="src" href="https://research.checkpoint.com/2026/rce-and-api-token-exfiltration-through-claude-code-project-files-cve-2025-59536/">Check Point</a></div>
+      <div><div class="num">$82k<em>cloud bill</em></div><p>A developer woke up to an $82,000 cloud bill on a project that normally spent $180/month after a leaked key was harvested and wrung out in a cryptomining loop.</p><a class="src" href="https://medium.com/@securestartkit/exposed-api-keys-how-ai-tools-leak-your-secrets-and-how-to-lock-them-down-8a201c3651da">SecureStartKit</a></div>
+      <div><div class="num">28.6M<em>2025 leaks</em></div><p>GitGuardian counted 28.6&nbsp;million new secrets exposed in public commits across 2025. AI-coding repos: 40% more likely to leak than the rest.</p><a class="src" href="https://blog.gitguardian.com/the-state-of-secrets-sprawl-2026/">GitGuardian</a></div>
+      <div><div class="num">$2M<em>asking price</em></div><p>A supply-chain attack on an AI infrastructure provider exposed internal env vars and a database key, both reportedly listed for sale at $2M.</p><a class="src" href="https://venturebeat.com/security/vercel-breach-exposes-the-oauth-gap-most-security-teams-cannot-detect-scope-or-contain">VentureBeat</a></div>
+      <div><div class="num">"&hellip;"<em>classic risk</em></div><p><span class="quote">Prompt injection gets attention because it's novel, but stolen credentials are a classic attack with way higher impact.</span></p><span class="src">Security community thread</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><b>Day in the life <em>· three vignettes, three real failure modes</em></b></h2>
+    <div class="vignettes">
+      <div class="vig">
+        <div class="stamp"><span>Vignette 01</span><span>Pre-push</span></div>
+        <h4>The .env that drifted</h4>
+        <p>The agent rewrote a config file. You said yes. Three commits later you push and CI emails the team to say a Stripe key just landed in the diff.</p>
+        <div class="out">Pre-push hook caught it before it left the laptop. The redactor would have caught it in the agent's own output if it had ever printed it.</div>
+      </div>
+      <div class="vig">
+        <div class="stamp"><span>Vignette 02</span><span>Catastrophic</span></div>
+        <h4>The 9-second wipe</h4>
+        <p>The agent finds a credential in a file you forgot was on disk. The token is over-scoped because nobody had time to fix it last quarter. The agent decides the cleanest fix is destructive, and the database and its volume backups are gone before your push notification arrives.</p>
+        <div class="out">The credential never lived loose on disk. It lived in the vault. The destructive call would have required explicit access-class approval no policy can disable.</div>
+      </div>
+      <div class="vig">
+        <div class="stamp"><span>Vignette 03</span><span>Embarrassing</span></div>
+        <h4>The pasted traceback</h4>
+        <p>The agent crashed, dumped a traceback, and you copy-pasted the whole thing into a Slack channel to ask for help. Without hasp, the shape of your AWS access key is now in a Slack message, a Slack search index, and Slack's compliance log.</p>
+        <div class="out">The traceback you copied has [REDACTED_HEX] where the value would have been. You did not have to remember anything.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="order">
+      <div>
+        <h3>One signed binary. <em>One encrypted file. That is the whole product surface.</em></h3>
+        <p>Source-available. SBOM, SLSA provenance, code-signing status, and reproducible-build sidecar ship inside the release artifact. <code>scripts/hasp-verify-release.sh</code> verifies the signed checksum manifest plus the tarball and binary signatures before install.</p>
+      </div>
+      <div class="install" data-install-tabs>
+        <div class="install-tabs" role="tablist" aria-label="Install methods">
+          <button type="button" id="install-tab-brew" role="tab" aria-selected="true" aria-controls="install-panel-brew" data-install-tab="brew">Brew</button>
+          <button type="button" id="install-tab-source" role="tab" aria-selected="false" aria-controls="install-panel-source" tabindex="-1" data-install-tab="source">From source</button>
+          <button type="button" id="install-tab-script" role="tab" aria-selected="false" aria-controls="install-panel-script" tabindex="-1" data-install-tab="script">Install script</button>
+        </div>
+
+        <div class="install-panel" id="install-panel-brew" role="tabpanel" aria-labelledby="install-tab-brew" data-install-panel="brew">
+          <b>Homebrew</b>
+          <pre><code>$ brew tap gethasp/homebrew-tap
+$ brew install hasp
+$ hasp setup
+$ hasp app connect myapp
+$ hasp proof
+
+→ ok proof passed · 412ms
+→ ok vault unlocked · binding ./api
+→ ok agent never read</code></pre>
+        </div>
+
+        <div class="install-panel" id="install-panel-source" role="tabpanel" aria-labelledby="install-tab-source" data-install-panel="source" hidden>
+          <b>From source</b>
+          <pre><code>$ git clone https://github.com/gethasp/hasp
+$ cd hasp
+$ make build
+$ ./bin/hasp setup
+$ ./bin/hasp proof
+
+→ ok binary built from source
+→ ok vault initialized
+→ ok proof passed</code></pre>
+        </div>
+
+        <div class="install-panel" id="install-panel-script" role="tabpanel" aria-labelledby="install-tab-script" data-install-panel="script" hidden>
+          <b>Install script</b>
+          <pre><code>$ curl -fsSL https://gethasp.com/install.sh | sh
+$ hasp setup
+$ hasp app connect myapp
+$ hasp proof
+
+→ ok hasp installed on PATH
+→ ok vault unlocked · binding ./api
+→ ok agent never read</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-copy-text]").forEach((button) => {
+    const text = button.dataset.copyText;
+      const markCopied = () => {
+        button.dataset.copied = "true";
+        button.querySelector(".copy-status").textContent = "Copied";
+        window.setTimeout(() => {
+          delete button.dataset.copied;
+          button.querySelector(".copy-status").textContent = "";
+        }, 1200);
+      };
+
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const field = document.createElement("textarea");
+        field.value = text;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.left = "-9999px";
+        document.body.append(field);
+        field.select();
+        document.execCommand("copy");
+        field.remove();
+      }
+      markCopied();
+    });
+  });
+
+  document.querySelectorAll("[data-install-tabs]").forEach((root) => {
+    const tabs = Array.from(root.querySelectorAll("[data-install-tab]"));
+    const panels = Array.from(root.querySelectorAll("[data-install-panel]"));
+
+    const activate = (key) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.installTab === key;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.dataset.installPanel !== key;
+      });
+    };
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => activate(tab.dataset.installTab));
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[nextIndex].focus();
+        activate(tabs[nextIndex].dataset.installTab);
+      });
+    });
+  });
+})();
+</script>

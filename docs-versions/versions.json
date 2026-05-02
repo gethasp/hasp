@@ -1,0 +1,50 @@
+{
+  "latest": "v0.1.40",
+  "versions": [
+    {
+      "id": "v0.1.40",
+      "label": "v0.1.40",
+      "version": "0.1.40",
+      "path": "/docs/v0.1.40/",
+      "snapshot": "v0.1.40/manifest.json",
+      "createdAt": "2026-05-02T09:37:55.325Z",
+      "sourceCommit": "b110aa32491426e01d539f7f0d6e50ca97913d91"
+    },
+    {
+      "id": "v0.1.39",
+      "label": "v0.1.39",
+      "version": "0.1.39",
+      "path": "/docs/v0.1.39/",
+      "snapshot": "v0.1.39/manifest.json",
+      "createdAt": "2026-05-01T18:31:18.581Z",
+      "sourceCommit": "1bc6b0e9cc1ff87476f1e3f4f2f023f77c1f8956"
+    },
+    {
+      "id": "v0.1.37",
+      "label": "v0.1.37",
+      "version": "0.1.37",
+      "path": "/docs/v0.1.37/",
+      "snapshot": "v0.1.37/manifest.json",
+      "createdAt": "2026-04-30T17:53:46.804Z",
+      "sourceCommit": "5d7b2756d5ac508ca7dd645fb15fadad0c649612"
+    },
+    {
+      "id": "v0.1.36",
+      "label": "v0.1.36",
+      "version": "0.1.36",
+      "path": "/docs/v0.1.36/",
+      "snapshot": "v0.1.36/manifest.json",
+      "createdAt": "2026-04-30T17:53:42.449Z",
+      "sourceCommit": "207d8b314e442445c766ab817d52b2c0ad27fba2"
+    },
+    {
+      "id": "v0.1.35",
+      "label": "v0.1.35",
+      "version": "0.1.35",
+      "path": "/docs/v0.1.35/",
+      "snapshot": "v0.1.35/manifest.json",
+      "createdAt": "2026-04-30T17:53:38.648Z",
+      "sourceCommit": "d46f24e6166714582865da15ed93a1f1531151b6"
+    }
+  ]
+}

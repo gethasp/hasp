@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"os/exec"
 	"testing"
 	"time"
@@ -80,4 +81,81 @@ func TestSessionStoreResolveProcessAdvisoryWhenIdentityProbeFails(t *testing.T) 
 	if !degraded || reason == "" {
 		t.Fatalf("expected identity degradation to be surfaced, got degraded=%t reason=%q", degraded, reason)
 	}
+}
+
+func TestSessionStoreProcessIdentityDegradationBranches(t *testing.T) {
+	lockRuntimeSeams(t)
+
+	origLineage := lineageExecCommand
+	t.Cleanup(func() { lineageExecCommand = origLineage })
+	lineageExecCommand = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", "printf '0\\n'")
+	}
+
+	t.Run("register probe error", func(t *testing.T) {
+		store := NewSessionStore()
+		store.processIdentity = func(int) (string, error) {
+			return "", errors.New("probe failed")
+		}
+		session, err := store.Open("agent", t.TempDir(), time.Minute, true, "claude-code")
+		if err != nil {
+			t.Fatalf("open session: %v", err)
+		}
+		if !store.RegisterProcess(session.Token, 77) {
+			t.Fatal("register process")
+		}
+		degraded, reason := store.ProcessIdentityDegraded()
+		if !degraded || reason == "" {
+			t.Fatalf("expected register degradation, got degraded=%t reason=%q", degraded, reason)
+		}
+	})
+
+	t.Run("resolve recheck error", func(t *testing.T) {
+		store := NewSessionStore()
+		identityErr := false
+		store.processIdentity = func(int) (string, error) {
+			if identityErr {
+				return "", errors.New("recheck failed")
+			}
+			return "alpha", nil
+		}
+		session, err := store.Open("agent", t.TempDir(), time.Minute, true, "claude-code")
+		if err != nil {
+			t.Fatalf("open session: %v", err)
+		}
+		if !store.RegisterProcess(session.Token, 88) {
+			t.Fatal("register process")
+		}
+		identityErr = true
+		if _, _, ok := store.ResolveProcess(88); !ok {
+			t.Fatal("expected resolve to remain advisory on recheck error")
+		}
+		degraded, reason := store.ProcessIdentityDegraded()
+		if !degraded || reason == "" {
+			t.Fatalf("expected resolve degradation, got degraded=%t reason=%q", degraded, reason)
+		}
+	})
+
+	t.Run("resolve recheck unavailable", func(t *testing.T) {
+		store := NewSessionStore()
+		currentIdentity := "alpha"
+		store.processIdentity = func(int) (string, error) {
+			return currentIdentity, nil
+		}
+		session, err := store.Open("agent", t.TempDir(), time.Minute, true, "claude-code")
+		if err != nil {
+			t.Fatalf("open session: %v", err)
+		}
+		if !store.RegisterProcess(session.Token, 99) {
+			t.Fatal("register process")
+		}
+		currentIdentity = ""
+		if _, _, ok := store.ResolveProcess(99); !ok {
+			t.Fatal("expected resolve to remain advisory when recheck is unavailable")
+		}
+		degraded, reason := store.ProcessIdentityDegraded()
+		if !degraded || reason == "" {
+			t.Fatalf("expected unavailable degradation, got degraded=%t reason=%q", degraded, reason)
+		}
+	})
 }

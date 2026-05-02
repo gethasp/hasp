@@ -226,6 +226,17 @@ func (f failingAuditWriter) Write([]byte) (int, error) { return 0, f.writeErr }
 
 func (f failingAuditWriter) Close() error { return nil }
 
+type removingAuditWriter struct {
+	path string
+}
+
+func (r removingAuditWriter) Write(p []byte) (int, error) {
+	_ = os.Remove(r.path)
+	return len(p), nil
+}
+
+func (r removingAuditWriter) Close() error { return nil }
+
 func TestAppendFailsWhenMkdirOrWriteFails(t *testing.T) {
 	lockAuditSeams(t)
 	home := t.TempDir()
@@ -260,5 +271,28 @@ func TestAppendFailsWhenMkdirOrWriteFails(t *testing.T) {
 	}
 	if _, err := log.Append(EventRun, "tester", map[string]any{}); err == nil || !strings.Contains(err.Error(), "open audit log") {
 		t.Fatalf("expected open failure, got %v", err)
+	}
+}
+
+func TestAppendClearsCacheWhenAuditFileIsMissingAfterWrite(t *testing.T) {
+	lockAuditSeams(t)
+	home := t.TempDir()
+	t.Setenv(paths.EnvHome, home)
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+
+	origOpen := openAuditFile
+	defer func() { openAuditFile = origOpen }()
+	openAuditFile = func(path string) (auditWriter, error) {
+		return removingAuditWriter{path: path}, nil
+	}
+
+	if _, err := log.Append(EventRun, "tester", map[string]any{}); err != nil {
+		t.Fatalf("append with disappearing audit log: %v", err)
+	}
+	if log.cacheValid || log.cachedLast != nil {
+		t.Fatalf("expected missing post-write audit log to clear cache, valid=%v cached=%+v", log.cacheValid, log.cachedLast)
 	}
 }

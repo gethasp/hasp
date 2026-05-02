@@ -294,10 +294,12 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 
 	origAbs := filepathAbsFn
 	defer func() { filepathAbsFn = origAbs }()
+	persistEnvelope = func(*Handle) error { return nil }
 	filepathAbsFn = func(string) (string, error) { return "", fmt.Errorf("abs fail") }
 	if _, err := handle.importEnvFile(context.Background(), validEnvPath, ImportOptions{ProjectRoot: ".", BindToProject: true}); err == nil {
 		t.Fatal("expected importEnvFile bind failure")
 	}
+	persistEnvelope = origPersist
 
 	jsonPath := filepath.Join(t.TempDir(), "service-account.json")
 	if err := os.WriteFile(jsonPath, []byte(`{"client_email":"ops@gethasp.com"}`), 0o600); err != nil {
@@ -313,9 +315,11 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if _, err := handle.importJSONFile(context.Background(), badJSONPath, ImportOptions{}); err == nil {
 		t.Fatal("expected importJSONFile credential failure")
 	}
+	persistEnvelope = func(*Handle) error { return nil }
 	if _, err := handle.importJSONFile(context.Background(), jsonPath, ImportOptions{ProjectRoot: ".", BindToProject: true}); err == nil {
 		t.Fatal("expected importJSONFile bind failure")
 	}
+	persistEnvelope = origPersist
 	filepathAbsFn = origAbs
 
 	if _, err := handle.ResolveReference(context.Background(), t.TempDir(), "api_token"); !errors.Is(err, ErrReferenceNotFound) {
@@ -384,7 +388,7 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw state: %v", err)
 	}
-	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil || state.PlaintextGrants == nil {
+	if state.Items == nil || state.Bindings == nil || state.ProjectLeases == nil || state.SecretGrants == nil || state.ConvenienceGrants == nil || state.PlaintextGrants == nil || state.MutationGrants == nil {
 		t.Fatalf("expected nil maps initialized, got %+v", state)
 	}
 
@@ -424,6 +428,24 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
+	grantProjectLease := func(sessionToken string) {
+		handle.state.ProjectLeases[leaseKey(binding.ID, sessionToken)] = ProjectLease{
+			ID:           "lease-" + sessionToken,
+			BindingID:    binding.ID,
+			SessionToken: sessionToken,
+			Scope:        GrantSession,
+		}
+	}
+	grantSecretUse := func(sessionToken string, relaxed bool) {
+		handle.state.SecretGrants[secretGrantKey(binding.ID, sessionToken, "api_token")] = SecretGrant{
+			ID:              "secret-" + sessionToken,
+			BindingID:       binding.ID,
+			ItemName:        "api_token",
+			SessionToken:    sessionToken,
+			Scope:           GrantSession,
+			RelaxedByWindow: relaxed,
+		}
+	}
 	decision := handle.Authorize(AccessRequest{
 		Operation:    OperationCapture,
 		BindingID:    binding.ID,
@@ -433,9 +455,7 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if !decision.RequiresPrompt || decision.Reason != "project_lease_required" {
 		t.Fatalf("unexpected capture auth without lease: %+v", decision)
 	}
-	if _, err := handle.GrantProjectLease(binding.ID, "session-token", GrantSession, 0); err != nil {
-		t.Fatalf("grant project lease: %v", err)
-	}
+	grantProjectLease("session-token")
 	decision = handle.Authorize(AccessRequest{
 		Operation:    OperationCapture,
 		BindingID:    binding.ID,
@@ -477,9 +497,7 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if !decision.Allowed || decision.Reason != "auto_secret_allowed" {
 		t.Fatalf("unexpected policy auto decision: %+v", decision)
 	}
-	if _, err := handle.GrantSecretUse(binding.ID, "session-token", "api_token", GrantWindow, time.Minute, true); err != nil {
-		t.Fatalf("grant relaxed window secret use: %v", err)
-	}
+	grantSecretUse("session-token", true)
 	decision = handle.Authorize(AccessRequest{
 		Operation:    OperationRun,
 		BindingID:    binding.ID,
@@ -490,15 +508,9 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if !decision.Allowed || decision.Reason != "access_window_override_allowed" {
 		t.Fatalf("unexpected relaxed access decision: %+v", decision)
 	}
-	if _, err := handle.GrantProjectLease(binding.ID, "access-prompt-token", GrantSession, 0); err != nil {
-		t.Fatalf("grant project lease for access prompt token: %v", err)
-	}
-	if _, err := handle.GrantSecretUse(binding.ID, "access-grant-token", "api_token", GrantSession, 0, false); err != nil {
-		t.Fatalf("grant access secret use: %v", err)
-	}
-	if _, err := handle.GrantProjectLease(binding.ID, "access-grant-token", GrantSession, 0); err != nil {
-		t.Fatalf("grant project lease for access token: %v", err)
-	}
+	grantProjectLease("access-prompt-token")
+	grantSecretUse("access-grant-token", false)
+	grantProjectLease("access-grant-token")
 	decision = handle.Authorize(AccessRequest{
 		Operation:    OperationRun,
 		BindingID:    binding.ID,
@@ -537,10 +549,12 @@ func TestImportEnvelopeAuthorizeAndCaptureAdditionalBranches(t *testing.T) {
 	if _, err := handle.Capture(context.Background(), projectRoot, "", ItemKindKV, []byte("value"), false); err == nil {
 		t.Fatal("expected capture upsert failure")
 	}
+	persistEnvelope = func(*Handle) error { return nil }
 	filepathAbsFn = func(string) (string, error) { return "", fmt.Errorf("abs fail") }
 	if _, err := handle.Capture(context.Background(), ".", "captured_secret", ItemKindKV, []byte("value"), true); err == nil {
 		t.Fatal("expected capture bind failure")
 	}
+	persistEnvelope = origPersist
 }
 
 func exportBackupFixture(t *testing.T) string {

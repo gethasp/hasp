@@ -1,0 +1,22 @@
+[
+  {
+    "goos": "linux",
+    "goarch": "amd64",
+    "runner": "ubicloud-standard-2"
+  },
+  {
+    "goos": "linux",
+    "goarch": "arm64",
+    "runner": "ubicloud-standard-2-arm"
+  },
+  {
+    "goos": "darwin",
+    "goarch": "arm64",
+    "runner": "macos-15"
+  },
+  {
+    "goos": "darwin",
+    "goarch": "amd64",
+    "runner": "macos-15-intel"
+  }
+]

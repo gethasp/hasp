@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 modules=()
@@ -49,18 +49,20 @@ merge_profiles_max() {
 for mod in "${modules[@]}"; do
   dir="$(dirname "$mod")"
   echo "Coverage for $dir"
-  eval_profile="$(mktemp)"
-  combined_profile="$(mktemp)"
-  profiles=()
-  (
-    cd "$dir"
-    while IFS= read -r pkg; do
-      [[ -n "$pkg" ]] || continue
-      if [[ "$pkg" == *"/internal/evals" ]]; then
-        continue
-      fi
-      pkg_profile="$(mktemp)"
-      pkg_log="$(mktemp)"
+	  eval_profile="$(mktemp)"
+	  combined_profile="$(mktemp)"
+	  profiles=()
+	  coverage_packages=()
+	  (
+	    cd "$dir"
+	    while IFS= read -r pkg; do
+	      [[ -n "$pkg" ]] || continue
+	      if [[ "$pkg" == *"/internal/evals" || "$pkg" == *"/internal/testutil" ]]; then
+	        continue
+	      fi
+	      coverage_packages+=("$pkg")
+	      pkg_profile="$(mktemp)"
+	      pkg_log="$(mktemp)"
       if ! go test -tags=hasp_test_fastkdf "$pkg" -coverprofile="$pkg_profile" >"$pkg_log" 2>&1; then
         echo "coverage run failed for $pkg:" >&2
         cat "$pkg_log" >&2
@@ -71,11 +73,12 @@ for mod in "${modules[@]}"; do
       profiles+=("$pkg_profile")
     done < <(go list ./...)
 
-    if [[ -d "./internal/evals" ]]; then
-      eval_log="$(mktemp)"
-      if ! go test -tags=integration,hasp_test_fastkdf -coverpkg=./... ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
-        echo "coverage run failed for ./internal/evals:" >&2
-        cat "$eval_log" >&2
+	    if [[ -d "./internal/evals" ]]; then
+	      eval_log="$(mktemp)"
+	      coverpkg="$(IFS=,; printf '%s' "${coverage_packages[*]}")"
+	      if ! go test -tags=integration,hasp_test_fastkdf -coverpkg="$coverpkg" ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
+	        echo "coverage run failed for ./internal/evals:" >&2
+	        cat "$eval_log" >&2
         rm -f "$eval_log"
         exit 1
       fi

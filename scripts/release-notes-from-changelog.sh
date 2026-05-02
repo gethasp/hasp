@@ -7,7 +7,7 @@ if [[ -z "$tag" ]]; then
   exit 1
 fi
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 changelog="$repo_root/CHANGELOG.md"
 if [[ ! -f "$changelog" ]]; then
   echo "missing CHANGELOG.md" >&2

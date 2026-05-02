@@ -81,7 +81,7 @@ func TestRuntimeCommandUsageErrorsAndExportRestoreRoundTrip(t *testing.T) {
 
 func TestDaemonCommandStartBranch(t *testing.T) {
 	homeDir := t.TempDir()
-	socketPath := filepath.Join("/tmp", fmt.Sprintf("hasp-app-start-%d.sock", time.Now().UnixNano()))
+	socketPath := shortSocketPath(t, fmt.Sprintf("hasp-app-start-%d.sock", time.Now().UnixNano()))
 	t.Setenv("HASP_HOME", homeDir)
 	t.Setenv("HASP_SOCKET", socketPath)
 	t.Setenv("HASP_TEST_HELPER_DAEMON", "1")
@@ -167,6 +167,27 @@ func TestSessionGrantPlaintextCommand(t *testing.T) {
 	}
 	if !handle.PlaintextGrantActive(reply.SessionToken, "API_TOKEN", store.PlaintextReveal) {
 		t.Fatal("expected active plaintext grant")
+	}
+	binding, _, err := handle.ResolveBindingView(context.Background(), projectRoot)
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	if _, err := handle.GrantProjectLease(binding.ID, reply.SessionToken, store.GrantSession, 0); err != nil {
+		t.Fatalf("grant project lease: %v", err)
+	}
+	var mutationOut bytes.Buffer
+	if err := Run(context.Background(), []string{"session", "grant-mutation", "--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "expose", "--json"}, bytes.NewBuffer(nil), &mutationOut, io.Discard); err != nil {
+		t.Fatalf("grant mutation command: %v", err)
+	}
+	if !strings.Contains(mutationOut.String(), "\"mutation_action\":\"expose\"") {
+		t.Fatalf("unexpected mutation json output %q", mutationOut.String())
+	}
+	handle, err = openVaultHandle(context.Background())
+	if err != nil {
+		t.Fatalf("reopen vault: %v", err)
+	}
+	if err := handle.ConsumeSecretMutationGrant(binding.ID, reply.SessionToken, "API_TOKEN", store.SecretMutationExpose); err != nil {
+		t.Fatalf("expected active mutation grant: %v", err)
 	}
 
 	nonAgentReply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{

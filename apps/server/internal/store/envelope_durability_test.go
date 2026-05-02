@@ -39,7 +39,7 @@ func TestWriteEnvelopeFsyncsFileBeforeRename(t *testing.T) {
 			t.Errorf("fsyncFileFn: rename already completed before Sync was called")
 		}
 		syncCalled = true
-		return f.Sync()
+		return nil
 	}
 
 	if err := store.writeEnvelopeFile(envelope); err != nil {

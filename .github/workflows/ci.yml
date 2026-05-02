@@ -4,52 +4,66 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
-      - ".golangci.yml"
-      - "VERSION"
-      - "apps/server/**"
-      - "scripts/**/*.sh"
-      - "scripts/**/*.py"
-      - "scripts/**/*.json"
-      - "scripts/**/*.txt"
   pull_request:
     branches: [main]
-    paths:
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
-      - ".golangci.yml"
-      - "VERSION"
-      - "apps/server/**"
-      - "scripts/**/*.sh"
-      - "scripts/**/*.py"
-      - "scripts/**/*.json"
-      - "scripts/**/*.txt"
 
 permissions:
   contents: read
 
 jobs:
-  merge-gate:
-    runs-on: ubicloud-standard-2
+  fork-pr-verify:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: stable
           cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Verify public CI
         run: make verify-ci
-      - name: Packaged release smoke
-        env:
-          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
-        run: make release-smoke
       - name: Coverage
         env:
           HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
+          HASP_COVERAGE_TARGET: "100"
         run: make coverage
+
+  merge-gate:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Release gate
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
+        run: make release-gate
+
+  darwin-audit-coverage:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Audit Darwin coverage
+        run: make coverage-audit-platform

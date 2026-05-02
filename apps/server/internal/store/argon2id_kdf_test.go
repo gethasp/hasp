@@ -181,4 +181,3 @@ func TestDeriveFromSpecArgon2idBadParams(t *testing.T) {
 		t.Fatal("expected argon2id with zero params to error")
 	}
 }
-

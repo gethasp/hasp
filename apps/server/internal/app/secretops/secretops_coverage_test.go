@@ -752,7 +752,7 @@ func TestSecretDotEnvAndRenderErrors(t *testing.T) {
 	if _, err := parseDotEnvForDiff(strings.NewReader("NOPE\n")); err == nil {
 		t.Fatal("expected invalid env line")
 	}
-	if got, err := parseDotEnvForDiff(strings.NewReader("\n# comment\nexport A=\"quoted\"\nB=plain\n")); err != nil || got["A"] != "quoted" || got["B"] != "plain" {
+	if got, err := parseDotEnvForDiff(strings.NewReader("\n# comment\nexport A=\"quoted\\\"\"\nB=plain'\nC='single quoted'\n")); err != nil || got["A"] != "quoted\"" || got["B"] != "plain'" || got["C"] != "single quoted" {
 		t.Fatalf("parse dotenv got=%v err=%v", got, err)
 	}
 	if _, err := parseDotEnvForDiff(errorReader{}); err == nil {

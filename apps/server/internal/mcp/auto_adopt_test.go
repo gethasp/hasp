@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -155,7 +154,7 @@ func TestEnsureProjectBindingMCP(t *testing.T) {
 	if err := os.MkdirAll(gitRoot, 0o755); err != nil {
 		t.Fatalf("mkdir git root: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", gitRoot, "init").CombinedOutput(); err != nil {
+	if out, err := initTestGitRepo(gitRoot); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	binding, visible, err = ensureProjectBindingMCP(context.Background(), handle, gitRoot)
@@ -223,7 +222,7 @@ func TestEnsureProjectBindingMCP(t *testing.T) {
 	if err := os.MkdirAll(persistRoot, 0o755); err != nil {
 		t.Fatalf("mkdir persist root: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", persistRoot, "init").CombinedOutput(); err != nil {
+	if out, err := initTestGitRepo(persistRoot); err != nil {
 		t.Fatalf("git init persist root: %v: %s", err, out)
 	}
 	if _, _, err := ensureProjectBindingMCP(context.Background(), blockedHandle, persistRoot); err == nil {

@@ -135,6 +135,124 @@ func sessionGrantPlaintext(ctx context.Context, deps Deps, args []string, stdout
 	})
 }
 
+func sessionGrantMutation(ctx context.Context, deps Deps, args []string, stdout io.Writer, localDeps *LocalDeps) error {
+	fs := flag.NewFlagSet("session grant-mutation", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	token := fs.String("token", strings.TrimSpace(os.Getenv(secrettypes.EnvSessionToken)), "")
+	itemName := fs.String("item", "", "")
+	action := fs.String("action", "", "")
+	scope := fs.String("scope", string(store.GrantOnce), "")
+	window := fs.Duration("grant-window", store.DefaultMutationGrantTTL, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *token == "" || strings.TrimSpace(*itemName) == "" || strings.TrimSpace(*action) == "" {
+		return errors.New("usage: hasp session grant-mutation --token <token> --item <name> --action delete|expose|hide [--scope once] [--grant-window 60s]")
+	}
+	parseMutation := deps.ParseMutationAction
+	if parseMutation == nil {
+		return fmt.Errorf("sessionops: ParseMutationAction not wired")
+	}
+	parseScope := deps.ParseGrantScope
+	if parseScope == nil {
+		return fmt.Errorf("sessionops: ParseGrantScope not wired")
+	}
+	mutationAction, err := parseMutation(*action)
+	if err != nil {
+		return err
+	}
+	if parseScope(*scope) != store.GrantOnce {
+		return fmt.Errorf("secret mutation grants only support --scope %q", store.GrantOnce)
+	}
+	if deps.NewStarter == nil {
+		return fmt.Errorf("sessionops: NewStarter not wired")
+	}
+	s, err := deps.NewStarter()
+	if err != nil {
+		return err
+	}
+	client, err := ensureClient(ctx, s)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	reply, err := client.ResolveSession(ctx, *token)
+	if err != nil {
+		return fmt.Errorf("resolve session: %w", err)
+	}
+	if !reply.Session.AgentSafe {
+		return errors.New("secret mutation grants require an agent-safe session")
+	}
+	if deps.OpenVault == nil {
+		return fmt.Errorf("sessionops: OpenVault not wired")
+	}
+	handle, err := deps.OpenVault(ctx)
+	if err != nil {
+		return err
+	}
+	if deps.GetItem == nil {
+		return fmt.Errorf("sessionops: GetItem not wired")
+	}
+	item, err := deps.GetItem(handle, strings.TrimSpace(*itemName))
+	if err != nil {
+		return err
+	}
+	if deps.ResolveBindingView == nil {
+		return fmt.Errorf("sessionops: ResolveBindingView not wired")
+	}
+	binding, _, err := deps.ResolveBindingView(ctx, handle, reply.Session.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	var ld LocalDeps
+	switch {
+	case localDeps != nil:
+		ld = *localDeps
+	case deps.DefaultLocalDeps != nil:
+		ld = deps.DefaultLocalDeps()
+	default:
+		ld = defaultLocalDepsFallback()
+	}
+	if ld.ApproveMutation == nil {
+		return fmt.Errorf("sessionops: LocalDeps.ApproveMutation not wired")
+	}
+	if ld.UseMutationGrant == nil {
+		return fmt.Errorf("sessionops: LocalDeps.UseMutationGrant not wired")
+	}
+	if err := ld.ApproveMutation(reply.Session, item.Name, mutationAction); err != nil {
+		return err
+	}
+	grant, err := ld.UseMutationGrant(handle, binding.ID, *token, item.Name, mutationAction, *window)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{
+		"session_id":         reply.Session.ID,
+		"session_host_label": reply.Session.HostLabel,
+		"project_root":       reply.Session.ProjectRoot,
+		"binding_id":         binding.ID,
+		"item_name":          item.Name,
+		"mutation_action":    mutationAction,
+		"scope":              grant.Scope,
+		"expires_at":         grant.ExpiresAt,
+	}
+	if deps.RenderJSONOrHuman == nil {
+		return fmt.Errorf("sessionops: RenderJSONOrHuman not wired")
+	}
+	if deps.RenderSimpleAction == nil {
+		return fmt.Errorf("sessionops: RenderSimpleAction not wired")
+	}
+	return deps.RenderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return deps.RenderSimpleAction(ctx, w, "Secret mutation grant", "Granted one protected mutation path.",
+			cliPair("Item", item.Name),
+			cliPair("Action", string(mutationAction)),
+			cliPair("Scope", string(grant.Scope)),
+			cliPair("Session", reply.Session.HostLabel),
+		)
+	})
+}
+
 // ConfirmPlaintextGrant is the exported approval prompt dispatcher. It calls
 // ConfirmPlaintextGrantWithDeps using deps.DefaultConfirmPlaintextGrantDeps()
 // or a built-in fallback.
@@ -201,6 +319,12 @@ func defaultLocalDepsFallback() LocalDeps {
 		},
 		UseGrant: func(_ *store.Handle, _ string, _ string, _ store.PlaintextAction, _ time.Duration) (store.PlaintextGrant, error) {
 			return store.PlaintextGrant{}, errors.New("sessionops: LocalDeps.UseGrant not wired")
+		},
+		ApproveMutation: func(_ runtime.SessionView, _ string, _ store.SecretMutationAction) error {
+			return errors.New("sessionops: LocalDeps.ApproveMutation not wired")
+		},
+		UseMutationGrant: func(_ *store.Handle, _ string, _ string, _ string, _ store.SecretMutationAction, _ time.Duration) (store.MutationGrant, error) {
+			return store.MutationGrant{}, errors.New("sessionops: LocalDeps.UseMutationGrant not wired")
 		},
 		LocalUser: func() (string, error) {
 			return "", errors.New("sessionops: LocalDeps.LocalUser not wired")

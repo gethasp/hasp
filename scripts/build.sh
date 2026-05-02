@@ -2,7 +2,7 @@
 set -euo pipefail
 
 mode="${1:-}"
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 version="$(< VERSION)"
 
@@ -26,7 +26,6 @@ if [[ -n "$upgrade_trust_roots" ]]; then
   ldflags_base+=" -X ${release_pkg}.pinnedKeysHex=${upgrade_trust_roots}"
 fi
 
-server_pkg="./apps/server/cmd/hasp"
 server_mod="./apps/server/go.mod"
 
 if [[ ! -f "$server_mod" ]]; then

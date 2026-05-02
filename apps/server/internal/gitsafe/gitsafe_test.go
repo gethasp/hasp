@@ -83,6 +83,16 @@ func TestBuildCommandSetsScrubbedEnvWithoutInheritedGitVars(t *testing.T) {
 	}
 }
 
+func TestBuildCommandPreservesGitCeilingDirectories(t *testing.T) {
+	t.Setenv("GIT_CEILING_DIRECTORIES", "/tmp/hasp-ceiling")
+
+	cmd := BuildCommand(context.Background(), "/tmp/proj", "rev-parse", "--show-toplevel")
+
+	if !envContains(cmd.Env, "GIT_CEILING_DIRECTORIES=/tmp/hasp-ceiling") {
+		t.Fatalf("BuildCommand env must preserve GIT_CEILING_DIRECTORIES; got %v", cmd.Env)
+	}
+}
+
 // TestRevParseTopLevelAppliesFallbackTimeoutWhenContextHasNone ensures the
 // helper always runs git under a deadline even when the caller passes an
 // untimed context, so a hung git child cannot block the daemon.
