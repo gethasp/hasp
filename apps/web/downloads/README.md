@@ -29,11 +29,15 @@ key hosted with the release.
 
 Tagged releases compute both values from the generated `release-metadata.json`,
 rotate the Worker secrets, deploy the Worker, and smoke `/api/release`.
+Hosted release deploys require `CLOUDFLARE_ACCOUNT_ID` and a durable
+least-privilege `CLOUDFLARE_API_TOKEN` in the public repo Actions secrets.
+Do not use a local Wrangler OAuth access token as CI configuration.
 Manual deploys should use the same release metadata file.
 
 ```bash
 wrangler secret put HASP_RELEASE_METADATA_SHA256 --config apps/web/downloads/wrangler.toml
 wrangler secret put HASP_RELEASE_MIN_SEQUENCE --config apps/web/downloads/wrangler.toml
+wrangler secret put HASP_RELEASE_METADATA_URL --config apps/web/downloads/wrangler.toml
 wrangler deploy --config apps/web/downloads/wrangler.toml
 ```
 
