@@ -45,6 +45,7 @@ if [[ ! -d "$release_dir" ]]; then
   echo "release directory not found: $release_dir" >&2
   exit 1
 fi
+release_dir="$(cd "$release_dir" && pwd -P)"
 
 : "${HASP_R2_BUCKET:?HASP_R2_BUCKET is required}"
 : "${HASP_R2_ENDPOINT:?HASP_R2_ENDPOINT is required}"

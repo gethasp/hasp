@@ -552,6 +552,19 @@ aws_log="$tmp_dir/aws.log"
   printf '%s\n' '#!/usr/bin/env bash'
   # shellcheck disable=SC2016
   printf '%s\n' 'printf '"'"'%s\n'"'"' "$*" >>"${HASP_AWS_STUB_LOG:?}"'
+  # shellcheck disable=SC2016
+  printf '%s\n' 'previous=""'
+  # shellcheck disable=SC2016
+  printf '%s\n' 'for arg in "$@"; do'
+  # shellcheck disable=SC2016
+  printf '%s\n' '  if [[ "$previous" == "--body" && ! -f "$arg" ]]; then'
+  # shellcheck disable=SC2016
+  printf '%s\n' '    printf '"'"'missing body file: %s\n'"'"' "$arg" >&2'
+  printf '%s\n' '    exit 64'
+  printf '%s\n' '  fi'
+  # shellcheck disable=SC2016
+  printf '%s\n' '  previous="$arg"'
+  printf '%s\n' 'done'
   printf '%s\n' 'if [[ "$*" == *"list-objects-v2"* ]]; then'
   # shellcheck disable=SC2016
   printf '%s\n' '  printf '"'"'%s\n'"'"' "${HASP_AWS_STUB_LIST_RESULT:-None}"'

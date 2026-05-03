@@ -1,6 +1,15 @@
 {
-  "latest": "v0.1.55",
+  "latest": "v0.1.56",
   "versions": [
+    {
+      "id": "v0.1.56",
+      "label": "v0.1.56",
+      "version": "0.1.56",
+      "path": "/docs/v0.1.56/",
+      "snapshot": "v0.1.56/manifest.json",
+      "createdAt": "2026-05-03T01:57:52.820Z",
+      "sourceCommit": "6007704d1da85974b24db94db8d0f8f6576f51ee"
+    },
     {
       "id": "v0.1.55",
       "label": "v0.1.55",
