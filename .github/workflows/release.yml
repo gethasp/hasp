@@ -99,6 +99,7 @@ jobs:
         env:
           HASP_RELEASE_GPG_KEY_ID: ${{ secrets.HASP_RELEASE_GPG_KEY_ID }}
           HASP_RELEASE_GPG_PASSPHRASE: ${{ secrets.HASP_RELEASE_GPG_PASSPHRASE }}
+          HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS: ${{ secrets.HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS }}
           HASP_UPGRADE_TRUST_ROOTS_HEX: ${{ secrets.HASP_UPGRADE_TRUST_ROOTS_HEX }}
           HASP_UPGRADE_SIGNING_KEY_B64: ${{ secrets.HASP_UPGRADE_SIGNING_KEY_B64 }}
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases

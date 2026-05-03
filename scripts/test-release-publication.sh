@@ -282,6 +282,8 @@ if [[ -f "$release_workflow" ]]; then
     printf 'release workflow must verify tag ancestry before exposing signing secrets\n' >&2
     exit 1
   fi
+  # shellcheck disable=SC2016
+  assert_file_contains "$release_workflow" 'HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS: ${{ secrets.HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS }}'
   release_gate_line="$(grep -n 'make release-gate' "$release_workflow" | head -n1 | cut -d: -f1)"
   if [[ -z "$release_gate_line" || -z "$secret_line" || "$release_gate_line" -ge "$secret_line" ]]; then
     printf 'release workflow must run release-gate before exposing signing secrets\n' >&2
