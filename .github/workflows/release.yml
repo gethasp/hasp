@@ -317,8 +317,8 @@ jobs:
     steps:
       - name: Smoke published Homebrew tap
         run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/hasp https://github.com/gethasp/homebrew-tap.git
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install gethasp/hasp/hasp
+          HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install gethasp/tap/hasp
           hasp version
 
   github-release:

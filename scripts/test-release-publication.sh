@@ -330,8 +330,8 @@ if [[ -f "$release_workflow" ]]; then
     exit 1
   fi
   assert_file_contains "$release_workflow" 'published-homebrew-tap-smoke:'
-  assert_file_contains "$release_workflow" 'brew tap gethasp/hasp https://github.com/gethasp/homebrew-tap.git'
-  assert_file_contains "$release_workflow" 'brew install gethasp/hasp/hasp'
+  assert_file_contains "$release_workflow" 'brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git'
+  assert_file_contains "$release_workflow" 'brew install gethasp/tap/hasp'
   github_release_block="$(awk '/^  github-release:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  github-release:/{exit} seen{print}' "$release_workflow")"
   if [[ "$github_release_block" != *"      - published-homebrew-tap-smoke"* ]]; then
     printf 'GitHub Release publication must wait for published tap smoke\n' >&2

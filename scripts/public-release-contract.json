@@ -134,8 +134,8 @@
         "published-homebrew-tap-smoke": {
           "needs_include": ["publish-homebrew-tap"],
           "run_contains": [
-            "brew tap gethasp/hasp https://github.com/gethasp/homebrew-tap.git",
-            "brew install gethasp/hasp/hasp"
+            "brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git",
+            "brew install gethasp/tap/hasp"
           ]
         },
         "github-release": {
