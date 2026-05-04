@@ -1,0 +1,22 @@
+{
+  "blocked_doc_sources": [
+    "docs/assurance/setup-password-proof.md"
+  ],
+  "blocked_doc_slugs": [
+    "assurance/setup-password-proof"
+  ],
+  "public_doc_source_prefixes": [
+    "public/",
+    "docs/agent-profiles/"
+  ],
+  "routed_inventory_source_prefixes": [
+    "public/docs/",
+    "docs/agent-profiles/"
+  ],
+  "allowed_unrouted_doc_sources": [
+    "public/docs/README.md"
+  ],
+  "doc_source_pattern": "^[A-Za-z0-9._/-]+$",
+  "doc_slug_segment_pattern": "^[a-z0-9][a-z0-9_-]*$",
+  "docs_version_id_pattern": "^v[0-9]+[.][0-9]+[.][0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$"
+}

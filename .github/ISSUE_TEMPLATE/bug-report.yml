@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a runtime, packaging, or release problem in HASP.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for product bugs, broken setup paths, runtime failures, and release regressions.
+
+        If you found a security issue, stop here and use the process in `SECURITY.md`.
+  - type: input
+    id: summary
+    attributes:
+      label: What broke?
+      description: One sentence is enough.
+      placeholder: `hasp bootstrap` fails after I bind a fresh repo.
+    validations:
+      required: true
+  - type: dropdown
+    id: install_path
+    attributes:
+      label: How did you install or run HASP?
+      options:
+        - Built from source
+        - Direct packaged release
+        - Homebrew
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Tag, commit SHA, or `main`.
+      placeholder: v0.1.0
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we reproduce it?
+      placeholder: |
+        1. Run ...
+        2. Bind ...
+        3. Trigger ...
+        4. See failure ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: The command should complete and print ...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      placeholder: The CLI returned ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or extra context
+      description: Paste error output or attach screenshots if they help.
+      render: shell

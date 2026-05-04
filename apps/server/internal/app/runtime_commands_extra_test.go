@@ -1,0 +1,400 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gethasp/hasp/apps/server/internal/runtime"
+	"github.com/gethasp/hasp/apps/server/internal/store"
+)
+
+func TestRuntimeCommandUsageErrorsAndExportRestoreRoundTrip(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "backup-passphrase")
+
+	keyring := &memorySetupKeyring{}
+	origNewStore := newVaultStoreFn
+	defer func() { newVaultStoreFn = origNewStore }()
+	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", "abc123"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run set: %v", err)
+	}
+
+	if err := exportBackupCommand(context.Background(), []string{}, io.Discard); err == nil {
+		t.Fatal("expected export-backup usage error")
+	}
+	backupPath := filepath.Join(t.TempDir(), "hasp.backup.json")
+	if err := exportBackupCommand(context.Background(), []string{"--output", backupPath}, io.Discard); err != nil {
+		t.Fatalf("export-backup command: %v", err)
+	}
+
+	restoreHome := t.TempDir()
+	t.Setenv("HASP_HOME", restoreHome)
+	t.Setenv("HASP_MASTER_PASSWORD", "restored-password")
+	if err := restoreBackupCommand(context.Background(), []string{}, io.Discard); err == nil {
+		t.Fatal("expected restore-backup usage error")
+	}
+	// HASP_BACKUP_PASSPHRASE and HASP_MASTER_PASSWORD are set above via env vars.
+	if err := restoreBackupCommand(context.Background(), []string{"--input", backupPath}, io.Discard); err != nil {
+		t.Fatalf("restore-backup command: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	starter := newDaemonTestStarter(t)
+	if err := pingCommand(context.Background(), &stdout, starter); err != nil {
+		t.Fatalf("ping command: %v", err)
+	}
+	if err := statusCommand(context.Background(), &stdout, starter); err != nil {
+		t.Fatalf("status command: %v", err)
+	}
+	var daemonHelp bytes.Buffer
+	if err := daemonCommand(context.Background(), []string{}, &daemonHelp, starter); err != nil {
+		t.Fatalf("expected daemon help, got %v", err)
+	}
+	if !strings.Contains(daemonHelp.String(), "Manage the local runtime daemon") {
+		t.Fatalf("expected daemon help output, got %q", daemonHelp.String())
+	}
+	var sessionHelp bytes.Buffer
+	if err := sessionCommand(context.Background(), []string{}, &sessionHelp, starter); err != nil {
+		t.Fatalf("expected session help, got %v", err)
+	}
+	if !strings.Contains(sessionHelp.String(), "Work with broker sessions directly") {
+		t.Fatalf("expected session help output, got %q", sessionHelp.String())
+	}
+}
+
+func TestDaemonCommandStartBranch(t *testing.T) {
+	homeDir := t.TempDir()
+	socketPath := shortSocketPath(t, fmt.Sprintf("hasp-app-start-%d.sock", time.Now().UnixNano()))
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_SOCKET", socketPath)
+	t.Setenv("HASP_TEST_HELPER_DAEMON", "1")
+	t.Cleanup(func() {
+		_ = os.Remove(socketPath)
+	})
+
+	if err := daemonCommand(context.Background(), []string{"start"}, io.Discard, &fakeStarter{}); err != nil {
+		t.Fatalf("daemon start: %v", err)
+	}
+
+	manager, err := runtime.NewManager()
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	waitForSocket(t, manager.SocketPath(), make(chan error))
+	// hasp-gvks: net.Dial returns success once the listener is bound; the
+	// daemon writes its pid file *after* listenUnix and chmodFile, so a
+	// dial-only wait can race the pid write.  Poll until the pid file lands
+	// before asking StopDaemon to read it, otherwise CI sees an empty file
+	// and strconv.Atoi("") fails.
+	pidPath := filepath.Join(homeDir, "runtime", "daemon.pid")
+	pidDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(pidDeadline) {
+		if data, err := os.ReadFile(pidPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err := manager.StopDaemon(); err != nil {
+		t.Fatalf("stop daemon: %v", err)
+	}
+}
+
+func TestSessionGrantPlaintextCommand(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret add: %v", err)
+	}
+
+	starter := newDaemonTestStarter(t)
+	client, err := starter.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("dial daemon: %v", err)
+	}
+	defer client.Close()
+	reply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{
+		HostLabel:    "agent",
+		ProjectRoot:  projectRoot,
+		TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
+		AgentSafe:    true,
+		ConsumerName: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+
+	deps := defaultSessionLocalDeps()
+	deps.Approve = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
+
+	var out bytes.Buffer
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal", "--json"}, &out, starter, deps); err != nil {
+		t.Fatalf("grant plaintext command: %v", err)
+	}
+	if !strings.Contains(out.String(), "\"plaintext_action\":\"reveal\"") {
+		t.Fatalf("unexpected json output %q", out.String())
+	}
+
+	handle, err := openVaultHandle(context.Background())
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	if !handle.PlaintextGrantActive(reply.SessionToken, "API_TOKEN", store.PlaintextReveal) {
+		t.Fatal("expected active plaintext grant")
+	}
+	binding, _, err := handle.ResolveBindingView(context.Background(), projectRoot)
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	if _, err := handle.GrantProjectLease(binding.ID, reply.SessionToken, store.GrantSession, 0); err != nil {
+		t.Fatalf("grant project lease: %v", err)
+	}
+	var mutationOut bytes.Buffer
+	if err := Run(context.Background(), []string{"session", "grant-mutation", "--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "expose", "--json"}, bytes.NewBuffer(nil), &mutationOut, io.Discard); err != nil {
+		t.Fatalf("grant mutation command: %v", err)
+	}
+	if !strings.Contains(mutationOut.String(), "\"mutation_action\":\"expose\"") {
+		t.Fatalf("unexpected mutation json output %q", mutationOut.String())
+	}
+	handle, err = openVaultHandle(context.Background())
+	if err != nil {
+		t.Fatalf("reopen vault: %v", err)
+	}
+	if err := handle.ConsumeSecretMutationGrant(binding.ID, reply.SessionToken, "API_TOKEN", store.SecretMutationExpose); err != nil {
+		t.Fatalf("expected active mutation grant: %v", err)
+	}
+
+	nonAgentReply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{
+		HostLabel:   "human",
+		ProjectRoot: projectRoot,
+		TTLSeconds:  int(runtime.DefaultSessionTTL.Seconds()),
+	})
+	if err != nil {
+		t.Fatalf("open non-agent session: %v", err)
+	}
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", nonAgentReply.SessionToken, "--item", "API_TOKEN", "--action", "copy"}, io.Discard, starter, deps); err == nil {
+		t.Fatal("expected non-agent-safe session failure")
+	}
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "bogus"}, io.Discard, starter, deps); err == nil {
+		t.Fatal("expected bad action failure")
+	}
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal", "--scope", "window"}, io.Discard, starter, deps); err == nil {
+		t.Fatal("expected unsupported scope failure")
+	}
+	t.Setenv(envSessionToken, reply.SessionToken)
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--item", "API_TOKEN", "--action", "copy", "--json"}, io.Discard, starter, deps); err != nil {
+		t.Fatalf("expected env-token plaintext grant success: %v", err)
+	}
+	if err := confirmPlaintextGrant(runtime.SessionView{HostLabel: "agent", ProjectRoot: projectRoot}, "API_TOKEN", store.PlaintextReveal); err != nil {
+		t.Fatalf("confirmPlaintextGrant non-darwin should no-op in tests: %v", err)
+	}
+}
+
+func TestSessionGrantPlaintextCommandFailureBranches(t *testing.T) {
+	lockAppSeams(t)
+
+	if err := sessionGrantPlaintextCommand(context.Background(), []string{"--bad"}, io.Discard, &fakeStarter{}); err == nil {
+		t.Fatal("expected parse failure")
+	}
+	if err := sessionGrantPlaintextCommand(context.Background(), nil, io.Discard, &fakeStarter{}); err == nil {
+		t.Fatal("expected usage failure")
+	}
+	if err := sessionGrantPlaintextCommand(context.Background(), []string{"--token", "token", "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, &fakeStarter{err: io.EOF}); err == nil {
+		t.Fatal("expected ensureClient failure")
+	}
+
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"secret", "add", "--project-root", projectRoot, "--from-stdin", "--expose=always", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret add: %v", err)
+	}
+	starter := newDaemonTestStarter(t)
+	if err := sessionGrantPlaintextCommand(context.Background(), []string{"--token", "missing", "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter); err == nil || !strings.Contains(err.Error(), "resolve session") {
+		t.Fatalf("expected resolve session failure, got %v", err)
+	}
+	client, err := starter.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("dial daemon: %v", err)
+	}
+	defer client.Close()
+	reply, err := client.OpenSession(context.Background(), runtime.OpenSessionRequest{
+		HostLabel:    "agent",
+		ProjectRoot:  projectRoot,
+		TTLSeconds:   int(runtime.DefaultSessionTTL.Seconds()),
+		AgentSafe:    true,
+		ConsumerName: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+
+	origOpen := openVaultHandleFn
+	origGet := secretGetItemFn
+	defer func() {
+		openVaultHandleFn = origOpen
+		secretGetItemFn = origGet
+	}()
+	failApproveDeps := defaultSessionLocalDeps()
+	failApproveDeps.Approve = func(runtime.SessionView, string, store.PlaintextAction) error { return errors.New("approval fail") }
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter, failApproveDeps); err == nil || err.Error() != "approval fail" {
+		t.Fatalf("expected approval failure, got %v", err)
+	}
+	okApproveDeps := defaultSessionLocalDeps()
+	okApproveDeps.Approve = func(runtime.SessionView, string, store.PlaintextAction) error { return nil }
+	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault fail") }
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter, okApproveDeps); err == nil || err.Error() != "vault fail" {
+		t.Fatalf("expected open vault failure, got %v", err)
+	}
+	openVaultHandleFn = origOpen
+	secretGetItemFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter, okApproveDeps); err == nil || err.Error() != "get fail" {
+		t.Fatalf("expected get item failure, got %v", err)
+	}
+	secretGetItemFn = origGet
+	failGrantDeps := okApproveDeps
+	failGrantDeps.UseGrant = func(*store.Handle, string, string, store.PlaintextAction, time.Duration) (store.PlaintextGrant, error) {
+		return store.PlaintextGrant{}, errors.New("grant fail")
+	}
+	if err := sessionGrantPlaintextCommandWithDeps(context.Background(), []string{"--token", reply.SessionToken, "--item", "API_TOKEN", "--action", "reveal"}, io.Discard, starter, failGrantDeps); err == nil || err.Error() != "grant fail" {
+		t.Fatalf("expected plaintext grant persistence failure, got %v", err)
+	}
+}
+
+func TestConfirmPlaintextGrantBranches(t *testing.T) {
+	lockAppSeams(t)
+
+	underTestDeps := defaultConfirmPlaintextGrantDeps()
+	underTestDeps.UnderTest = func() bool { return true }
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: "/tmp/project"}, "API_TOKEN", store.PlaintextReveal, underTestDeps); err != nil {
+		t.Fatalf("under-test shortcut should bypass approval: %v", err)
+	}
+
+	darwinSuccessDeps := confirmPlaintextGrantDeps{
+		GOOS:      "darwin",
+		Command:   func(string, ...string) *exec.Cmd { return exec.Command("sh", "-c", "exit 0") },
+		UnderTest: func() bool { return false },
+	}
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: "/tmp/project"}, "API_TOKEN", store.PlaintextCopy, darwinSuccessDeps); err != nil {
+		t.Fatalf("darwin approval success: %v", err)
+	}
+	darwinFailDeps := darwinSuccessDeps
+	darwinFailDeps.Command = func(string, ...string) *exec.Cmd { return exec.Command("sh", "-c", "exit 1") }
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: "/tmp/project"}, "API_TOKEN", store.PlaintextCopy, darwinFailDeps); err == nil {
+		t.Fatal("expected darwin approval failure")
+	}
+
+	linuxDeps := confirmPlaintextGrantDeps{
+		GOOS:      "linux",
+		Command:   exec.Command,
+		UnderTest: func() bool { return false },
+	}
+	origStdin := os.Stdin
+	origCharDevice := secretIsCharDeviceFn
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	os.Stdin = r
+	defer func() {
+		os.Stdin = origStdin
+		secretIsCharDeviceFn = origCharDevice
+	}()
+	secretIsCharDeviceFn = func(*os.File) bool { return true }
+	if _, err := w.WriteString("grant reveal API_TOKEN\n"); err != nil {
+		t.Fatalf("write prompt input: %v", err)
+	}
+	if err := w.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("close writer: %v", err)
+	}
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: ""}, "API_TOKEN", store.PlaintextReveal, linuxDeps); err != nil {
+		t.Fatalf("tty fallback approval success: %v", err)
+	}
+
+	secretIsCharDeviceFn = func(*os.File) bool { return false }
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: ""}, "API_TOKEN", store.PlaintextReveal, linuxDeps); err == nil {
+		t.Fatal("expected non-interactive approval failure")
+	}
+
+	secretIsCharDeviceFn = func(*os.File) bool { return true }
+	r2, w2, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe mismatch: %v", err)
+	}
+	defer r2.Close()
+	defer w2.Close()
+	os.Stdin = r2
+	if _, err := w2.WriteString("wrong phrase\n"); err != nil {
+		t.Fatalf("write mismatch phrase: %v", err)
+	}
+	if err := w2.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("close mismatch writer: %v", err)
+	}
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: ""}, "API_TOKEN", store.PlaintextReveal, linuxDeps); err == nil {
+		t.Fatal("expected approval cancellation on mismatched phrase")
+	}
+
+	origStdout := os.Stdout
+	r3, w3, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	if err := w3.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	os.Stdout = w3
+	defer func() {
+		os.Stdout = origStdout
+		_ = r3.Close()
+	}()
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: ""}, "API_TOKEN", store.PlaintextReveal, linuxDeps); err == nil {
+		t.Fatal("expected stdout write failure on approval prompt")
+	}
+	os.Stdout = origStdout
+
+	r4, w4, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdin read fail: %v", err)
+	}
+	_ = r4.Close()
+	os.Stdin = r4
+	defer func() { _ = w4.Close() }()
+	secretIsCharDeviceFn = func(*os.File) bool { return true }
+	if err := confirmPlaintextGrantWithDeps(runtime.SessionView{HostLabel: "agent", ProjectRoot: ""}, "API_TOKEN", store.PlaintextReveal, linuxDeps); err == nil {
+		t.Fatal("expected read failure/cancel on closed stdin")
+	}
+}

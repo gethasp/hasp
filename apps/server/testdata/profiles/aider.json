@@ -1,0 +1,1 @@
+{"tool":"hasp_run","project_root":".","session_token":"fixture-session","grant_project":"window","grant_secret":"session","env":{"API_TOKEN":"secret_01"},"command":["sh","-c","printf '%s' \"$API_TOKEN\""]}

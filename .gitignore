@@ -1,0 +1,18 @@
+
+# Dolt database files (added by bd init)
+.dolt/
+
+# OS
+.DS_Store
+
+# Build artifacts
+*.db
+codedb.snapshot
+bin/
+dist/
+__pycache__/
+.testtmp/
+.testsock/
+
+# IDE / tools
+.omx/

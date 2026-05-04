@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fork-pr-verify:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Verify public CI
+        run: make verify-ci
+      - name: Coverage
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
+          HASP_COVERAGE_TARGET: "100"
+        run: make coverage
+
+  merge-gate:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Release gate
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
+        run: make release-gate
+
+  darwin-audit-coverage:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Audit Darwin coverage
+        run: make coverage-audit-platform

@@ -1,0 +1,12 @@
+{
+  "id": "aider",
+  "name": "Aider",
+  "transport": "cli-or-mcp",
+  "command": ["hasp", "agent", "mcp", "aider"],
+  "project_binding_recipe": "Bind the working tree in HASP once. HASP may create neutral aliases internally, but day-to-day agent use should prefer named refs like @OPENAI_API_KEY.",
+  "approval_path": "Prefer the wrapper or launcher path, then let hasp mcp auto-open the daemon-backed session and use project and secret windows for longer aider runs; hasp session grant-plaintext is the operator path when plaintext is explicitly required.",
+  "safe_inject_path": "Use hasp run for command execution or hasp_inject through the generic tool path, preferably with named refs like @OPENAI_API_KEY instead of recalling secret_01 or revealing plaintext.",
+  "write_env_path": "Use hasp write-env with explicit convenience grants for .env.local style files.",
+  "regression_fixture": "apps/server/testdata/profiles/aider.json",
+  "docs_path": "docs/agent-profiles/aider.md"
+}

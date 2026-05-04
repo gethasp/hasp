@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+modules=()
+while IFS= read -r mod; do
+  [[ -n "$mod" ]] || continue
+  modules+=("$mod")
+done < <(
+  {
+    find ./apps/server -name go.mod -not -path '*/vendor/*' -print 2>/dev/null || true
+    find ./packages -name go.mod -not -path '*/vendor/*' -print 2>/dev/null || true
+  } | sort -u
+)
+
+if [[ "${#modules[@]}" -eq 0 ]]; then
+  echo "No Go modules found; skipping coverage."
+  exit 0
+fi
+
+merge_profiles_max() {
+  local output="$1"
+  shift
+
+  awk '
+    FNR == 1 {
+      if (NR == 1) {
+        mode = $0
+      }
+      next
+    }
+    {
+      key = $1 FS $2
+      if (!(key in max) || $3 > max[key]) {
+        max[key] = $3
+      }
+    }
+    END {
+      print mode
+      for (key in max) {
+        print key, max[key]
+      }
+    }
+  ' "$@" >"$output"
+}
+
+for mod in "${modules[@]}"; do
+  dir="$(dirname "$mod")"
+  echo "Coverage for $dir"
+	  eval_profile="$(mktemp)"
+	  combined_profile="$(mktemp)"
+	  cover_report="$(mktemp)"
+	  profiles=()
+	  coverage_packages=()
+	  (
+	    cd "$dir"
+	    while IFS= read -r pkg; do
+	      [[ -n "$pkg" ]] || continue
+	      if [[ "$pkg" == *"/internal/evals" || "$pkg" == *"/internal/testutil" ]]; then
+	        continue
+	      fi
+	      coverage_packages+=("$pkg")
+	      pkg_profile="$(mktemp)"
+	      pkg_log="$(mktemp)"
+      if ! go test -tags=hasp_test_fastkdf "$pkg" -coverprofile="$pkg_profile" >"$pkg_log" 2>&1; then
+        echo "coverage run failed for $pkg:" >&2
+        cat "$pkg_log" >&2
+        rm -f "$pkg_log"
+        exit 1
+      fi
+      rm -f "$pkg_log"
+      profiles+=("$pkg_profile")
+    done < <(go list ./...)
+
+	    if [[ -d "./internal/evals" ]]; then
+	      eval_log="$(mktemp)"
+	      coverpkg="$(IFS=,; printf '%s' "${coverage_packages[*]}")"
+	      if ! go test -tags=integration,hasp_test_fastkdf -coverpkg="$coverpkg" ./internal/evals -coverprofile="$eval_profile" >"$eval_log" 2>&1; then
+	        echo "coverage run failed for ./internal/evals:" >&2
+	        cat "$eval_log" >&2
+        rm -f "$eval_log"
+        exit 1
+      fi
+      rm -f "$eval_log"
+      profiles+=("$eval_profile")
+    fi
+
+    merge_profiles_max "$combined_profile" "${profiles[@]}"
+    go tool cover -func="$combined_profile" >"$cover_report"
+    tail -n 20 "$cover_report"
+    if [[ -n "${HASP_COVERAGE_TARGET:-}" ]]; then
+      total="$(awk '/^total:/{print $3}' "$cover_report" | tr -d '%')"
+      awk -v total="$total" -v target="$HASP_COVERAGE_TARGET" 'BEGIN { exit !(total + 0 >= target + 0) }' || {
+        echo "coverage ${total}% is below target ${HASP_COVERAGE_TARGET}%" >&2
+        awk '$1 != "total:" && $NF ~ /%$/ && $NF != "100.0%" {print}' "$cover_report" >&2
+        exit 1
+      }
+    fi
+
+    for profile in "${profiles[@]}"; do
+      rm -f "$profile"
+    done
+  )
+  rm -f "$eval_profile" "$combined_profile" "$cover_report"
+done

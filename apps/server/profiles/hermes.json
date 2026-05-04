@@ -1,0 +1,12 @@
+{
+  "id": "hermes",
+  "name": "Hermes",
+  "transport": "mcp-stdio",
+  "command": ["hasp", "agent", "mcp", "hermes"],
+  "project_binding_recipe": "Bind the Hermes project root once. HASP may create neutral aliases internally, but day-to-day agent use should prefer named refs like @OPENAI_API_KEY.",
+  "approval_path": "Prefer the wrapper or launcher path, then let hasp mcp auto-open the daemon-backed session and use project leases plus secret grants matching the intended Hermes workflow length; hasp session grant-plaintext is the operator path when plaintext is explicitly required.",
+  "safe_inject_path": "Use hasp_run / hasp_inject through the generic stdio tool surface, preferably with named refs like @OPENAI_API_KEY instead of recalling secret_01 or revealing plaintext.",
+  "write_env_path": "Use hasp write-env only with explicit convenience grants and warning surfaces.",
+  "regression_fixture": "apps/server/testdata/profiles/hermes.json",
+  "docs_path": "docs/agent-profiles/hermes.md"
+}
