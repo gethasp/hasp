@@ -230,6 +230,9 @@ if [[ -f "$release_workflow" ]]; then
     assert_file_contains "$ROOT/scripts/public-export-manifest.json" 'scripts/homebrew-formula-smoke.sh'
   fi
   assert_file_contains "$release_workflow" 'HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases'
+  assert_file_contains "$release_workflow" 'workflow_dispatch:'
+  assert_file_contains "$release_workflow" 'source_run_id:'
+  assert_file_contains "$release_workflow" 'actions: read'
   assert_file_contains "$release_workflow" 'Verify release tag commit is on main'
   assert_file_contains "$release_workflow" 'git fetch --no-tags origin main'
   # shellcheck disable=SC2016
@@ -333,6 +336,16 @@ if [[ -f "$release_workflow" ]]; then
   assert_file_contains "$release_workflow" 'published-homebrew-tap-smoke:'
   assert_file_contains "$release_workflow" 'brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git'
   assert_file_contains "$release_workflow" 'brew install gethasp/tap/hasp'
+  resume_block="$(awk '/^  resume-latest-mirror:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  resume-latest-mirror:/{exit} seen{print}' "$release_workflow")"
+  if [[ "$resume_block" != *"run-id: \${{ inputs.source_run_id }}"* ||
+    "$resume_block" != *"github-token: \${{ github.token }}"* ||
+    "$resume_block" != *"RELEASE_TAG: \${{ inputs.tag }}"* ||
+    "$resume_block" != *'HASP_R2_PROMOTE_LATEST: "1"'* ||
+    "$resume_block" != *"bash ./scripts/publish-release-to-r2.sh \"\$release_dir\" \"\$RELEASE_TAG\""* ||
+    "$resume_block" != *"https://downloads.gethasp.com/hasp/releases/latest/\${asset}"* ]]; then
+    printf 'release workflow resume path must download the prior artifact and promote latest with verification\n' >&2
+    exit 1
+  fi
   github_release_block="$(awk '/^  github-release:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  github-release:/{exit} seen{print}' "$release_workflow")"
   if [[ "$github_release_block" != *"      - published-homebrew-tap-smoke"* ]]; then
     printf 'GitHub Release publication must wait for published tap smoke\n' >&2
