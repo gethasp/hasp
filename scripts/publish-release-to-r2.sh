@@ -77,20 +77,24 @@ else
       --output text
   )"
   if [[ -n "$existing" && "$existing" != "None" && "$existing" != "null" ]]; then
-    echo "release prefix already contains objects, refusing to mutate immutable version path: $version_target" >&2
-    exit 1
+    if [[ "${HASP_R2_PROMOTE_LATEST:-0}" != "1" ]]; then
+      echo "release prefix already contains objects, refusing to mutate immutable version path: $version_target" >&2
+      exit 1
+    fi
+    echo "release prefix already exists; promoting latest without mutating immutable version path: $version_target"
+  else
+    (
+      cd "$release_dir"
+      while IFS= read -r -d '' file; do
+        rel="${file#./}"
+        aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object \
+          --bucket "$HASP_R2_BUCKET" \
+          --key "${version_prefix}${rel}" \
+          --body "$release_dir/$rel" \
+          --if-none-match '*' >/dev/null
+      done < <(find . -type f -print0)
+    )
   fi
-  (
-    cd "$release_dir"
-    while IFS= read -r -d '' file; do
-      rel="${file#./}"
-      aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object \
-        --bucket "$HASP_R2_BUCKET" \
-        --key "${version_prefix}${rel}" \
-        --body "$release_dir/$rel" \
-        --if-none-match '*' >/dev/null
-    done < <(find . -type f -print0)
-  )
 fi
 
 if [[ "${HASP_R2_PUBLISH_LATEST:-0}" == "1" ]]; then

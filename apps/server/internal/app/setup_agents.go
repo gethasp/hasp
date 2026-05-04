@@ -30,6 +30,10 @@ type setupAgentOutcome struct {
 //
 //	selected agent -> install managed wrapper -> upsert client config
 //	config entry    -> wrapper script         -> `hasp agent mcp <agent-id>`
+//
+// Format "manual" agents have no canonical client-config file; HASP installs
+// the wrapper and saves the consumer, but the user wires the agent's MCP
+// surface to the wrapper themselves per docs/agent-profiles/<id>.md.
 func setupSupportedAgents() []setupAgentSpec {
 	home, _ := setupUserHomeDirFn()
 	return []setupAgentSpec{
@@ -56,6 +60,24 @@ func setupSupportedAgents() []setupAgentSpec {
 			ConfigPath: func(_ string) string {
 				return filepath.Join(home, ".cursor", "mcp.json")
 			},
+		},
+		{
+			ID:         "aider",
+			Label:      "Aider",
+			Format:     "manual",
+			ConfigPath: func(_ string) string { return "" },
+		},
+		{
+			ID:         "hermes",
+			Label:      "Hermes",
+			Format:     "manual",
+			ConfigPath: func(_ string) string { return "" },
+		},
+		{
+			ID:         "openclaw",
+			Label:      "OpenClaw",
+			Format:     "manual",
+			ConfigPath: func(_ string) string { return "" },
 		},
 	}
 }
@@ -103,6 +125,12 @@ func setupAgentBinary(id string) string {
 		return "claude"
 	case "cursor":
 		return "cursor"
+	case "aider":
+		return "aider"
+	case "hermes":
+		return "hermes"
+	case "openclaw":
+		return "openclaw"
 	default:
 		return id
 	}
@@ -123,6 +151,16 @@ func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAg
 		wrapperPath, err := setupInstallAgentWrapper(haspHome, setupHaspCommandPath(), agent.ID)
 		if err != nil {
 			return nil, err
+		}
+		if agent.Format == "manual" {
+			outcomes = append(outcomes, setupAgentOutcome{
+				ID:         agent.ID,
+				Label:      agent.Label,
+				ConfigPath: wrapperPath,
+				BackupPath: "",
+				Changed:    false,
+			})
+			continue
 		}
 		path := agent.ConfigPath("")
 		info, err := os.Lstat(path)
@@ -286,6 +324,9 @@ func upsertJSONMCPServerConfig(existing []byte, haspHome string, commandPath str
 }
 
 func removeAgentConsumerConfig(spec setupAgentSpec, path string) error {
+	if spec.Format == "manual" {
+		return nil
+	}
 	existing, err := setupReadFileFn(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

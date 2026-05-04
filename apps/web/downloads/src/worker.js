@@ -512,8 +512,8 @@ curl -LO ${release.publicKeyUrl}`;
 
       <section>
         <h2>Homebrew</h2>
-        <pre>brew tap gethasp/homebrew-tap
-brew install hasp</pre>
+        <pre>brew tap gethasp/tap
+brew install gethasp/tap/hasp</pre>
       </section>
 
       <footer>

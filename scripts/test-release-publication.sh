@@ -99,6 +99,7 @@ else
 fi
 if [[ -f "$public_export_check" ]]; then
   assert_file_contains "$root_makefile" 'verify-core:'
+  assert_file_contains "$root_makefile" "\$(MAKE) check-generated-docs"
   assert_file_contains "$root_makefile" "\$(MAKE) web-check"
   assert_file_contains "$root_makefile" "HASP_DOCS_VERSIONING_PREBUILT=1 \$(MAKE) docs-versioning"
   assert_file_contains "$root_makefile" "\$(MAKE) test"
@@ -130,7 +131,7 @@ if [[ -f "$public_export_check" ]]; then
   assert_file_contains "$public_makefile" 'bash ./scripts/check-github-actions-pinning.sh .github/workflows'
   assert_file_contains "$public_makefile" 'shellcheck:'
   assert_file_contains "$public_makefile" "find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -x -P scripts"
-  assert_file_contains "$public_makefile" 'verify-ci: check-links check-tidy workflow-lint shellcheck test-scripts web-check test lint'
+  assert_file_contains "$public_makefile" 'verify-ci: check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts web-check test lint'
   if grep -Fq 'test-release-publication.sh' "$ROOT/scripts/run-public-script-tests.sh"; then
     printf 'fast public script tests must not run the heavyweight release-publication harness\n' >&2
     exit 1
@@ -159,7 +160,7 @@ if [[ -f "$public_export_check" ]]; then
   fi
 else
   assert_file_contains "$root_makefile" 'bash ./scripts/run-public-script-tests.sh'
-  assert_file_contains "$root_makefile" 'verify-ci: check-links check-tidy workflow-lint shellcheck test-scripts web-check test lint'
+  assert_file_contains "$root_makefile" 'verify-ci: check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts web-check test lint'
 fi
 if [[ -f "$private_verify_workflow" && -f "$ROOT/scripts/check-public-export.sh" ]]; then
   fork_pr_block="$(awk '/^  fork-pr-verify:/{seen=1} seen && /^  [[:alnum:]_-]+:$/ && $0 !~ /^  fork-pr-verify:/{exit} seen{print}' "$private_verify_workflow")"
@@ -599,6 +600,24 @@ if PATH="$stub_bin:$PATH" \
 fi
 if grep -Fq "s3api put-object" "$aws_log"; then
   printf 'R2 publisher uploaded into non-empty immutable release prefix\n' >&2
+  exit 1
+fi
+
+: >"$aws_log"
+PATH="$stub_bin:$PATH" \
+  HASP_AWS_STUB_LOG="$aws_log" \
+  HASP_AWS_STUB_LIST_RESULT="hasp/releases/v0.0.0-test/artifact" \
+  HASP_R2_BUCKET="hasp-test" \
+  HASP_R2_ENDPOINT="https://r2.example.invalid" \
+  AWS_ACCESS_KEY_ID="test" \
+  AWS_SECRET_ACCESS_KEY="test" \
+  HASP_R2_PROMOTE_LATEST=1 \
+  bash "$ROOT/scripts/publish-release-to-r2.sh" "$release_dir" "v0.0.0-test" >/dev/null
+grep -Fq "s3api list-objects-v2" "$aws_log"
+grep -Fq "s3 sync" "$aws_log"
+grep -Fq "s3://hasp-test/hasp/releases/latest/" "$aws_log"
+if grep -Fq "s3api put-object" "$aws_log"; then
+  printf 'R2 latest promotion mutated non-empty immutable release prefix\n' >&2
   exit 1
 fi
 

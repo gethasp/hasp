@@ -7,12 +7,12 @@ prefix.
 ## Install with Homebrew
 
 ```bash
-brew tap gethasp/homebrew-tap
-brew install hasp
+brew tap gethasp/tap
+brew install gethasp/tap/hasp
 hasp version
 ```
 
-If you already added the tap, `brew install hasp` is enough.
+If you already added the tap, `brew install gethasp/tap/hasp` is enough.
 
 After install, continue with [After Install](after-homebrew.md):
 

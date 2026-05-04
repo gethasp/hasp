@@ -14,7 +14,7 @@ You can test:
 - connected agent consumers through `hasp agent connect`, `disconnect`, and `list`
 - brokered `run` and safe `inject`
 - explicit convenience `write-env`
-- repo guardrails, audit, and backup/restore
+- repo guardrails, audit, and `export-backup`/`restore-backup`
 - first-class profile bootstrap for the shipped first-class agent set
 - generic broker compatibility for other CLI- or MCP-capable agents
 
@@ -49,8 +49,8 @@ Use either:
 5. Run one brokered command that needs a secret.
 6. Write one convenience env file and confirm the warning path is clear.
 7. Trigger `check-repo` on a managed value inside the repo and confirm the default block.
-8. Export a backup.
-9. Restore into a second HASP home and confirm the restored vault opens.
+8. Run `hasp export-backup` to write an encrypted vault backup.
+9. Run `hasp restore-backup` into a second HASP home and confirm the restored vault opens.
 10. Point one first-class agent at `hasp mcp`.
 11. Point one generic MCP-capable client at the generic path.
 
@@ -59,5 +59,5 @@ Use either:
 - V1 is local-first. There is no hosted control plane.
 - V1 does not give you strong same-user local isolation.
 - V1 does not manage your PATH for you.
-- app launchers still require explicit consent. In interactive `hasp app connect`, HASP asks before it creates one and, when needed, asks before it patches shell PATH. In scripts, use `--install=true|false` and `--add-to-path=true|false`. Launchers are written under `HASP_HOME/bin`.
+- app launchers still require explicit consent. In interactive `hasp app connect`, HASP asks before it creates one and, when needed, asks before it patches shell PATH. In scripts, use `--install=always|never|ask` and `--add-to-path=always|never|ask` (`true`/`false` are accepted as aliases for `always`/`never`). Launchers are written under `HASP_HOME/bin`.
 - V1 treats pasted values and shell exports as operator hygiene unless you route them through explicit import or capture paths.

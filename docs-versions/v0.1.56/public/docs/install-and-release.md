@@ -7,8 +7,8 @@ This page covers the public install path and the release trust path together.
 Use Homebrew for the normal public install path:
 
 ```bash
-brew tap gethasp/homebrew-tap
-brew install hasp
+brew tap gethasp/tap
+brew install gethasp/tap/hasp
 hasp version
 ```
 

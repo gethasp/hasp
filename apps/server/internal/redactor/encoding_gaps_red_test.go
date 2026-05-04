@@ -1,16 +1,15 @@
 package redactor
 
-// RED tests for hasp-ohub — encoding gaps in Needles / Apply.
+// Encoding-form coverage for Needles / Apply (was hasp-ohub RED, now GREEN).
 //
-// Contract pinned (not yet implemented):
+// Contract pinned and shipping:
 //   - Needles produces base32 standard-encoded form of the secret.
 //   - Needles produces HTML-entity-encoded form (hex entity per byte, e.g. &#x41;).
 //   - Needles produces double-percent-encoded form (%2520 for a literal % byte).
 //   - Needles produces unicode-escape form (\uXXXX per codepoint).
-//   - Apply masks all four new forms in addition to the existing forms.
+//   - Apply masks all four forms in addition to the existing ones.
 //
-// These tests are intentionally RED: production code does not yet emit these
-// forms. GREEN phase must add them to buildForms / Needles.
+// buildForms / Needles emit each form; these tests guard against regression.
 
 import (
 	"bytes"

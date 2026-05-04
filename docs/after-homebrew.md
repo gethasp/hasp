@@ -166,10 +166,6 @@ If you are using a different first-class agent, swap the profile:
 - `cursor`
 - `aider`
 - `codex-cli`
-
-Generic-compatible profiles are also available when they match your agent, but
-they are not first-class support claims yet:
-
 - `openclaw`
 - `hermes`
 

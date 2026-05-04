@@ -62,6 +62,8 @@ the whole agent process tree instead of only the HASP MCP server.
 - [Cursor](./cursor.md)
 - [Aider](./aider.md)
 - [Codex CLI](./codex-cli.md)
+- [OpenClaw](./openclaw.md)
+- [Hermes](./hermes.md)
 
 ## Generic-Compatible Profiles
 
@@ -73,8 +75,6 @@ evidence.
   agent that is not a first-class profile yet. Provides setup, doctor, and
   brokered proof commands without claiming agent-specific approval UX or
   release-gate coverage. See [Generic broker guide](./generic.md).
-- [OpenClaw](./openclaw.md)
-- [Hermes](./hermes.md)
 
 ## Update Rule
 

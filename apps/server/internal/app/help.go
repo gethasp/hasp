@@ -171,6 +171,7 @@ Advanced and automation
   hasp help write-env
   hasp help completion
   hasp help docs
+  hasp help upgrade
 
 Output
   --json    machine-readable output on stdout for status, list, and mutation commands.
@@ -762,6 +763,13 @@ as a managed entry. Generated HASP MCP configs now point at a managed local
 wrapper instead of a raw ` + "`hasp mcp`" + ` command so HASP can bind the
 agent process tree to a protected session automatically.
 
+Supported agent IDs:
+  claude-code, codex-cli, cursor   write the agent's MCP config in place.
+  aider, hermes, openclaw          install the wrapper at
+                                   $HASP_HOME/bin/hasp-agent-<id> and save the
+                                   managed entry; wire the wrapper into the
+                                   agent per docs/agent-profiles/<id>.md.
+
 Flags
   --project-root <path>   repo root to bind the agent to (optional)
   --json                  emit machine-readable result on stdout
@@ -769,6 +777,10 @@ Flags
 Examples
   hasp agent connect claude-code --project-root .
   hasp agent connect codex-cli --project-root .
+  hasp agent connect cursor --project-root .
+  hasp agent connect aider --project-root .
+  hasp agent connect hermes --project-root .
+  hasp agent connect openclaw --project-root .
 `
 
 const agentMCPHelpText = `hasp agent mcp

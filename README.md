@@ -17,8 +17,8 @@ Managed secret values must not enter agent context.
 Use Homebrew for normal installs on macOS and Linux:
 
 ```bash
-brew tap gethasp/homebrew-tap
-brew install hasp
+brew tap gethasp/tap
+brew install gethasp/tap/hasp
 hasp version
 ```
 
@@ -36,7 +36,8 @@ bin/hasp version
 ```
 
 See [install.md](docs/install.md) for packaged release verification, upgrades,
-and uninstall steps.
+and uninstall steps. `hasp upgrade --version vX.Y.Z` fetches and verifies a
+signed release in place; run `hasp help upgrade` for flags and trust roots.
 
 ## First proof
 
@@ -107,8 +108,12 @@ are in [apps/server/README.md](apps/server/README.md).
 - [cli-reference.md](docs/cli-reference.md) lists generated command help.
 - [operator-guide.md](docs/operator-guide.md) covers day-to-day operations.
 - [value-free-manifests.md](docs/value-free-manifests.md) explains safe manifests.
-- [agent profiles](docs/agent-profiles/README.md) cover Codex, Claude Code,
-  Cursor, Aider, and generic agent flows.
+- [agent profiles](docs/agent-profiles/README.md) cover the six first-class
+  profiles (Codex CLI, Claude Code, Cursor, Aider, Hermes, OpenClaw) and the
+  generic broker path. `hasp agent connect <id>` writes the MCP config in
+  place for `claude-code`, `codex-cli`, and `cursor`; for `aider`, `hermes`,
+  and `openclaw` it installs the wrapper at `$HASP_HOME/bin/hasp-agent-<id>`
+  and you wire it into the agent per the matching profile doc.
 
 The full docs index is [docs/README.md](docs/README.md).
 

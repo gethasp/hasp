@@ -73,5 +73,5 @@ func renderDocsMarkdown() string {
 		}
 		b.WriteString("```\n\n")
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }

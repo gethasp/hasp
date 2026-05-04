@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy workflow-lint shellcheck test-scripts test-release-publication test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full web-check verify-ci verify release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts test-release-publication test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full web-check verify-ci verify release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -23,6 +23,10 @@ check-links:
 ## check-tidy: Verify go.mod/go.sum tidiness
 check-tidy:
 	@bash ./scripts/check-go-mod-tidy.sh
+
+## check-generated-docs: Verify generated docs match the current binary help
+check-generated-docs:
+	@bash ./scripts/check-generated-docs.sh
 
 ## workflow-lint: Validate GitHub Actions workflows
 workflow-lint:
@@ -96,7 +100,7 @@ web-check:
 	@python3 ./scripts/check-public-docs-versioning.py
 
 ## verify-ci: Canonical fast CI gate
-verify-ci: check-links check-tidy workflow-lint shellcheck test-scripts web-check test lint
+verify-ci: check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts web-check test lint
 
 ## verify: Default public verification gate
 verify: verify-ci release-smoke coverage vulncheck
