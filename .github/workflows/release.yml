@@ -300,25 +300,21 @@ jobs:
           HASP_HOMEBREW_TAP_PUSH_KEY: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY }}
         run: |
           if [[ -n "$HASP_HOMEBREW_TAP_TOKEN" ]]; then
-            askpass="$(mktemp)"
-            trap 'rm -f "${askpass:-}"' EXIT
-            {
-              printf '%s\n' '#!/usr/bin/env sh'
-              printf '%s\n' 'case "$1" in'
-              printf '%s\n' '  *Username*) printf "%s\n" "x-access-token" ;;'
-              printf '%s\n' '  *Password*) printf "%s\n" "${HASP_HOMEBREW_TAP_TOKEN:?}" ;;'
-              printf '%s\n' '  *) exit 1 ;;'
-              printf '%s\n' 'esac'
-            } >"$askpass"
-            chmod 700 "$askpass"
-            GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git clone https://github.com/gethasp/homebrew-tap.git tap-repo
-          else
+            tap_auth_header="$(printf 'x-access-token:%s' "$HASP_HOMEBREW_TAP_TOKEN" | base64 | tr -d '\n')"
+            trap 'git -C tap-repo config --local --unset-all http.https://github.com/.extraheader >/dev/null 2>&1 || true' EXIT
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $tap_auth_header" \
+              clone https://github.com/gethasp/homebrew-tap.git tap-repo
+            git -C tap-repo config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $tap_auth_header"
+          elif [[ -n "$HASP_HOMEBREW_TAP_PUSH_KEY" ]]; then
             test -n "$HASP_HOMEBREW_TAP_PUSH_KEY"
             eval "$(ssh-agent -s)"
             printf '%s' "$HASP_HOMEBREW_TAP_PUSH_KEY" | base64 --decode > tap_key
             chmod 600 tap_key
             ssh-add tap_key
             git clone git@github.com:gethasp/homebrew-tap.git tap-repo
+          else
+            echo "HASP_HOMEBREW_TAP_TOKEN or HASP_HOMEBREW_TAP_PUSH_KEY is required" >&2
+            exit 1
           fi
           bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
 
