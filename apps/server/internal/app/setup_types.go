@@ -196,7 +196,7 @@ var (
 	setupVerifyBrokeredProofFn    = setupVerifyBrokeredProof
 	setupMCPServeFn               = mcp.Serve
 	setupMCPToolNamesFn           = mcp.ToolNames
-	setupConvenienceUnlockTimeout = time.Second
+	setupConvenienceUnlockTimeout = 30 * time.Second
 	setupConvenienceVerifyRetries = 3
 	setupConvenienceRetryDelay    = 200 * time.Millisecond
 	setupSleepFn                  = time.Sleep

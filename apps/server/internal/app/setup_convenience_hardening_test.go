@@ -78,6 +78,12 @@ func TestSetupVerifyConvenienceUnlockWithRetryBranches(t *testing.T) {
 	}
 }
 
+func TestSetupConvenienceUnlockTimeoutAllowsMacOSKeychainLatency(t *testing.T) {
+	if setupConvenienceUnlockTimeout < 15*time.Second {
+		t.Fatalf("setup convenience unlock timeout = %s, want enough room for macOS Keychain prompts", setupConvenienceUnlockTimeout)
+	}
+}
+
 func TestSetupConvenienceUnlockDetailAndSummary(t *testing.T) {
 	if got := setupConvenienceUnlockDetail(nil); got != "" {
 		t.Fatalf("expected empty detail for nil error, got %q", got)

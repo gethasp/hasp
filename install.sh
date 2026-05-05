@@ -265,21 +265,116 @@ curl -fsSL "$tag_base/SHA256SUMS.asc" -o "$tmp/SHA256SUMS.asc"
 curl -fsSL "$tag_base/$artifact_name.tar.gz.asc" -o "$tmp/$artifact_name.tar.gz.asc"
 curl -fsSL "$tag_base/${artifact_name}_bin.asc" -o "$tmp/${artifact_name}_bin.asc"
 
-gpgv --keyring "$release_trust_keyring_path" "$tmp/$artifact_name.tar.gz.asc" "$artifact" >/dev/null 2>&1
-
-tar -xzf "$artifact" -C "$tmp" \
-  "$artifact_name/scripts/hasp-release-common.sh" \
-  "$artifact_name/scripts/hasp-verify-release.sh" \
-  "$artifact_name/scripts/release-public-key-trust.sh" \
-  "$artifact_name/scripts/release-trusted-gpg-fingerprints.txt"
-
-artifact_root="$tmp/$artifact_name"
-artifact_verifier="$artifact_root/scripts/hasp-verify-release.sh"
-if [ ! -x "$artifact_verifier" ]; then
-  echo "release verifier not found in release artifact" >&2
+if ! gpgv --keyring "$release_trust_keyring_path" "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" >/dev/null 2>&1; then
+  echo "failed to verify release checksums signature" >&2
   exit 1
 fi
-HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprints" bash "$artifact_verifier" "$artifact" >/dev/null
+
+checksum_paths="$tmp/SHA256SUMS.paths"
+awk 'NF >= 2 { print $2 }' "$tmp/SHA256SUMS" >"$checksum_paths"
+while IFS= read -r release_path; do
+  [ -n "$release_path" ] || continue
+  case "$release_path" in
+    .|..|/*|./*|../*|*/../*|*/..|*"//"*|*\\*)
+      echo "unsafe release checksum path: $release_path" >&2
+      exit 1
+      ;;
+  esac
+  case "$release_path" in
+    SHA256SUMS|SHA256SUMS.asc|*.tar.gz|"$artifact_name"/*|hasp_*/bin/hasp|*/*)
+      continue
+      ;;
+  esac
+  curl -fsSL "$tag_base/$release_path" -o "$tmp/$release_path"
+done <"$checksum_paths"
+
+gpgv --keyring "$release_trust_keyring_path" "$tmp/$artifact_name.tar.gz.asc" "$artifact" >/dev/null 2>&1
+
+artifact_root="$tmp/$artifact_name"
+python3 - "$tmp/SHA256SUMS" "$artifact" "$artifact_name" <<'PY'
+import hashlib
+import pathlib
+import sys
+import tarfile
+
+checksums_path = pathlib.Path(sys.argv[1])
+artifact_path = pathlib.Path(sys.argv[2])
+artifact_name = sys.argv[3]
+dist_dir = checksums_path.parent
+
+checksums = {}
+with checksums_path.open("r", encoding="utf-8") as handle:
+    for line in handle:
+        parts = line.strip().split()
+        if len(parts) < 2:
+            continue
+        digest, relative_path = parts[0], parts[1]
+        if len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
+            raise SystemExit(f"invalid release checksum for {relative_path}")
+        checksums[relative_path] = digest.lower()
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def require_checksum(relative_path, target):
+    expected = checksums.get(relative_path)
+    if expected is None:
+        raise SystemExit(f"release checksum entry missing: {relative_path}")
+    if not target.is_file():
+        raise SystemExit(f"release checksum target missing: {relative_path}")
+    if sha256(target) != expected:
+        raise SystemExit(f"release checksum mismatch for {relative_path}")
+
+
+require_checksum(f"{artifact_name}.tar.gz", artifact_path)
+for relative_path in sorted(checksums):
+    if relative_path in {"SHA256SUMS", "SHA256SUMS.asc", f"{artifact_name}.tar.gz"}:
+        continue
+    if relative_path == f"{artifact_name}/bin/hasp":
+        continue
+    if relative_path.startswith(f"{artifact_name}/"):
+        continue
+    if relative_path.endswith(".tar.gz"):
+        continue
+    if relative_path.startswith("hasp_") and relative_path.endswith("/bin/hasp"):
+        continue
+    if "/" in relative_path:
+        continue
+    require_checksum(relative_path, dist_dir / relative_path)
+
+with tarfile.open(artifact_path, "r:gz") as archive:
+    members = archive.getmembers()
+    names = {member.name for member in members}
+    for member in members:
+        name = member.name
+        parts = pathlib.PurePosixPath(name).parts
+        if (
+            not parts
+            or parts[0] != artifact_name
+            or any(part in {"", ".", ".."} for part in parts)
+            or name.startswith("/")
+            or "//" in name
+        ):
+            raise SystemExit(f"unsafe archive entry: {name}")
+        if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
+            raise SystemExit("release archive contains unsupported link or special entries")
+    for required in (
+        "RELEASE_MANIFEST",
+        "CODE_SIGNING_STATUS.json",
+        "REPRODUCIBLE_BUILD.json",
+        "sbom.spdx.json",
+        "slsa-provenance.json",
+        "bin/hasp",
+    ):
+        if f"{artifact_name}/{required}" not in names:
+            raise SystemExit(f"release file missing from artifact: {required}")
+PY
 
 tar -xzf "$artifact" -C "$tmp" "$artifact_name/bin/hasp"
 hasp_bin="$artifact_root/bin/hasp"
@@ -287,6 +382,34 @@ if [ ! -f "$hasp_bin" ]; then
   echo "hasp binary not found in release artifact" >&2
   exit 1
 fi
+if ! gpgv --keyring "$release_trust_keyring_path" "$tmp/${artifact_name}_bin.asc" "$hasp_bin" >/dev/null 2>&1; then
+  echo "failed to verify HASP binary signature" >&2
+  exit 1
+fi
+python3 - "$tmp/SHA256SUMS" "$hasp_bin" "$artifact_name/bin/hasp" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+checksums_path = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+relative_path = sys.argv[3]
+expected = ""
+with checksums_path.open("r", encoding="utf-8") as handle:
+    for line in handle:
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[1] == relative_path:
+            expected = parts[0].lower()
+            break
+if not expected:
+    raise SystemExit(f"release checksum entry missing: {relative_path}")
+digest = hashlib.sha256()
+with target.open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+if digest.hexdigest() != expected:
+    raise SystemExit(f"release checksum mismatch for {relative_path}")
+PY
 
 if [ -L "$bin_dir" ]; then
   echo "install directory must not be a symlink: $bin_dir" >&2

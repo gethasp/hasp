@@ -202,23 +202,35 @@ EOF
   /bin/cp -f "$ROOT/scripts/hasp-release-common.sh" "$build_dir/$artifact_name/scripts/hasp-release-common.sh"
   /bin/cp -f "$ROOT/scripts/hasp-verify-release.sh" "$build_dir/$artifact_name/scripts/hasp-verify-release.sh"
   /bin/cp -f "$ROOT/scripts/release-public-key-trust.sh" "$build_dir/$artifact_name/scripts/release-public-key-trust.sh"
-  /bin/cp -f "$ROOT/scripts/release-trusted-gpg-fingerprints.txt" "$build_dir/$artifact_name/scripts/release-trusted-gpg-fingerprints.txt"
+  if [[ "$archive_mode" != "missing-trust-file" ]]; then
+    /bin/cp -f "$ROOT/scripts/release-trusted-gpg-fingerprints.txt" "$build_dir/$artifact_name/scripts/release-trusted-gpg-fingerprints.txt"
+  fi
   chmod +x "$build_dir/$artifact_name/scripts/hasp-release-common.sh" "$build_dir/$artifact_name/scripts/hasp-verify-release.sh" "$build_dir/$artifact_name/scripts/release-public-key-trust.sh"
-  tar -C "$build_dir" -czf "$tag_dir/$artifact_name.tar.gz" "$artifact_name"
+  COPYFILE_DISABLE=1 tar -C "$build_dir" -czf "$tag_dir/$artifact_name.tar.gz" "$artifact_name"
   /bin/cp -f "$public_key_path" "$tag_dir/hasp-release-public-key.asc"
-  {
-    printf '%s  %s\n' "$(sha256 "$tag_dir/$artifact_name.tar.gz")" "$artifact_name.tar.gz"
-    printf '%s  %s\n' "$(sha256 "$build_dir/$artifact_name/bin/hasp")" "$artifact_name/bin/hasp"
-  } >"$tag_dir/SHA256SUMS"
-  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/SHA256SUMS.asc" "$tag_dir/SHA256SUMS"
-  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/$artifact_name.tar.gz.asc" "$tag_dir/$artifact_name.tar.gz"
-  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/${artifact_name}_bin.asc" "$build_dir/$artifact_name/bin/hasp"
   metadata_json="$(
     cat <<EOF
 {"version":"$version","release_sequence":$(release_sequence "$version"),"issued_at":"2026-04-30T00:00:00Z","expires_at":"2999-01-01T00:00:00Z","tag_base_url":"$base_url/v$version","artifacts":[{"os":"$os_name","arch":"$arch_name","name":"$artifact_name"}]}
 EOF
   )"
   write_metadata_bundle "$signer_home" "$public_key_path" "$server_root" "$metadata_json"
+  /bin/cp -f "$server_root/latest/release-metadata.json" "$tag_dir/release-metadata.json"
+  /bin/cp -f "$server_root/latest/release-metadata.json.asc" "$tag_dir/release-metadata.json.asc"
+  printf 'test release key bundle\n' >"$tag_dir/KEYS-v$version"
+  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/KEYS-v$version.sig" "$tag_dir/KEYS-v$version"
+  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/$artifact_name.tar.gz.asc" "$tag_dir/$artifact_name.tar.gz"
+  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/${artifact_name}_bin.asc" "$build_dir/$artifact_name/bin/hasp"
+  /bin/cp -f "$tag_dir/$artifact_name.tar.gz.asc" "$tag_dir/hasp-v$version-$os_name-$arch_name.tar.gz.sig"
+  {
+    printf '%s  %s\n' "$(sha256 "$tag_dir/$artifact_name.tar.gz")" "$artifact_name.tar.gz"
+    printf '%s  %s\n' "$(sha256 "$build_dir/$artifact_name/bin/hasp")" "$artifact_name/bin/hasp"
+    printf '%s  %s\n' "$(sha256 "$tag_dir/KEYS-v$version")" "KEYS-v$version"
+    printf '%s  %s\n' "$(sha256 "$tag_dir/KEYS-v$version.sig")" "KEYS-v$version.sig"
+    printf '%s  %s\n' "$(sha256 "$tag_dir/hasp-v$version-$os_name-$arch_name.tar.gz.sig")" "hasp-v$version-$os_name-$arch_name.tar.gz.sig"
+    printf '%s  %s\n' "$(sha256 "$tag_dir/release-metadata.json")" "release-metadata.json"
+    printf '%s  %s\n' "$(sha256 "$tag_dir/release-metadata.json.asc")" "release-metadata.json.asc"
+  } >"$tag_dir/SHA256SUMS"
+  GNUPGHOME="$signer_home" gpg --batch --yes --armor --detach-sign --output "$tag_dir/SHA256SUMS.asc" "$tag_dir/SHA256SUMS"
 }
 
 assert_installer_fails() {
@@ -372,6 +384,17 @@ hardlink_archive_log="$(assert_installer_fails "hardlink archive entry" env \
   HASP_INSTALL_DIR="$tmp_dir/hardlink-archive-bin" \
   sh "$INSTALLER")"
 assert_log_matches "$hardlink_archive_log" 'release archive contains unsupported link or special entries|unsafe archive link entry'
+write_release "$trusted_home" "$trusted_public" "$server_root" "$base_url" "$version" "$os_name" "$arch_name"
+
+write_release "$trusted_home" "$trusted_public" "$server_root" "$base_url" "$version" "$os_name" "$arch_name" missing-trust-file
+missing_trust_bin_dir="$tmp_dir/missing-trust-file-bin"
+env \
+  HASP_ALLOW_LOCAL_INSTALL_TESTS=1 \
+  HASP_DOWNLOAD_HOST="$base_url" \
+  HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprint" \
+  HASP_INSTALL_DIR="$missing_trust_bin_dir" \
+  sh "$INSTALLER" >/dev/null
+test -x "$missing_trust_bin_dir/hasp"
 write_release "$trusted_home" "$trusted_public" "$server_root" "$base_url" "$version" "$os_name" "$arch_name"
 
 default_trust_root="$(tr -d '[:space:]' <"$ROOT/scripts/release-trusted-gpg-fingerprints.txt")"

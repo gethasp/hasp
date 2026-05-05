@@ -55,6 +55,39 @@ func TestProofCommandReportsPassWhenSecretIsBound(t *testing.T) {
 	}
 }
 
+func TestProofCommandAcceptsProjectAliasReference(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	starter := newDaemonTestStarter(t)
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"set", "--name", "API_TOKEN", "--value", "sk-proof-fixture"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot, "--alias", "secret_01=API_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("project bind: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := proofCommand(context.Background(), []string{
+		"--project-root", projectRoot,
+		"--secret", "secret_01",
+	}, &stdout, io.Discard, starter); err != nil {
+		t.Fatalf("proof: %v\nstdout=%s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "PASS") {
+		t.Fatalf("expected PASS in stdout, got %q", stdout.String())
+	}
+}
+
 func TestProofCommandFailsWhenSecretMissing(t *testing.T) {
 	lockAppSeams(t)
 	homeDir := t.TempDir()

@@ -35,10 +35,11 @@ func proofCommand(ctx context.Context, args []string, stdout io.Writer, stderr i
 		return fmt.Errorf("--project-root: %w", err)
 	}
 	*projectRoot = expandedRoot
+	reference := strings.TrimSpace(*secret)
 
 	runArgs := []string{
 		"--project-root", *projectRoot,
-		"--env", "HASP_SETUP_PROOF=@" + *secret,
+		"--env", "HASP_SETUP_PROOF=" + reference,
 		"--grant-project", "window",
 		"--grant-secret", "session",
 		"--grant-window", "15m",

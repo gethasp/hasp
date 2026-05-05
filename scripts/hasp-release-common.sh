@@ -192,6 +192,25 @@ release_stage_tarball_with_sidecars() {
     /bin/cp -f "$source_dist/$required" "$stage_dir/$required"
   done
 
+  local checksum_relative=""
+  while read -r _ checksum_relative _; do
+    [[ -n "$checksum_relative" ]] || continue
+    case "$checksum_relative" in
+      .|..|/*|./*|../*|*/../*|*/..|*"//"*|*\\*)
+        printf 'unsafe checksum sidecar path: %s\n' "$checksum_relative" >&2
+        return 1
+        ;;
+    esac
+    case "$checksum_relative" in
+      SHA256SUMS|SHA256SUMS.asc|*.tar.gz|"$artifact_name"/*|hasp_*/bin/hasp|*/*)
+        continue
+        ;;
+    esac
+    if [[ -f "$source_dist/$checksum_relative" ]]; then
+      /bin/cp -f "$source_dist/$checksum_relative" "$stage_dir/$checksum_relative"
+    fi
+  done <"$source_dist/SHA256SUMS"
+
   printf '%s\n' "$staged_tarball"
 }
 
