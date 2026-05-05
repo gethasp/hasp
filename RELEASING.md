@@ -67,6 +67,16 @@ pnpm -C apps/web docs:snapshot -- vX.Y.Z --force
 make release-gate
 ```
 
+Canonical-source maintainers should use the guarded release driver rather than
+manually repeating the export, tag, public workflow, install-script, and
+Homebrew checks. The driver pushes the private source, tags both repositories,
+then waits for R2, the Download Worker, the hosted installer, and the
+published Homebrew tap to verify live:
+
+```bash
+make cut-public-release TAG=vX.Y.Z
+```
+
 The public repository starts at v1.0.0. Do not add pre-v1 docs snapshots,
 release notes, or tags to the public repository. Historical development notes
 belong only in the canonical source repository.
@@ -94,7 +104,9 @@ before exposing signing secrets, produces one signed release set, and uploads
 that set as the `public-release` artifact. The release-smoke matrix downloads
 that artifact and validates the exact bytes that later go to R2, Homebrew, and
 GitHub Releases. Homebrew installation is intentionally verified only after R2
-publication, so generated formulas never point at unpublished artifact URLs.
+publication, and the live verifier polls the published tap before fetching or
+installing from it, so generated formulas never point at unpublished artifact
+URLs.
 
 If the release signing key is passphrase-protected, the workflow supplies the
 passphrase through `HASP_RELEASE_GPG_PASSPHRASE` and the signing scripts use

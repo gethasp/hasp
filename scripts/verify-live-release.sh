@@ -157,6 +157,28 @@ check_url_head() {
   curl -fsSI "$url" >/dev/null
 }
 
+homebrew_tap_repo=""
+homebrew_formula=""
+check_homebrew_tap() {
+  if HOMEBREW_NO_AUTO_UPDATE=1 brew tap | grep -Fxq gethasp/tap; then
+    :
+  else
+    HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git >/dev/null || return 1
+  fi
+  homebrew_tap_repo="$(brew --repo gethasp/tap)"
+  if [[ -d "$homebrew_tap_repo/.git" ]]; then
+    git -C "$homebrew_tap_repo" fetch --quiet origin main || return 1
+    git -C "$homebrew_tap_repo" checkout --quiet origin/main || return 1
+  fi
+  homebrew_formula="$homebrew_tap_repo/Formula/hasp.rb"
+  if [[ ! -f "$homebrew_formula" ]]; then
+    printf 'published Homebrew formula not found: %s\n' "$homebrew_formula" >&2
+    return 1
+  fi
+  grep -F "version \"${version}\"" "$homebrew_formula" >/dev/null || return 1
+  grep -F "downloads.gethasp.com/hasp/releases/${release_tag}/" "$homebrew_formula" >/dev/null || return 1
+}
+
 wait_for() {
   local label="$1"
   shift
@@ -203,23 +225,7 @@ case "$brew_mode" in
     ;;
   fetch|install)
     need brew
-    if HOMEBREW_NO_AUTO_UPDATE=1 brew tap | grep -Fxq gethasp/tap; then
-      :
-    else
-      HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git >/dev/null
-    fi
-    tap_repo="$(brew --repo gethasp/tap)"
-    if [[ -d "$tap_repo/.git" ]]; then
-      git -C "$tap_repo" fetch --quiet origin main
-      git -C "$tap_repo" checkout --quiet origin/main
-    fi
-    formula="$tap_repo/Formula/hasp.rb"
-    if [[ ! -f "$formula" ]]; then
-      printf 'published Homebrew formula not found: %s\n' "$formula" >&2
-      exit 1
-    fi
-    grep -F "version \"${version}\"" "$formula" >/dev/null
-    grep -F "downloads.gethasp.com/hasp/releases/${release_tag}/" "$formula" >/dev/null
+    wait_for "Homebrew tap for $release_tag" check_homebrew_tap
     HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew fetch --force --formula gethasp/tap/hasp >/dev/null
     if [[ "$brew_mode" == "install" ]]; then
       if brew list --formula --versions hasp >/dev/null 2>&1; then
