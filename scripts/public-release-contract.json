@@ -132,15 +132,14 @@
         "publish-homebrew-tap": {
           "needs_include": ["deploy-download-worker", "homebrew-formula-smoke"]
         },
-        "published-homebrew-tap-smoke": {
+        "published-release-live-smoke": {
           "needs_include": ["publish-homebrew-tap"],
           "run_contains": [
-            "brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git",
-            "brew install gethasp/tap/hasp"
+            "bash ./scripts/verify-live-release.sh --skip-github-release --brew-install \"${GITHUB_REF_NAME}\""
           ]
         },
         "github-release": {
-          "needs_include": ["published-homebrew-tap-smoke"]
+          "needs_include": ["published-release-live-smoke"]
         }
       },
       "step_names_in_order": [

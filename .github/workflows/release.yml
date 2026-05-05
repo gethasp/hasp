@@ -66,8 +66,6 @@ jobs:
         if: matrix.goos == 'darwin' && matrix.goarch == 'arm64'
         run: make coverage-audit-platform
       - name: Smoke release artifact
-        env:
-          HASP_RUN_BREW_INSTALL_SMOKE: ${{ matrix.goos == 'darwin' && '1' || '0' }}
         run: bash ./scripts/release-smoke.sh --target "${{ matrix.goos }}/${{ matrix.goarch }}" --release-dir "dist/public-release/${GITHUB_REF_NAME}"
 
   build-public-release:
@@ -315,22 +313,21 @@ jobs:
           fi
           bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
 
-  published-homebrew-tap-smoke:
+  published-release-live-smoke:
     needs: publish-homebrew-tap
     runs-on: macos-15
     steps:
-      - name: Smoke published Homebrew tap
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Smoke published install paths
         run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 brew tap gethasp/tap https://github.com/gethasp/homebrew-tap.git
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install gethasp/tap/hasp
-          hasp version
+          bash ./scripts/verify-live-release.sh --skip-github-release --brew-install "${GITHUB_REF_NAME}"
 
   github-release:
     needs:
       - publish-r2
       - deploy-download-worker
       - publish-homebrew-tap
-      - published-homebrew-tap-smoke
+      - published-release-live-smoke
     runs-on: ubicloud-standard-2
     permissions:
       contents: write

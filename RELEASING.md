@@ -41,7 +41,11 @@ git push origin v1.0.0
    `scripts/release-smoke.sh --release-dir ...`. Smoke-only jobs use
    `scripts/bootstrap_go_tools.sh release-smoke`; the full `verify` bootstrap
    remains reserved for release-gate and build jobs.
-8. the public release secrets are available:
+8. the published live smoke passes. The release workflow checks the hosted
+   download metadata, runs `https://gethasp.com/install.sh` into a temporary
+   install directory, and installs from the published Homebrew tap before the
+   GitHub Release is created.
+9. the public release secrets are available:
    - base64-encoded GPG signing key material
    - `HASP_RELEASE_GPG_PASSPHRASE` if that key is passphrase-protected
    - `HASP_UPGRADE_TRUST_ROOTS_HEX` and `HASP_UPGRADE_SIGNING_KEY_B64`
@@ -89,7 +93,8 @@ publication. `build-public-release` runs the full public `make release-gate`
 before exposing signing secrets, produces one signed release set, and uploads
 that set as the `public-release` artifact. The release-smoke matrix downloads
 that artifact and validates the exact bytes that later go to R2, Homebrew, and
-GitHub Releases.
+GitHub Releases. Homebrew installation is intentionally verified only after R2
+publication, so generated formulas never point at unpublished artifact URLs.
 
 If the release signing key is passphrase-protected, the workflow supplies the
 passphrase through `HASP_RELEASE_GPG_PASSPHRASE` and the signing scripts use
