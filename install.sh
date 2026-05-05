@@ -7,6 +7,51 @@ trusted_fingerprints="${HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS:-1519745EA1129CF21
 min_release_version="${HASP_RELEASE_MIN_VERSION:-1.0.0}"
 bin_dir="${HASP_INSTALL_DIR:-$HOME/.local/bin}"
 
+progress() {
+  printf '==> %s\n' "$1"
+}
+
+has_tty() {
+  ( : </dev/tty ) 2>/dev/null && ( : >/dev/tty ) 2>/dev/null
+}
+
+should_start_setup() {
+  case "${HASP_INSTALL_RUN_SETUP:-}" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]) return 0 ;;
+    0|[Nn]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]) return 1 ;;
+    "") ;;
+    *)
+      printf 'ignoring invalid HASP_INSTALL_RUN_SETUP value: %s\n' "$HASP_INSTALL_RUN_SETUP" >&2
+      return 1
+      ;;
+  esac
+
+  if ! has_tty; then
+    return 1
+  fi
+
+  printf 'Start hasp setup now? [Y/n] ' >/dev/tty
+  IFS= read -r setup_answer </dev/tty || setup_answer=""
+  case "$setup_answer" in
+    ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_setup_if_requested() {
+  if should_start_setup; then
+    progress "Starting hasp setup"
+    if has_tty; then
+      "$bin_dir/hasp" setup </dev/tty
+    else
+      "$bin_dir/hasp" setup
+    fi
+    return 0
+  fi
+
+  echo "next: hasp setup"
+}
+
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "$1 is required to install HASP" >&2
@@ -14,6 +59,7 @@ need() {
   fi
 }
 
+progress "Checking installer prerequisites"
 need awk
 need bash
 need curl
@@ -36,6 +82,7 @@ case "$arch" in
   x86_64|amd64) arch="amd64" ;;
   *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
+progress "Detected $os/$arch"
 
 make_temp_dir() {
   temp_parent="${HASP_INSTALL_TMPDIR:-${TMPDIR:-}}"
@@ -47,6 +94,7 @@ make_temp_dir() {
   mktemp -d
 }
 
+progress "Preparing temporary workspace"
 tmp="$(make_temp_dir)"
 gpg_home="$tmp/gnupg"
 cleanup() {
@@ -71,6 +119,7 @@ fetch_release_metadata() {
 }
 
 metadata_source=primary
+progress "Fetching signed release metadata"
 if ! fetch_release_metadata "$host/api/release-metadata" "$host/api/release-metadata.asc" "$host/api/release-public-key.asc" primary; then
   if ! fetch_release_metadata "$mirror/latest/release-metadata.json" "$mirror/latest/release-metadata.json.asc" "$mirror/latest/hasp-release-public-key.asc" fallback; then
     echo "failed to fetch signed HASP release metadata from $host/api/release-metadata or $mirror/latest/release-metadata.json" >&2
@@ -179,7 +228,11 @@ if ! verify_release_metadata_bundle; then
     exit 1
   fi
 fi
+progress "Verified release metadata"
 
+version=""
+tag_base=""
+artifact_name=""
 metadata_vars="$(
   python3 - "$metadata" "$os" "$arch" "$mirror" "$min_release_version" <<'PY'
 from datetime import datetime, timezone
@@ -255,16 +308,17 @@ print(f"artifact_name={shlex.quote(artifact_name)}")
 PY
 )" || exit 1
 eval "$metadata_vars"
+progress "Selected HASP $version for $os/$arch"
 
-# shellcheck disable=SC2154
 artifact="$tmp/$artifact_name.tar.gz"
-# shellcheck disable=SC2154
+progress "Downloading release artifacts"
 curl -fsSL "$tag_base/$artifact_name.tar.gz" -o "$artifact"
 curl -fsSL "$tag_base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 curl -fsSL "$tag_base/SHA256SUMS.asc" -o "$tmp/SHA256SUMS.asc"
 curl -fsSL "$tag_base/$artifact_name.tar.gz.asc" -o "$tmp/$artifact_name.tar.gz.asc"
 curl -fsSL "$tag_base/${artifact_name}_bin.asc" -o "$tmp/${artifact_name}_bin.asc"
 
+progress "Verifying release checksums and signatures"
 if ! gpgv --keyring "$release_trust_keyring_path" "$tmp/SHA256SUMS.asc" "$tmp/SHA256SUMS" >/dev/null 2>&1; then
   echo "failed to verify release checksums signature" >&2
   exit 1
@@ -291,6 +345,7 @@ done <"$checksum_paths"
 gpgv --keyring "$release_trust_keyring_path" "$tmp/$artifact_name.tar.gz.asc" "$artifact" >/dev/null 2>&1
 
 artifact_root="$tmp/$artifact_name"
+progress "Checking release archive"
 python3 - "$tmp/SHA256SUMS" "$artifact" "$artifact_name" <<'PY'
 import hashlib
 import pathlib
@@ -382,6 +437,7 @@ if [ ! -f "$hasp_bin" ]; then
   echo "hasp binary not found in release artifact" >&2
   exit 1
 fi
+progress "Verifying HASP binary"
 if ! gpgv --keyring "$release_trust_keyring_path" "$tmp/${artifact_name}_bin.asc" "$hasp_bin" >/dev/null 2>&1; then
   echo "failed to verify HASP binary signature" >&2
   exit 1
@@ -424,6 +480,7 @@ if [ -e "$bin_dir/hasp" ] && [ ! -f "$bin_dir/hasp" ]; then
   echo "refusing to replace non-file install target: $bin_dir/hasp" >&2
   exit 1
 fi
+progress "Installing to $bin_dir/hasp"
 python3 - "$hasp_bin" "$bin_dir" <<'PY'
 import os
 import secrets
@@ -491,4 +548,10 @@ finally:
 PY
 
 echo "installed hasp to $bin_dir/hasp"
-echo "next: hasp setup"
+installed_version="$("$bin_dir/hasp" version 2>/dev/null || true)"
+if [ -n "$installed_version" ]; then
+  printf 'version: %s\n' "$installed_version"
+else
+  printf 'version: %s\n' "$version"
+fi
+run_setup_if_requested

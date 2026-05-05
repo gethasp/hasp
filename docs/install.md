@@ -20,6 +20,23 @@ After install, continue with [After Install](after-homebrew.md):
 hasp setup
 ```
 
+## Install with the script
+
+Use the hosted script when you want the current signed release without adding
+the Homebrew tap:
+
+```bash
+curl -fsSL https://gethasp.com/install.sh | sh
+```
+
+The script prints each install phase, verifies signed release metadata and
+artifacts, installs `hasp` to `$HOME/.local/bin/hasp` by default, then prints
+the installed version. In an interactive terminal it asks whether to start
+`hasp setup` immediately; the default answer is yes.
+
+For automation, set `HASP_INSTALL_RUN_SETUP=0` to skip the prompt or
+`HASP_INSTALL_RUN_SETUP=1` to start setup without asking.
+
 ## Upgrade with Homebrew
 
 ```bash

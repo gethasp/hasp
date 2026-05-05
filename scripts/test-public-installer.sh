@@ -176,7 +176,11 @@ write_release() {
   else
     cat >"$build_dir/$artifact_name/bin/hasp" <<'SH'
 #!/usr/bin/env sh
-echo hasp-test
+case "${1:-}" in
+  version) echo hasp-test ;;
+  setup) echo hasp-setup-test ;;
+  *) echo hasp-test ;;
+esac
 SH
     chmod +x "$build_dir/$artifact_name/bin/hasp"
     if [[ "$archive_mode" == "hardlink" ]]; then
@@ -458,14 +462,39 @@ assert_log_contains "$symlink_log" 'refusing to install through symlink'
 grep -qx 'sentinel' "$victim"
 
 /bin/rm -f "$bin_dir/hasp"
+install_log="$tmp_dir/install-success.log"
 env \
   HASP_ALLOW_LOCAL_INSTALL_TESTS=1 \
   HASP_DOWNLOAD_HOST="$base_url" \
   HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprint" \
   HASP_INSTALL_DIR="$bin_dir" \
-  sh "$INSTALLER" >/dev/null
+  HASP_INSTALL_RUN_SETUP=0 \
+  sh "$INSTALLER" >"$install_log"
 test -x "$bin_dir/hasp"
 test "$("$bin_dir/hasp")" = "hasp-test"
+assert_log_contains "$install_log" '==> Checking installer prerequisites'
+assert_log_contains "$install_log" "==> Selected HASP $version for $os_name/$arch_name"
+assert_log_contains "$install_log" "installed hasp to $bin_dir/hasp"
+assert_log_contains "$install_log" 'version: hasp-test'
+assert_log_contains "$install_log" 'next: hasp setup'
+
+setup_bin_dir="$tmp_dir/setup-bin"
+setup_log="$tmp_dir/install-start-setup.log"
+env \
+  HASP_ALLOW_LOCAL_INSTALL_TESTS=1 \
+  HASP_DOWNLOAD_HOST="$base_url" \
+  HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprint" \
+  HASP_INSTALL_DIR="$setup_bin_dir" \
+  HASP_INSTALL_RUN_SETUP=1 \
+  sh "$INSTALLER" >"$setup_log"
+test -x "$setup_bin_dir/hasp"
+assert_log_contains "$setup_log" '==> Starting hasp setup'
+assert_log_contains "$setup_log" 'hasp-setup-test'
+if grep -q 'next: hasp setup' "$setup_log"; then
+  printf 'installer printed next-step setup guidance after starting setup\n' >&2
+  cat "$setup_log" >&2
+  exit 1
+fi
 
 fallback_bin_dir="$tmp_dir/fallback-bin"
 /bin/rm -f "$server_root/api/release-metadata" "$server_root/api/release-metadata.asc" "$server_root/api/release-public-key.asc"
