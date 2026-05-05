@@ -58,12 +58,15 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+release_sign_bin="$tmp_extract/release-sign"
+
+(
+  cd "$repo_root/apps/server"
+  go build -trimpath -buildvcs=false -o "$release_sign_bin" ./cmd/release-sign
+)
 
 release_sign_tool() {
-  (
-    cd "$repo_root/apps/server"
-    go run ./cmd/release-sign "$@"
-  )
+  "$release_sign_bin" "$@"
 }
 
 resolve_upgrade_signing_key() {

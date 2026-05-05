@@ -397,6 +397,48 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 	})
 
 	t.Run("mcp dependency errors", func(t *testing.T) {
+		t.Run("missing consumer falls back to transient agent identity", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.StoreGetAgent = func(*store.Handle, string) (store.AgentConsumer, error) {
+				return store.AgentConsumer{}, store.ErrConsumerNotFound
+			}
+			var built store.AgentConsumer
+			deps.AgentBuildExecutionEnv = func(_ context.Context, _ *store.Handle, consumer store.AgentConsumer, _ Starter, _ string) ([]string, error) {
+				built = consumer
+				return []string{secrettypes.EnvSessionToken + "=token"}, nil
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex-cli"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp fallback: %v", err)
+			}
+			if built.Name != "codex-cli" || built.AgentID != "codex-cli" || built.ConfigPath != "/tmp/codex.toml" {
+				t.Fatalf("unexpected fallback consumer: %+v", built)
+			}
+			if out.String() != "ok" {
+				t.Fatalf("expected MCP server to run after fallback, got %q", out.String())
+			}
+		})
+
+		t.Run("missing consumer fallback tolerates absent config paths dependency", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.AgentConfigPaths = nil
+			deps.StoreGetAgent = func(*store.Handle, string) (store.AgentConsumer, error) {
+				return store.AgentConsumer{}, store.ErrConsumerNotFound
+			}
+			var built store.AgentConsumer
+			deps.AgentBuildExecutionEnv = func(_ context.Context, _ *store.Handle, consumer store.AgentConsumer, _ Starter, _ string) ([]string, error) {
+				built = consumer
+				return []string{secrettypes.EnvSessionToken + "=token"}, nil
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex-cli"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp fallback without config paths: %v", err)
+			}
+			if built.Name != "codex-cli" || built.AgentID != "codex-cli" || built.ConfigPath != "" {
+				t.Fatalf("unexpected fallback consumer without config paths: %+v", built)
+			}
+		})
+
 		cases := []struct {
 			name   string
 			mutate func(*Deps)

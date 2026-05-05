@@ -301,6 +301,16 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err != nil {
 		return setupSummary{}, err
 	}
+	for _, outcome := range agentOutcomes {
+		if _, err := storeUpsertAgentFn(handle, store.AgentConsumer{
+			Name:        outcome.ID,
+			AgentID:     outcome.ID,
+			ProjectRoot: projectRoot,
+			ConfigPath:  outcome.ConfigPath,
+		}); err != nil {
+			return setupSummary{}, err
+		}
+	}
 
 	verification, err := setupVerifyHarnessFn(ctx, selectedAgents)
 	if err != nil {

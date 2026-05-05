@@ -23,6 +23,17 @@ binary_sig_path="$release_root/${artifact_name}_bin.asc"
 fingerprint_path="$release_root/RELEASE-SIGNING-FINGERPRINT.txt"
 formula_dir="$release_root/Formula"
 formula_path="$formula_dir/hasp.rb"
+unsigned="${HASP_PACKAGE_RELEASE_UNSIGNED:-0}"
+release_build_date="${HASP_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+case "$unsigned" in
+  0|1) ;;
+  *)
+    printf 'HASP_PACKAGE_RELEASE_UNSIGNED must be 0 or 1\n' >&2
+    exit 2
+    ;;
+esac
+export HASP_BUILD_DATE="$release_build_date"
 
 verify_upgrade_trust_roots() {
   if [[ "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" == "1" ]]; then
@@ -59,8 +70,7 @@ fi
 /bin/rm -rf "$artifact_dir" "$tarball" "$checksum_path" "$checksum_sig_path" "$public_key_path" "$tarball_sig_path" "$binary_sig_path" "$fingerprint_path" "$formula_dir"
 /bin/mkdir -p "$artifact_dir/bin" "$artifact_dir/agent-profiles" "$artifact_dir/profiles" "$artifact_dir/scripts" "$formula_dir"
 
-bash ./scripts/build.sh
-/bin/cp -f "$repo_root/bin/hasp" "$artifact_dir/bin/hasp"
+bash ./scripts/build.sh -o "$artifact_dir/bin/hasp"
 verify_upgrade_trust_roots
 /bin/cp -f "$repo_root/LICENSE" "$artifact_dir/LICENSE"
 bash ./scripts/generate-supply-chain-artifacts.sh "$artifact_dir" >/dev/null
@@ -194,6 +204,11 @@ write_release_manifest() {
 
 write_release_manifest
 release_tar -C "$release_root" -czf "$tarball" "$artifact_name"
+
+if [[ "$unsigned" == "1" ]]; then
+  printf '%s\n' "$tarball"
+  exit 0
+fi
 
 bash "$repo_root/scripts/hasp-sign-release.sh" "$artifact_dir" "$tarball" >/dev/null
 bash "$repo_root/scripts/render-homebrew-formula.sh" "${HASP_RELEASE_URL:-file://$tarball}" "$(release_sha256 "$tarball")" "$formula_path" >/dev/null

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
+	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 func agentMCPHandler(ctx context.Context, deps Deps, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -26,7 +27,18 @@ func agentMCPHandler(ctx context.Context, deps Deps, args []string, stdin io.Rea
 		return err
 	}
 	consumer, err := deps.StoreGetAgent(handle, name)
-	if err != nil {
+	if errors.Is(err, store.ErrConsumerNotFound) {
+		consumer = store.AgentConsumer{
+			Name:        name,
+			AgentID:     name,
+			ProjectRoot: strings.TrimSpace(os.Getenv(secrettypes.EnvAgentProjectRoot)),
+		}
+		if deps.AgentConfigPaths != nil {
+			if paths := deps.AgentConfigPaths(); paths != nil {
+				consumer.ConfigPath = paths[name]
+			}
+		}
+	} else if err != nil {
 		return err
 	}
 	starter, err := deps.AgentNewStarter()

@@ -55,6 +55,18 @@ if grep -Fq "\$repo_root/dist/release" "$ROOT/scripts/package-public-release.sh"
   exit 1
 fi
 grep -Fq "HASP_RELEASE_ROOT=\"\$target_release_root\"" "$ROOT/scripts/package-public-release.sh"
+grep -Fq "HASP_PACKAGE_RELEASE_UNSIGNED=1" "$ROOT/scripts/package-public-release.sh"
+# shellcheck disable=SC2016
+grep -Fq 'bash ./scripts/build.sh -o "$artifact_dir/bin/hasp"' "$ROOT/scripts/package-release.sh"
+# shellcheck disable=SC2016
+if grep -Fq '$repo_root/bin/hasp' "$ROOT/scripts/package-release.sh"; then
+  printf 'package-release must build directly into the artifact tree, not shared bin/hasp\n' >&2
+  exit 1
+fi
+if [[ -f "$ROOT/scripts/reproducible-build.sh" ]] && grep -Fq 'buildVersion=' "$ROOT/scripts/reproducible-build.sh"; then
+  printf 'reproducible-build must use the canonical runtime.Version ldflag path through build.sh\n' >&2
+  exit 1
+fi
 
 version="$(<"$ROOT/VERSION")"
 release_dir="$tmp_dir/public-release"

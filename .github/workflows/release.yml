@@ -84,11 +84,6 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 24
-      - name: Bootstrap web tools
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.33.2 --activate
-          pnpm -C apps/web install --frozen-lockfile
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Validate release tag matches VERSION
@@ -162,10 +157,7 @@ jobs:
         with:
           node-version: 24
       - name: Bootstrap web tools
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.33.2 --activate
-          pnpm -C apps/web install --frozen-lockfile
+        run: bash ./scripts/bootstrap_web_tools.sh
       - name: Rotate Worker release metadata guards
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
