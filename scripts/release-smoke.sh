@@ -8,11 +8,13 @@ source "$repo_root/scripts/hasp-release-common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: release-smoke.sh [--target <goos>/<goarch>]
+Usage: release-smoke.sh [--target <goos>/<goarch>] [--release-dir <dir>]
 
 Build, verify, install, and exercise a release tarball for the current host.
 When --target is provided, it must match the native host runtime because this
 smoke test executes the packaged binary.
+When --release-dir is provided, smoke the already-packaged tarball from that
+directory instead of building a throwaway local package.
 EOF
 }
 
@@ -20,6 +22,7 @@ host_goos="$(go env GOHOSTOS)"
 host_goarch="$(go env GOHOSTARCH)"
 target_goos="$host_goos"
 target_goarch="$host_goarch"
+existing_release_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,6 +33,14 @@ while [[ $# -gt 0 ]]; do
       fi
       target_goos="${2%%/*}"
       target_goarch="${2#*/}"
+      shift 2
+      ;;
+    --release-dir)
+      if [[ -z "${2:-}" ]]; then
+        usage >&2
+        exit 2
+      fi
+      existing_release_dir="$(release_abs_path "$2")"
       shift 2
       ;;
     -h|--help)
@@ -123,8 +134,21 @@ upgrade_trust_roots_hex="$(
   go run ./cmd/release-sign pubkey --key "$upgrade_signing_key"
 )"
 export HASP_UPGRADE_TRUST_ROOTS_HEX="$upgrade_trust_roots_hex"
-tarball="$(bash ./scripts/package-release.sh)"
-release_dir="$(cd "$(dirname "$tarball")" && pwd)"
+if [[ -n "$existing_release_dir" ]]; then
+  release_dir="$existing_release_dir"
+  tarball="$release_dir/hasp_${version}_${target_goos}_${target_goarch}.tar.gz"
+  if [[ ! -d "$release_dir" ]]; then
+    echo "release smoke directory not found: $release_dir" >&2
+    exit 1
+  fi
+  if [[ ! -f "$tarball" ]]; then
+    echo "release smoke tarball not found: $tarball" >&2
+    exit 1
+  fi
+else
+  tarball="$(bash ./scripts/package-release.sh)"
+  release_dir="$(cd "$(dirname "$tarball")" && pwd)"
+fi
 install_root="$(mktemp -d)"
 upgrade_root="$(mktemp -d)"
 temp_home="$(mktemp -d)"
@@ -353,7 +377,11 @@ fi
 if [[ "${HASP_RUN_BREW_INSTALL_SMOKE:-0}" == "1" ]] && command -v brew >/dev/null 2>&1; then
   bash ./scripts/homebrew-formula-smoke.sh "$release_dir/Formula/hasp.rb"
 fi
-grep -q "url \"file://$tarball\"" "$release_dir/Formula/hasp.rb"
+if [[ -n "$existing_release_dir" ]]; then
+  grep -q "hasp_${version}_${target_goos}_${target_goarch}.tar.gz" "$release_dir/Formula/hasp.rb"
+else
+  grep -q "url \"file://$tarball\"" "$release_dir/Formula/hasp.rb"
+fi
 grep -q "sha256 \"$(release_sha256 "$tarball")\"" "$release_dir/Formula/hasp.rb"
 
 protected_passphrase="release-smoke-gpg-passphrase"

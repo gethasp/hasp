@@ -35,9 +35,12 @@ git push origin v1.0.0
    The Go test wrapper defaults package parallelism to `-p 1` so daemon
    lifecycle tests stay process-bounded during release verification; only raise
    `HASP_GO_TEST_PACKAGE_PARALLELISM` for explicitly process-safe lanes.
-7. the release-smoke matrix passes on every supported target. Smoke-only jobs
-   use `scripts/bootstrap_go_tools.sh release-smoke`; the full `verify`
-   bootstrap remains reserved for release-gate and build jobs.
+7. the release-smoke matrix passes on every supported target. The workflow
+   builds the signed multi-target release set once, then each smoke job tests
+   the packaged tarball for its native target with
+   `scripts/release-smoke.sh --release-dir ...`. Smoke-only jobs use
+   `scripts/bootstrap_go_tools.sh release-smoke`; the full `verify` bootstrap
+   remains reserved for release-gate and build jobs.
 8. the public release secrets are available:
    - base64-encoded GPG signing key material
    - `HASP_RELEASE_GPG_PASSPHRASE` if that key is passphrase-protected
@@ -80,6 +83,13 @@ belong only in the canonical source repository.
 
 The public release workflow builds and packages from this public repo, then
 publishes immutable release assets.
+
+The release workflow intentionally separates expensive validation from
+publication. `build-public-release` runs the full public `make release-gate`
+before exposing signing secrets, produces one signed release set, and uploads
+that set as the `public-release` artifact. The release-smoke matrix downloads
+that artifact and validates the exact bytes that later go to R2, Homebrew, and
+GitHub Releases.
 
 If the release signing key is passphrase-protected, the workflow supplies the
 passphrase through `HASP_RELEASE_GPG_PASSPHRASE` and the signing scripts use
