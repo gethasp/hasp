@@ -89,8 +89,9 @@ upgrade_pubkey="$(
   export GNUPGHOME="$gpg_home"
   export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1
   export HASP_RELEASE_GPG_DEBUG_QUICK_RANDOM=1
-  export HASP_RELEASE_BASE_URL="https://github.com/gethasp/hasp/releases/download"
-  export HASP_UPGRADE_SIGNING_KEY_FILE="$upgrade_signing_key"
+	  export HASP_RELEASE_BASE_URL="https://github.com/gethasp/hasp/releases/download"
+	  export HASP_TEAM_ID="${HASP_TEAM_ID:-UFV835UGV6}"
+	  export HASP_UPGRADE_SIGNING_KEY_FILE="$upgrade_signing_key"
   export HASP_UPGRADE_TRUST_ROOTS_HEX="$upgrade_pubkey"
   unset HASP_RELEASE_GPG_KEY_ID
   unset HASP_RELEASE_GPG_HOMEDIR

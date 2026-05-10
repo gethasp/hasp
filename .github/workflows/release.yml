@@ -85,8 +85,6 @@ jobs:
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Run release preflight
-        env:
-          HASP_TEAM_ID: ${{ secrets.HASP_TEAM_ID || 'UFV835UGV6' }}
         run: make release-preflight
 
   build-public-release:
