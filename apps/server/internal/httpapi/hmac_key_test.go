@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -227,6 +228,9 @@ func TestLoadOrCreateHMACKeyDoesNotRotateOnNativeFailure(t *testing.T) {
 }
 
 func TestStoreHMACKeyRejectsGenericKeyringOutsideTests(t *testing.T) {
+	if goruntime.GOOS != "darwin" {
+		t.Skip("protected HMAC keyring is macOS-only")
+	}
 	keyring := &memoryHMACKeyring{}
 	originalArgs0 := osArgs0ForTest(t, "/usr/local/bin/hasp")
 	defer originalArgs0()

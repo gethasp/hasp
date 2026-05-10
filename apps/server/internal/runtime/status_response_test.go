@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -2022,6 +2023,9 @@ func TestHTTPVaultUnlockOpensSessionAndPublishesEvents(t *testing.T) {
 }
 
 func TestHTTPVaultInitCreatesVaultUnlocksAndRejectsRepeat(t *testing.T) {
+	if goruntime.GOOS != "darwin" {
+		t.Skip("vault init convenience unlock path requires macOS keyring")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
