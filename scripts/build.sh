@@ -7,6 +7,7 @@ version="$(< VERSION)"
 mode=""
 output="${HASP_BUILD_OUTPUT:-}"
 target_pkg="./cmd/hasp"
+go_build_tags="${HASP_GO_BUILD_TAGS:-}"
 
 usage() {
   cat <<'EOF'
@@ -64,9 +65,20 @@ build_date="${HASP_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 runtime_pkg="github.com/gethasp/hasp/apps/server/internal/runtime"
 release_pkg="github.com/gethasp/hasp/apps/server/internal/release"
+httpapi_pkg="github.com/gethasp/hasp/apps/server/internal/httpapi"
 upgrade_trust_roots="${HASP_UPGRADE_TRUST_ROOTS_HEX:-}"
 if [[ -n "$upgrade_trust_roots" && ! "$upgrade_trust_roots" =~ ^[0-9a-fA-F]{64}(,[0-9a-fA-F]{64})*$ ]]; then
   echo "HASP_UPGRADE_TRUST_ROOTS_HEX must be one or more comma-separated 64-hex Ed25519 public keys" >&2
+  exit 1
+fi
+hmac_team_id="${HASP_TEAM_ID:-}"
+if [[ -n "$hmac_team_id" && ! "$hmac_team_id" =~ ^[A-Z0-9]{10}$ ]]; then
+  echo "HASP_TEAM_ID must be a 10-character Apple Team ID" >&2
+  exit 1
+fi
+target_goos="${GOOS:-$(go env GOOS)}"
+if [[ "$target_goos" == "darwin" && -z "$hmac_team_id" ]]; then
+  echo "HASP_TEAM_ID must be set for darwin builds so the daemon HTTP HMAC key can be pinned to signed app/daemon requirements" >&2
   exit 1
 fi
 ldflags_base="\
@@ -75,6 +87,9 @@ ldflags_base="\
 -X ${runtime_pkg}.BuildDate=${build_date}"
 if [[ -n "$upgrade_trust_roots" ]]; then
   ldflags_base+=" -X ${release_pkg}.pinnedKeysHex=${upgrade_trust_roots}"
+fi
+if [[ -n "$hmac_team_id" ]]; then
+  ldflags_base+=" -X ${httpapi_pkg}.HMACTeamID=${hmac_team_id}"
 fi
 
 server_mod="./apps/server/go.mod"
@@ -92,14 +107,18 @@ esac
 
 mkdir -p "$(dirname "$output")"
 cd "$repo_root/apps/server"
+go_build_args=()
+if [[ -n "$go_build_tags" ]]; then
+  go_build_args+=("-tags=$go_build_tags")
+fi
 case "$mode" in
   --debug)
-    go build -ldflags="${ldflags_base}" -o "$output" "$target_pkg"
+    go build ${go_build_args[@]+"${go_build_args[@]}"} -ldflags="${ldflags_base}" -o "$output" "$target_pkg"
     ;;
   --min-size)
-    go build -trimpath -buildvcs=false -ldflags="-s -w ${ldflags_base}" -gcflags=all=-l -o "$output" "$target_pkg"
+    go build ${go_build_args[@]+"${go_build_args[@]}"} -trimpath -buildvcs=false -ldflags="-s -w ${ldflags_base}" -gcflags=all=-l -o "$output" "$target_pkg"
     ;;
   *)
-    go build -trimpath -buildvcs=false -ldflags="-s -w ${ldflags_base}" -o "$output" "$target_pkg"
+    go build ${go_build_args[@]+"${go_build_args[@]}"} -trimpath -buildvcs=false -ldflags="-s -w ${ldflags_base}" -o "$output" "$target_pkg"
     ;;
 esac

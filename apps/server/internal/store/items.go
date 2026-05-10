@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 var persistEnvelope = (*Handle).persist
+
+var vaultStateLocks sync.Map
 
 func (h *Handle) UpsertItem(name string, kind ItemKind, value []byte, metadata ItemMetadata) (Item, error) {
 	if name = strings.TrimSpace(name); name == "" {
@@ -120,7 +123,28 @@ func (h *Handle) ListItems() []Item {
 	return items
 }
 
+func (h *Handle) ListItemMetadata() []Item {
+	items := make([]Item, 0, len(h.state.Items))
+	for _, item := range h.state.Items {
+		if item.DeletedAt != nil {
+			continue
+		}
+		item.Value = nil
+		items = append(items, item)
+	}
+	slices.SortFunc(items, func(a, b Item) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return items
+}
+
 func (h *Handle) persist() error {
+	unlock := lockVaultStatePath(h.store.paths.StatePath)
+	defer unlock()
+	return h.persistUnlocked()
+}
+
+func (h *Handle) persistUnlocked() error {
 	envelope, err := h.store.readEnvelopeStrict()
 	if err != nil {
 		return err
@@ -132,4 +156,11 @@ func (h *Handle) persist() error {
 	}
 	envelope.Data = data
 	return h.store.writeEnvelopeFile(envelope)
+}
+
+func lockVaultStatePath(path string) func() {
+	value, _ := vaultStateLocks.LoadOrStore(path, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }

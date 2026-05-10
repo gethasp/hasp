@@ -864,6 +864,8 @@ The daemon serves brokered requests for CLI, app, and agent flows. Normal comman
 hasp daemon start
 hasp daemon status
 hasp daemon stop
+hasp daemon restart --reason app-update
+hasp daemon http-key fingerprint
 hasp daemon serve
 ```
 

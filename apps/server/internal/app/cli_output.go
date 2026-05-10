@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/app/ui"
+	"github.com/gethasp/hasp/apps/server/internal/jsonwire"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -19,7 +19,7 @@ import (
 // jsonSchemaVersion is the top-level `_schema` field stamped on every JSON
 // response so consumers can detect breaking shape changes (hasp-1dg1). Bump
 // when fields are renamed/removed in a way that breaks downstream parsers.
-const jsonSchemaVersion = 1
+const jsonSchemaVersion = jsonwire.SchemaVersion
 
 // renderJSONOrHuman emits either JSON or the human-readable form of payload.
 // jsonOutput is the per-command local flag (e.g. `--json` on the FlagSet); the
@@ -41,34 +41,7 @@ func renderJSONOrHuman(ctx context.Context, stdout io.Writer, jsonOutput bool, p
 // or scalar payloads are written as-is so the helper stays a drop-in
 // replacement for json.NewEncoder(...).Encode(...).
 func writeJSONResponse(w io.Writer, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	// Inject "_schema":N as the first key when the payload encodes to a
-	// JSON object. We avoid an unmarshal/marshal round-trip so field order
-	// is preserved for the rest of the payload (helps grep/diff stability).
-	if len(data) > 0 && data[0] == '{' {
-		if len(data) == 2 {
-			// Empty object {}: write a single-key object.
-			if _, err := fmt.Fprintf(w, `{"_schema":%d}`, jsonSchemaVersion); err != nil {
-				return err
-			}
-		} else {
-			if _, err := fmt.Fprintf(w, `{"_schema":%d,`, jsonSchemaVersion); err != nil {
-				return err
-			}
-			if _, err := w.Write(data[1:]); err != nil {
-				return err
-			}
-		}
-	} else {
-		if _, err := w.Write(data); err != nil {
-			return err
-		}
-	}
-	_, err = fmt.Fprintln(w)
-	return err
+	return jsonwire.WriteResponse(w, payload)
 }
 
 func cliWriteStage(out io.Writer, title string, lead string) error {
@@ -417,11 +390,11 @@ func secretGetJSONPayload(metadata secretMetadataView, copied bool, reveal bool,
 	// Build the secret sub-object as a plain map so we can add optional fields
 	// without touching the secretMetadataView struct.
 	secretObj := map[string]any{
-		"name":             metadata.Name,
-		"kind":             metadata.Kind,
-		"created_at":       metadata.CreatedAt,
-		"updated_at":       metadata.UpdatedAt,
-		"exposures":        metadata.Exposures,
+		"name":       metadata.Name,
+		"kind":       metadata.Kind,
+		"created_at": metadata.CreatedAt,
+		"updated_at": metadata.UpdatedAt,
+		"exposures":  metadata.Exposures,
 	}
 	if metadata.NamedReference != "" {
 		secretObj["named_reference"] = metadata.NamedReference

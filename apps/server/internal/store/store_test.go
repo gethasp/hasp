@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -14,6 +18,139 @@ import (
 
 type memoryKeyring struct {
 	values map[string]string
+}
+
+func TestPolicyConcurrentSameVersionOnlyOneWriterWins(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	first, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open first handle: %v", err)
+	}
+	second, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open second handle: %v", err)
+	}
+	version := first.GetPolicy().Version
+	var successes atomic.Int32
+	var conflicts atomic.Int32
+	var wg sync.WaitGroup
+	for i, handle := range []*Handle{first, second} {
+		wg.Add(1)
+		go func(i int, handle *Handle) {
+			defer wg.Done()
+			_, err := handle.ReplacePolicy(PolicyDocument{Rules: []PolicyRule{{
+				ID:       fmt.Sprintf("rule-%d", i),
+				Match:    PolicyMatch{Consumer: fmt.Sprintf("consumer-%d", i), Secret: "prod/db/password", Scope: "read"},
+				Decision: "allow",
+			}}}, version, false, "test")
+			if err == nil {
+				successes.Add(1)
+				return
+			}
+			if errors.Is(err, ErrPolicyVersionConflict) {
+				conflicts.Add(1)
+				return
+			}
+			t.Errorf("unexpected replace error: %v", err)
+		}(i, handle)
+	}
+	wg.Wait()
+	if successes.Load() != 1 || conflicts.Load() != 1 {
+		t.Fatalf("successes=%d conflicts=%d, want 1/1", successes.Load(), conflicts.Load())
+	}
+	reopened, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("reopen vault: %v", err)
+	}
+	if got := len(reopened.GetPolicy().Rules); got != 1 {
+		t.Fatalf("persisted rules = %d, want exactly one winning policy", got)
+	}
+}
+
+func TestPolicyReplaceValidatesConflictAndVersion(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	initial := handle.GetPolicy()
+	if initial.Version != "0" || len(initial.Rules) != 0 {
+		t.Fatalf("initial policy = %+v, want empty version 0", initial)
+	}
+	valid := PolicyDocument{Rules: []PolicyRule{{
+		ID:       "allow-ci",
+		Match:    PolicyMatch{Consumer: "ci-runner", Secret: "prod/db/password", Scope: "read"},
+		Decision: "allow",
+		TTLS:     900,
+	}}}
+	updated, err := handle.ReplacePolicy(valid, initial.Version, false, "test")
+	if err != nil {
+		t.Fatalf("replace policy: %v", err)
+	}
+	if updated.Version == "" || updated.Version == initial.Version || updated.UpdatedBy != "test" || len(updated.Rules) != 1 {
+		t.Fatalf("updated policy = %+v", updated)
+	}
+	if _, err := handle.ReplacePolicy(valid, initial.Version, false, "test"); !errors.Is(err, ErrPolicyVersionConflict) {
+		t.Fatalf("stale replace err = %v, want ErrPolicyVersionConflict", err)
+	}
+	conflicting := PolicyDocument{Rules: []PolicyRule{
+		{ID: "allow-ci", Match: PolicyMatch{Consumer: "ci-runner", Secret: "prod/db/password", Scope: "read"}, Decision: "allow", Priority: 1},
+		{ID: "deny-ci", Match: PolicyMatch{Consumer: "ci-runner", Secret: "prod/db/password", Scope: "read"}, Decision: "deny", Priority: 2},
+	}}
+	if err := ValidatePolicy(conflicting); !errors.Is(err, ErrPolicyInvalid) || !strings.Contains(err.Error(), "ci-runner") {
+		t.Fatalf("ValidatePolicy conflict err = %v, want detailed ErrPolicyInvalid", err)
+	}
+	after := handle.GetPolicy()
+	if after.Version != updated.Version || len(after.Rules) != 1 {
+		t.Fatalf("policy changed after rejected operations: %+v", after)
+	}
+}
+
+func TestConfigDefaultsSetValidationAndSecretKey404(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	config := handle.GetConfig()
+	if config["vault.idle_relock_s"] != 600 || config["vault.auto_relock_enabled"] != true {
+		t.Fatalf("default config = %+v", config)
+	}
+	updated, err := handle.SetConfigValue("reveal.scrub_seconds", 45)
+	if err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	if updated["reveal.scrub_seconds"] != 45 {
+		t.Fatalf("updated reveal scrub = %#v", updated["reveal.scrub_seconds"])
+	}
+	if _, err := handle.SetConfigValue("reveal.scrub_seconds", "slow"); !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("invalid type err = %v, want ErrConfigInvalid", err)
+	}
+	if _, err := handle.SetConfigValue("hmac.secret", "do-not-expose"); !errors.Is(err, ErrConfigKeyNotFound) {
+		t.Fatalf("secret material key err = %v, want ErrConfigKeyNotFound", err)
+	}
+	if _, err := handle.GetConfigValue("master_password.hash"); !errors.Is(err, ErrConfigKeyNotFound) {
+		t.Fatalf("secret get err = %v, want ErrConfigKeyNotFound", err)
+	}
+	targets, err := handle.SetConfigValue("integrations.disabled_targets", []any{"shell-hook", "mcp", "shell-hook"})
+	if err != nil {
+		t.Fatalf("set disabled targets: %v", err)
+	}
+	if got, ok := targets["integrations.disabled_targets"].([]string); !ok || !slices.Equal(got, []string{"mcp", "shell-hook"}) {
+		t.Fatalf("disabled targets = %#v", targets["integrations.disabled_targets"])
+	}
+	if _, err := handle.SetConfigValue("integrations.disabled_targets", []any{"unknown-target"}); !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("unknown disabled target err = %v, want ErrConfigInvalid", err)
+	}
 }
 
 func newMemoryKeyring() *memoryKeyring {

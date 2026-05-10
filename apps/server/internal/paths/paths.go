@@ -30,12 +30,14 @@ var pathStat = os.Stat
 var resolveGuardDisabled bool
 
 type Paths struct {
-	HomeDir     string
-	RuntimeDir  string
-	SocketPath  string
-	PidFilePath string
-	StatePath   string
-	AuditPath   string
+	HomeDir            string
+	RuntimeDir         string
+	SocketPath         string
+	PidFilePath        string
+	HTTPPortFilePath   string
+	HTTPUnixSocketPath string
+	StatePath          string
+	AuditPath          string
 }
 
 // Resolve computes the set of well-known paths used by the hasp server and
@@ -95,12 +97,14 @@ func Resolve() (Paths, error) {
 	}
 
 	return Paths{
-		HomeDir:     home,
-		RuntimeDir:  runtimeDir,
-		SocketPath:  socketPath,
-		PidFilePath: filepath.Join(runtimeDir, "daemon.pid"),
-		StatePath:   filepath.Join(home, "vault.json.enc"),
-		AuditPath:   filepath.Join(home, "audit.jsonl"),
+		HomeDir:            home,
+		RuntimeDir:         runtimeDir,
+		SocketPath:         socketPath,
+		PidFilePath:        filepath.Join(runtimeDir, "daemon.pid"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+		HTTPUnixSocketPath: filepath.Join(runtimeDir, "daemon.http.sock"),
+		StatePath:          filepath.Join(home, "vault.json.enc"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
 	}, nil
 }
 

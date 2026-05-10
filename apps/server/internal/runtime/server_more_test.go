@@ -397,8 +397,15 @@ func TestBrokerRPCOpenSessionAndRevokeWriteAuditEntries(t *testing.T) {
 	}, &rejectedReply); err == nil {
 		t.Fatal("expected untrusted audit key to be rejected")
 	}
+	if rejectedReply.SessionToken != "" {
+		t.Fatalf("rejected open returned session token %q", rejectedReply.SessionToken)
+	}
 	if err := log.WithKey(auditKey).Verify(); err != nil {
 		t.Fatalf("wrong caller key must not corrupt keyed daemon audit chain: %v", err)
+	}
+	sessions := broker.sessions.Snapshot()
+	if len(sessions) != 0 {
+		t.Fatalf("rejected open left active sessions: %+v", sessions)
 	}
 }
 

@@ -213,6 +213,9 @@ func TestRuntimeSessionAndDaemonEdgeCases(t *testing.T) {
 	if err := daemonCommand(ctx, []string{"serve"}, io.Discard, starter); err != nil {
 		t.Fatalf("daemon serve with canceled context: %v", err)
 	}
+	if err := os.Remove(filepath.Join(homeDir, "runtime", "daemon.pid")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove daemon pid file: %v", err)
+	}
 	if err := daemonCommand(context.Background(), []string{"stop"}, io.Discard, starter); err == nil {
 		t.Fatal("expected daemon stop error without pid file")
 	}

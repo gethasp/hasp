@@ -6,6 +6,9 @@ prefix.
 
 ## Install with Homebrew
 
+The formula is the free CLI path. For the paid macOS app cask and the v1 to v2
+package split, see [macOS v2 migration](macos-v2-migration.md).
+
 ```bash
 brew tap gethasp/tap
 brew install gethasp/tap/hasp

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/runtimeops"
+	"github.com/gethasp/hasp/apps/server/internal/httpapi"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -113,6 +115,30 @@ func TestDaemonCommandStartBranch(t *testing.T) {
 	}
 	if err := manager.StopDaemon(); err != nil {
 		t.Fatalf("stop daemon: %v", err)
+	}
+}
+
+func TestDaemonCommandHTTPKeyFingerprintIntegration(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	keyring := &memorySetupKeyring{}
+	origNewStore := newVaultStoreFn
+	defer func() { newVaultStoreFn = origNewStore }()
+	newVaultStoreFn = func() (*store.Store, error) { return store.New(keyring) }
+	if _, err := httpapi.LoadOrCreateHMACKey(context.Background(), keyring); err != nil {
+		t.Fatalf("seed HMAC key: %v", err)
+	}
+	starter := newDaemonTestStarter(t)
+
+	var stdout bytes.Buffer
+	deps := runtimeDepsWithStarter(starter)
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	if err := runtimeops.RuntimeCommand(context.Background(), deps, []string{"daemon", "http-key", "fingerprint"}, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("http-key fingerprint: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); len(got) != 16 {
+		t.Fatalf("fingerprint length = %d, want 16: %q", len(got), got)
 	}
 }
 

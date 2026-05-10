@@ -19,6 +19,13 @@ type Starter interface {
 	Connect(context.Context) (*runtime.Client, error)
 }
 
+type RuntimeClient interface {
+	Close() error
+	Ping(context.Context) (runtime.PingResponse, error)
+	Status(context.Context) (runtime.StatusResponse, error)
+	LockVaultWithCause(context.Context, string) (runtime.LockVaultResponse, error)
+}
+
 // Deps bundles every external dependency the runtime subcommand handlers need.
 // All fields are closure-typed so package app can wire the existing seam vars
 // at call time and test overrides flow through transparently. Nil-valued closures
@@ -61,7 +68,7 @@ type Deps struct {
 
 	// ConnectIfRunning attempts to connect to the daemon without starting it.
 	// Returns nil (not an error) when not running.
-	ConnectIfRunning func(ctx context.Context, s Starter) *runtime.Client
+	ConnectIfRunning func(ctx context.Context, s Starter) RuntimeClient
 
 	// EnsureProjectBinding ensures a project binding exists for a root.
 	// Used by: tui.
@@ -100,6 +107,12 @@ type Deps struct {
 	// Used by daemon stop when the process is already finished. When nil,
 	// a plain fmt.Errorf is used (suitable for all non-JSON contexts).
 	NewInternalError func(msg string) error
+
+	// HTTPKeyring returns the keyring used by daemon http-key commands.
+	HTTPKeyring func() store.Keyring
+
+	// ApproveHMACKeyReinitialize gates local HMAC pairing rotation.
+	ApproveHMACKeyReinitialize func() error
 }
 
 // isHelpArgFallback is a self-contained help-arg detector used when

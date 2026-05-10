@@ -41,8 +41,31 @@ func TestAuditStateTransitions(t *testing.T) {
 	if !degraded || degradedAt == nil || !degradedAt.Equal(now) {
 		t.Fatalf("expected explicit degraded timestamp, got degraded=%t at=%v", degraded, degradedAt)
 	}
+	state.RecordAppendResult(nil)
+	degraded, degradedAt = state.Snapshot()
+	if degraded || degradedAt != nil {
+		t.Fatalf("expected append success to clear append degradation, got degraded=%t at=%v", degraded, degradedAt)
+	}
+	verifyFailedAt := now.Add(time.Minute)
+	state.MarkVerifyFailedAt(verifyFailedAt)
+	state.RecordAppendResult(nil)
+	degraded, degradedAt = state.Snapshot()
+	if !degraded || degradedAt == nil || !degradedAt.Equal(verifyFailedAt) {
+		t.Fatalf("expected verify failure to survive append success, got degraded=%t at=%v", degraded, degradedAt)
+	}
+	verifiedAt := now.Add(2 * time.Minute)
+	state.MarkVerifiedAt(verifiedAt)
+	degraded, degradedAt = state.Snapshot()
+	if degraded || degradedAt != nil {
+		t.Fatalf("expected successful verify to clear verify degradation, got degraded=%t at=%v", degraded, degradedAt)
+	}
+	if got := state.LastVerifiedAt(); got == nil || !got.Equal(verifiedAt) {
+		t.Fatalf("last verified at = %v, want %v", got, verifiedAt)
+	}
 	var nilState *AuditState
 	nilState.MarkDegradedAt(now)
+	nilState.MarkVerifyFailedAt(now)
+	nilState.MarkVerifiedAt(now)
 	newAuditState(nil).RecordAppendResult(nil)
 }
 

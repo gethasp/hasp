@@ -1,0 +1,149 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/rpc"
+	"net/rpc/jsonrpc"
+	"testing"
+
+	"github.com/gethasp/hasp/apps/server/internal/runtime"
+)
+
+func TestApprovalListAndDecideCommandsUseApprovalSchema(t *testing.T) {
+	lockAppSeams(t)
+	service := newApprovalCommandTestRPC(t)
+	starter := service.starter
+
+	first, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/db/password", RequesterConsumerID: "ci-runner", RequestedScope: "window", RequestedTTLS: 900})
+	if err != nil {
+		t.Fatalf("queue first approval: %v", err)
+	}
+	second, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/api/token", RequesterConsumerID: "human-cli", RequestedScope: "session", RequestedTTLS: 300})
+	if err != nil {
+		t.Fatalf("queue second approval: %v", err)
+	}
+
+	var listOut bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"approval", "list", "--status", "pending", "--json"}, bytes.NewBuffer(nil), &listOut, io.Discard, starter); err != nil {
+		t.Fatalf("approval list --json: %v", err)
+	}
+	var list runtime.ListApprovalsResponse
+	if err := json.Unmarshal(listOut.Bytes(), &list); err != nil {
+		t.Fatalf("decode approval list: %v\n%s", err, listOut.String())
+	}
+	if list.PendingCount != 2 || len(list.Approvals) != 2 {
+		t.Fatalf("approval list = %+v, want two pending", list)
+	}
+	for _, key := range []string{`"_schema"`, `"approvals"`, `"pending_count"`, `"oldest_pending_age_s"`} {
+		if !bytes.Contains(listOut.Bytes(), []byte(key)) {
+			t.Fatalf("approval list JSON missing %s: %s", key, listOut.String())
+		}
+	}
+
+	var grantOut bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"approval", "decide", first.ID, "--grant", "--ttl", "2m", "--scope", "window", "--auth-method", "device-owner", "--hold-proof", "1500ms", "--json"}, bytes.NewBuffer(nil), &grantOut, io.Discard, starter); err != nil {
+		t.Fatalf("approval decide grant: %v", err)
+	}
+	var grant runtime.DecideApprovalResponse
+	if err := json.Unmarshal(grantOut.Bytes(), &grant); err != nil {
+		t.Fatalf("decode grant reply: %v\n%s", err, grantOut.String())
+	}
+	if grant.Approval.Status != "granted" || grant.LeaseID == "" {
+		t.Fatalf("grant reply = %+v", grant)
+	}
+
+	third, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/ops/token", RequesterConsumerID: "ops-cli", RequestedScope: "window", RequestedTTLS: 300})
+	if err != nil {
+		t.Fatalf("queue third approval: %v", err)
+	}
+	if err := runWithStarter(context.Background(), []string{"approval", "decide", third.ID, "--grant", "--ttl", "2m", "--scope", "window", "--json"}, bytes.NewBuffer(nil), io.Discard, io.Discard, starter); err == nil {
+		t.Fatal("approval decide grant without proof succeeded")
+	}
+
+	var denyOut bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"approval", "decide", second.ID, "--deny", "--reason", "not-now", "--json"}, bytes.NewBuffer(nil), &denyOut, io.Discard, starter); err != nil {
+		t.Fatalf("approval decide deny: %v", err)
+	}
+	var deny runtime.DecideApprovalResponse
+	if err := json.Unmarshal(denyOut.Bytes(), &deny); err != nil {
+		t.Fatalf("decode deny reply: %v\n%s", err, denyOut.String())
+	}
+	if deny.Approval.Status != "denied" || deny.LeaseID != "" {
+		t.Fatalf("deny reply = %+v", deny)
+	}
+}
+
+type approvalCommandTestRPC struct {
+	store   *runtime.ApprovalStore
+	starter starter
+}
+
+func newApprovalCommandTestRPC(t *testing.T) *approvalCommandTestRPC {
+	t.Helper()
+	socketPath := shortSocketPath(t, "approval-test.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen test rpc: %v", err)
+	}
+	service := &approvalCommandTestRPC{store: runtime.NewApprovalStore()}
+	server := rpc.NewServer()
+	if err := server.RegisterName("HASP", service); err != nil {
+		t.Fatalf("register test rpc: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+	})
+	service.starter = approvalCommandTestStarter{socketPath: socketPath}
+	return service
+}
+
+func (s *approvalCommandTestRPC) ListApprovals(req runtime.ListApprovalsRequest, reply *runtime.ListApprovalsResponse) error {
+	*reply = runtime.ListApprovalsResponse{
+		Approvals:         s.store.Snapshot(),
+		PendingCount:      2,
+		OldestPendingAgeS: 0,
+	}
+	return nil
+}
+
+func (s *approvalCommandTestRPC) DecideApproval(req runtime.DecideApprovalRequest, reply *runtime.DecideApprovalResponse) error {
+	if req.Decision == "grant" && (req.AuthMethod != "touch-id" && req.AuthMethod != "device-owner" || req.HoldDurationMS < 1500) {
+		return errors.New("approval grant proof missing")
+	}
+	approval, changed, err := s.store.Decide(req.ApprovalID, runtime.ApprovalDecision{GrantedTTLS: req.GrantedTTLS, Scope: req.Scope, Reason: req.Reason}, "cli", req.Decision == "grant")
+	if err != nil {
+		return err
+	}
+	*reply = runtime.DecideApprovalResponse{Approval: approval, Changed: changed}
+	if req.Decision == "grant" {
+		reply.LeaseID = "lease-" + approval.ID
+	}
+	return nil
+}
+
+type approvalCommandTestStarter struct {
+	socketPath string
+}
+
+func (s approvalCommandTestStarter) EnsureDaemon(context.Context) error { return nil }
+
+func (s approvalCommandTestStarter) Connect(ctx context.Context) (*runtime.Client, error) {
+	return runtime.Dial(ctx, s.socketPath)
+}

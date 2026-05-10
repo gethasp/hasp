@@ -15,6 +15,13 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
+type VerifyReport struct {
+	OK                bool
+	TotalEntries      int
+	FirstCorruptionAt *int64
+	Err               error
+}
+
 var resolveAuditPaths = paths.Resolve
 
 const (
@@ -93,12 +100,16 @@ func New() (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewForPaths(resolved), nil
+}
+
+func NewForPaths(resolved paths.Paths) *Log {
 	return &Log{
 		path: resolved.AuditPath,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-	}, nil
+	}
 }
 
 // WithKey installs an HMAC key for subsequent Append calls. Passing nil or
@@ -160,12 +171,23 @@ func (l *Log) Append(eventType string, actor string, details map[string]any) (Ev
 }
 
 func (l *Log) Verify() error {
+	report, err := l.VerifyDetailed()
+	if err != nil {
+		return err
+	}
+	if !report.OK {
+		return report.Err
+	}
+	return nil
+}
+
+func (l *Log) VerifyDetailed() (VerifyReport, error) {
 	file, err := os.Open(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return VerifyReport{OK: true}, nil
 		}
-		return fmt.Errorf("open audit log: %w", err)
+		return VerifyReport{}, fmt.Errorf("open audit log: %w", err)
 	}
 	defer file.Close()
 
@@ -175,18 +197,22 @@ func (l *Log) Verify() error {
 	for scanner.Scan() {
 		var event Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return fmt.Errorf("decode audit event: %w", err)
+			first := sequence + 1
+			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("decode audit event: %w", err)}, nil
 		}
 		sequence++
 		if event.Sequence != sequence {
-			return fmt.Errorf("audit sequence mismatch at %d", event.Sequence)
+			first := sequence
+			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("audit sequence mismatch at %d", event.Sequence)}, nil
 		}
 		if event.PrevHash != previous {
-			return fmt.Errorf("audit chain mismatch at %d", event.Sequence)
+			first := event.Sequence
+			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("audit chain mismatch at %d", event.Sequence)}, nil
 		}
 		key, err := l.keyForScheme(event.Scheme)
 		if err != nil {
-			return fmt.Errorf("audit scheme at %d: %w", event.Sequence, err)
+			first := event.Sequence
+			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("audit scheme at %d: %w", event.Sequence, err)}, nil
 		}
 		_, expected := hashEvent(Event{
 			Sequence:  event.Sequence,
@@ -197,14 +223,15 @@ func (l *Log) Verify() error {
 			PrevHash:  event.PrevHash,
 		}, key)
 		if event.Hash != expected {
-			return fmt.Errorf("audit hash mismatch at %d", event.Sequence)
+			first := event.Sequence
+			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("audit hash mismatch at %d", event.Sequence)}, nil
 		}
 		previous = event.Hash
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan audit log: %w", err)
+		return VerifyReport{}, fmt.Errorf("scan audit log: %w", err)
 	}
-	return nil
+	return VerifyReport{OK: true, TotalEntries: int(sequence)}, nil
 }
 
 func (l *Log) Events() ([]Event, error) {
@@ -230,6 +257,15 @@ func (l *Log) Events() ([]Event, error) {
 		return nil, fmt.Errorf("scan audit log: %w", err)
 	}
 	return events, nil
+}
+
+func (l *Log) HMACKey() []byte {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]byte(nil), l.key...)
 }
 
 func (l *Log) Checkpoint() (int64, string, error) {

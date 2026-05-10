@@ -79,7 +79,7 @@ func clipForTerminal(value string, prefixLen, columns int) string {
 
 // connectIfRunningFn calls deps.ConnectIfRunning when wired, or falls back to
 // a direct connect attempt.
-func connectIfRunningFn(ctx context.Context, deps Deps, s Starter) *runtime.Client {
+func connectIfRunningFn(ctx context.Context, deps Deps, s Starter) RuntimeClient {
 	if deps.ConnectIfRunning != nil {
 		return deps.ConnectIfRunning(ctx, s)
 	}

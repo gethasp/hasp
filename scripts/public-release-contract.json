@@ -65,7 +65,7 @@
   },
   "files": {
     "apps/web/Makefile": {
-      "contains": ["pnpm check", "wrangler deploy --dry-run"]
+      "contains": ["$(PNPM) check", "wrangler deploy --dry-run"]
     },
     "apps/web/package.json": {
       "contains": ["check:docs-versioning", "test:downloads-worker"]
@@ -130,7 +130,7 @@
           ]
         },
         "publish-homebrew-tap": {
-          "needs_include": ["deploy-download-worker", "homebrew-formula-smoke"]
+          "needs_include": ["deploy-download-worker", "homebrew-formula-smoke", "homebrew-cask-smoke"]
         },
         "published-release-live-smoke": {
           "needs_include": ["publish-homebrew-tap"],

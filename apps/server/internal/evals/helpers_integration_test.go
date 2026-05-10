@@ -68,8 +68,9 @@ func buildBinary(t *testing.T) string {
 			return
 		}
 		binPath = filepath.Join(outDir, "hasp")
-		cmd := exec.Command("go", "build", "-o", binPath, "./cmd/hasp")
-		cmd.Dir = filepath.Join(root, "apps", "server")
+		cmd := exec.Command("bash", filepath.Join(root, "scripts", "build.sh"), "-o", binPath)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HASP_GO_BUILD_TAGS=hasp_test_fastkdf", "HASP_TEAM_ID=TEAMID1234")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("build hasp: %w: %s", err, string(output))
@@ -125,6 +126,7 @@ func (e evalEnv) commandEnv(extra map[string]string) []string {
 	env = append(env,
 		"HOME="+e.userHome,
 		"HASP_HOME="+e.home,
+		"HASP_TEST=1",
 		"HASP_SOCKET="+e.socket,
 		"HASP_TEST_DAEMON_PARENT_PID="+strconv.Itoa(os.Getpid()),
 		"HASP_MASTER_PASSWORD="+e.masterPassword,
@@ -233,8 +235,24 @@ func waitForEvalDaemonReady(t *testing.T, e evalEnv) runtime.StatusResponse {
 		lastErr = fmt.Errorf("daemon status pid=%d socket=%q, want pid=%d socket=%q", status.PID, status.SocketPath, pidValue, e.socket)
 		time.Sleep(25 * time.Millisecond)
 	}
+	for _, logName := range []string{"daemon.stdout.log", "daemon.stderr.log"} {
+		logPath := filepath.Join(e.home, "runtime", logName)
+		if data, err := os.ReadFile(logPath); err == nil && len(data) > 0 {
+			t.Logf("%s:\n%s", logPath, string(data))
+		}
+	}
 	t.Fatalf("timed out waiting for daemon readiness on %s: %v", e.socket, lastErr)
 	return runtime.StatusResponse{}
+}
+
+func evalDaemonReady(e evalEnv) bool {
+	client, err := runtime.Dial(context.Background(), e.socket)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	status, err := client.Status(context.Background())
+	return err == nil && status.SocketPath == e.socket && status.PID > 0
 }
 
 func parseJSONMap(t *testing.T, raw string) map[string]any {
@@ -262,8 +280,10 @@ func openRuntimeSessionWithDuration(t *testing.T, e evalEnv, projectRoot string,
 	// hasp-qe5h made `hasp status` connect-only (it no longer auto-starts the
 	// daemon when the socket is missing); use `daemon start` so the eval
 	// helper actually has a running broker before the dial below.
-	if _, _, err := runHasp(t, e, "", "daemon", "start"); err != nil {
-		t.Fatalf("start daemon: %v", err)
+	if !evalDaemonReady(e) {
+		if _, _, err := runHasp(t, e, "", "daemon", "start"); err != nil {
+			t.Fatalf("start daemon: %v", err)
+		}
 	}
 	// `daemon start` spawns the broker asynchronously and returns before the
 	// pid file is populated and before the socket necessarily accepts RPCs.

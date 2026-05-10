@@ -210,5 +210,7 @@ func readState(vaultKey []byte, blob sealedBlob) (persistedState, error) {
 	if state.ManifestReviews == nil {
 		state.ManifestReviews = map[string]ManifestReview{}
 	}
+	state.Policy = normalizePolicyDocument(state.Policy)
+	state.Config = normalizeConfigDocument(state.Config)
 	return state, nil
 }

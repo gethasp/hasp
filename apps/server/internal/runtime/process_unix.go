@@ -49,8 +49,26 @@ func startDetachedProcess(_ context.Context) error {
 	if os.Getenv("HASP_TEST_HELPER_DAEMON") == "1" {
 		cmd.Env = append(cmd.Env, "HASP_TEST_HELPER_PARENT_PID="+strconv.Itoa(os.Getpid()))
 	}
+	var stdoutFile *os.File
+	var stderrFile *os.File
+	if os.Getenv("HASP_TEST") == "1" {
+		stdoutFile, _ = os.OpenFile(filepath.Join(resolved.RuntimeDir, "daemon.stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		stderrFile, _ = os.OpenFile(filepath.Join(resolved.RuntimeDir, "daemon.stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	}
+	if stdoutFile != nil {
+		defer func() { _ = stdoutFile.Close() }()
+	}
+	if stderrFile != nil {
+		defer func() { _ = stderrFile.Close() }()
+	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	if stdoutFile != nil {
+		cmd.Stdout = stdoutFile
+	}
+	if stderrFile != nil {
+		cmd.Stderr = stderrFile
+	}
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {

@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "version": "v1.0.4",
   "versionNumber": "1.0.4",
-  "createdAt": "2026-05-05T20:55:21.974Z",
+  "createdAt": "2026-05-10T15:53:41.313Z",
   "updatedLabel": "May 2026",
-  "sourceCommit": "9033a217beb6a05ee00a749fddc06a3795bf490d",
+  "sourceCommit": "7271380bc5a3d75ea7dcfb1144d9d49f1ec87408",
   "dirty": false,
   "defaultRouteSlug": "overview",
   "specs": [
@@ -31,6 +31,14 @@
       "order": 15,
       "title": "Mental model",
       "description": "How to think about vaults, repo boundaries, consumers, grants, sessions, audit, and redaction."
+    },
+    {
+      "source": "public/docs/agent-mental-model.md",
+      "slug": "agent-mental-model",
+      "section": "Start",
+      "order": 16,
+      "title": "Agent mental model",
+      "description": "How agents use HASP handles, MCP tools, grants, and brokered runs without reading raw secret values."
     },
     {
       "source": "public/docs/value-free-manifests.md",
@@ -177,6 +185,22 @@
       "description": "Operator-facing release verification and install details."
     },
     {
+      "source": "public/docs/macos-v2-licensing.md",
+      "slug": "macos-v2-licensing",
+      "section": "Release",
+      "order": 30,
+      "title": "macOS v2 licensing",
+      "description": "Online activation, offline license blobs, support workflow, and revocation trade-offs for HASP.app."
+    },
+    {
+      "source": "public/docs/macos-v2-migration.md",
+      "slug": "macos-v2-migration",
+      "section": "Release",
+      "order": 35,
+      "title": "macOS v2 migration",
+      "description": "Formula versus cask install paths, v1 CLI continuity, and how to switch between the free CLI and paid app."
+    },
+    {
       "source": "public/docs/glossary.md",
       "slug": "glossary",
       "section": "Reference",
@@ -205,6 +229,7 @@
     "public/README.md",
     "public/QUICKSTART.md",
     "public/docs/mental-model.md",
+    "public/docs/agent-mental-model.md",
     "public/docs/value-free-manifests.md",
     "public/docs/install.md",
     "public/docs/after-homebrew.md",
@@ -223,18 +248,21 @@
     "public/CHANGELOG.md",
     "public/docs/release-distribution.md",
     "public/docs/install-and-release.md",
+    "public/docs/macos-v2-licensing.md",
+    "public/docs/macos-v2-migration.md",
     "public/docs/glossary.md",
     "public/docs/cli-reference.md",
     "public/docs/error-codes.md"
   ],
   "sourceFileSha256": {
-    "public/README.md": "34d0e62b6ad65b9cea1207cabaaeadc86edcc686f9426132f5068c67992f414a",
+    "public/README.md": "3dac95100481921a0ad8338eaf0d584762c86285206081c1ae2f6427f30d80be",
     "public/QUICKSTART.md": "877bf3620dacd3950e55aac1f1c56b012ddec49187669ba604c84b61c759edab",
     "public/docs/mental-model.md": "b85f4e4eb068ed560ce9e7182e32be64b7df0d111157ba23ac7292dbec8c98c2",
+    "public/docs/agent-mental-model.md": "062fca2adb914e0656aea337db0737cbeb618492728483197dfa8485c54c3a8b",
     "public/docs/value-free-manifests.md": "d3965241b71b7e9d018612e8c5c7ada69fc8a80ebd2db966d3c763712498d5f9",
-    "public/docs/install.md": "038085d79bf21d49972f8d618a46d0cf2838b72f3a0565cd630bc3d48c9a6442",
+    "public/docs/install.md": "bc7353ea5b3572c2994eeaea9d5239ccc697d03f9515c5094306382b9ea485e8",
     "public/docs/after-homebrew.md": "48281986c6cc36010d097b0298ff2881828df6aa9c19192fcac9290808a05b9e",
-    "public/docs/command-guide.md": "9c856a3c645d9e89e77831fa16e88dbce336ac96e8666319f6cc36d07fddb531",
+    "public/docs/command-guide.md": "2559353a5205caf273c058edc111fe401b738e0a19bdd394eba37e10c18bddc7",
     "public/docs/operator-guide.md": "51a88d72720593cb609cf4ab284d3390b1b2aeda6236eae76e3d72cc63f85990",
     "public/docs/repo-targets.md": "15c0fa3db4f48fc0d4d0bef561814c7d281e09638ab7c9b38f4ff2e762b83e0a",
     "public/docs/v1-production-guide.md": "dfff27d6111308ae98b530c9e41bfb9ca074d22b549e5566f1114751c3ef9418",
@@ -248,9 +276,11 @@
     "docs/agent-profiles/generic.md": "46d0131d32c39aaec1ec6849543cd1171e81690b84df22f6dfe5840bc33815bf",
     "public/CHANGELOG.md": "cb7694f039ab3d5e6ecf026973cc793c27f5b19c09ce53f8a21ff4d19878b957",
     "public/docs/release-distribution.md": "40b8bc4dc9cf77fc76fb00b339769687776753aa360822111c4166302e47ad9c",
-    "public/docs/install-and-release.md": "68953f7c13771c8432461bb2a0134e2832ab1aa47092377f64902caa4d9785a0",
+    "public/docs/install-and-release.md": "7d9aec55553826beff885f51955cb264b46fdb98c58d0e306c9281b1aa4aabd6",
+    "public/docs/macos-v2-licensing.md": "0a6c13ffee0b5e3b03b392656ea700969beae6cf2f62ef02e11cf0972cce012f",
+    "public/docs/macos-v2-migration.md": "0801a55a912325c96e4190326ea32a26c8b5de199651ab45894794eafcd6cd66",
     "public/docs/glossary.md": "47988cc73f07cdb3a6e7c62a894877f85c09c41afd7ccb975b7b8e75395c214e",
-    "public/docs/cli-reference.md": "5b56406a6c2c72a346b0b2a47fb19997c4825adc63912d23f93bf9496b643bf1",
+    "public/docs/cli-reference.md": "3e2577ca1b00d4aa9c7f3a07d75e049e4213b1b4d94a5988447c9a73a8264b6f",
     "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
   }
 }

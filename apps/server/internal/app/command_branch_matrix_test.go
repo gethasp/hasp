@@ -77,6 +77,23 @@ func TestCommandBranchMatrix(t *testing.T) {
 	if !json.Valid(out.Bytes()) {
 		t.Fatalf("expected json status output, got %q", out.String())
 	}
+	var statusPayload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &statusPayload); err != nil {
+		t.Fatalf("decode status payload: %v", err)
+	}
+	for _, key := range []string{"leases_count", "approvals_pending", "expiring_30m", "audit_health"} {
+		if _, ok := statusPayload[key]; !ok {
+			t.Fatalf("status JSON missing %q in %s", key, out.String())
+		}
+	}
+	for _, key := range []string{"vault", "leases", "approvals"} {
+		if _, ok := statusPayload[key].(map[string]any); !ok {
+			t.Fatalf("status JSON missing nested dashboard object %q in %s", key, out.String())
+		}
+	}
+	if statusPayload["audit_health"] != "ok" {
+		t.Fatalf("audit_health = %v, want ok", statusPayload["audit_health"])
+	}
 	if err := statusCommandWithArgs(context.Background(), []string{"--bad"}, &out, starter); err == nil {
 		t.Fatal("expected status parse failure")
 	}

@@ -22,6 +22,15 @@ brew install gethasp/tap/hasp
 hasp version
 ```
 
+Looking for the paid macOS app instead of the free CLI formula?
+
+```bash
+brew install --cask gethasp/tap/hasp
+```
+
+See [macOS v2 migration](docs/macos-v2-migration.md) for the formula/cask
+split and how to switch safely.
+
 Then run the guided setup:
 
 ```bash

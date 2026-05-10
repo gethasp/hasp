@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
+	"github.com/gethasp/hasp/apps/server/internal/leases"
 )
 
 var (
@@ -71,15 +72,21 @@ func cachedEvalSymlinks(abs string) (string, bool) {
 }
 
 type Session struct {
-	ID           string
-	Token        string
-	LocalUser    string
-	HostLabel    string
-	ProjectRoot  string
-	AgentSafe    bool
-	ConsumerName string
-	ExpiresAt    time.Time
-	LastSeenAt   time.Time
+	ID            string
+	Token         string
+	LocalUser     string
+	HostLabel     string
+	ProjectRoot   string
+	AgentSafe     bool
+	ConsumerName  string
+	Internal      bool
+	OpenedAt      time.Time
+	ExpiresAt     time.Time
+	LastSeenAt    time.Time
+	RevokedAt     *time.Time
+	LeaseStatus   string
+	LeaseSecretID string
+	LeaseScope    string
 }
 
 type SessionView struct {
@@ -89,6 +96,8 @@ type SessionView struct {
 	ProjectRoot  string    `json:"project_root"`
 	AgentSafe    bool      `json:"agent_safe,omitempty"`
 	ConsumerName string    `json:"consumer_name,omitempty"`
+	Internal     bool      `json:"internal,omitempty"`
+	OpenedAt     time.Time `json:"opened_at"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	LastSeenAt   time.Time `json:"last_seen_at"`
 }
@@ -106,6 +115,7 @@ type SessionStore struct {
 	mu                            sync.RWMutex
 	sessions                      map[string]Session
 	processes                     map[int]processBinding
+	locked                        bool
 	now                           func() time.Time
 	idleTTL                       time.Duration
 	processIdentityDegraded       bool
@@ -120,6 +130,7 @@ func NewSessionStore() *SessionStore {
 	return &SessionStore{
 		sessions:        make(map[string]Session),
 		processes:       make(map[int]processBinding),
+		locked:          true,
 		now:             func() time.Time { return time.Now().UTC() },
 		idleTTL:         DefaultVaultIdleTimeout,
 		processIdentity: realProcessIdentity,
@@ -127,6 +138,27 @@ func NewSessionStore() *SessionStore {
 }
 
 func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration, agentSafe bool, consumerName string) (Session, error) {
+	return s.open(hostLabel, projectRoot, ttl, agentSafe, consumerName, false)
+}
+
+func (s *SessionStore) OpenInternal(hostLabel, projectRoot string, ttl time.Duration, agentSafe bool, consumerName string) (Session, error) {
+	return s.open(hostLabel, projectRoot, ttl, agentSafe, consumerName, true)
+}
+
+func (s *SessionStore) open(hostLabel, projectRoot string, ttl time.Duration, agentSafe bool, consumerName string, internal bool) (Session, error) {
+	session, err := s.newSession(hostLabel, projectRoot, ttl, agentSafe, consumerName)
+	if err != nil {
+		return Session{}, err
+	}
+	session.Internal = internal
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[session.Token] = session
+	s.locked = false
+	return session, nil
+}
+
+func (s *SessionStore) newSession(hostLabel, projectRoot string, ttl time.Duration, agentSafe bool, consumerName string) (Session, error) {
 	if ttl <= 0 {
 		return Session{}, errors.New("ttl must be positive")
 	}
@@ -143,7 +175,7 @@ func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration, ag
 	if err != nil {
 		return Session{}, fmt.Errorf("generate session token: %w", err)
 	}
-	session := Session{
+	return Session{
 		ID:           id,
 		Token:        token,
 		LocalUser:    localUser,
@@ -151,12 +183,26 @@ func (s *SessionStore) Open(hostLabel, projectRoot string, ttl time.Duration, ag
 		ProjectRoot:  CanonicalProjectRoot(projectRoot),
 		AgentSafe:    agentSafe,
 		ConsumerName: strings.TrimSpace(consumerName),
+		OpenedAt:     now,
 		ExpiresAt:    now.Add(ttl),
 		LastSeenAt:   now,
+	}, nil
+}
+
+func (s *SessionStore) OpenLease(hostLabel, secretID, scope string, ttl time.Duration, consumerName string) (Session, error) {
+	session, err := s.newSession(hostLabel, "", ttl, false, consumerName)
+	if err != nil {
+		return Session{}, err
+	}
+	session.LeaseSecretID = strings.TrimSpace(secretID)
+	session.LeaseScope = strings.TrimSpace(scope)
+	if session.LeaseScope == "" {
+		session.LeaseScope = "session"
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[session.Token] = session
+	s.locked = false
 	return session, nil
 }
 
@@ -169,8 +215,11 @@ func (s *SessionStore) Resolve(token string) (Session, bool) {
 	if !ok {
 		return Session{}, false
 	}
+	if session.RevokedAt != nil {
+		return Session{}, false
+	}
 	if s.sessionExpired(session, now) {
-		delete(s.sessions, token)
+		s.markExpiredLocked(token, session, now)
 		return Session{}, false
 	}
 	session.LastSeenAt = now
@@ -181,10 +230,14 @@ func (s *SessionStore) Resolve(token string) (Session, bool) {
 func (s *SessionStore) Revoke(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.sessions[token]; !ok {
+	session, ok := s.sessions[token]
+	if !ok || session.RevokedAt != nil {
 		return false
 	}
-	delete(s.sessions, token)
+	now := s.now().UTC()
+	session.RevokedAt = &now
+	session.LeaseStatus = "revoked"
+	s.sessions[token] = session
 	for pid, existing := range s.processes {
 		if existing.token == token {
 			delete(s.processes, pid)
@@ -196,22 +249,56 @@ func (s *SessionStore) Revoke(token string) bool {
 func (s *SessionStore) RevokeAll() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now().UTC()
 	revoked := make([]Session, 0, len(s.sessions))
 	for token, session := range s.sessions {
+		if session.RevokedAt != nil || s.sessionExpired(session, now) {
+			if session.RevokedAt == nil && s.sessionExpired(session, now) {
+				s.markExpiredLocked(token, session, now)
+			}
+			continue
+		}
+		session.RevokedAt = &now
+		session.LeaseStatus = "revoked"
+		s.sessions[token] = session
 		revoked = append(revoked, session)
-		delete(s.sessions, token)
 	}
 	for pid := range s.processes {
 		delete(s.processes, pid)
 	}
+	s.locked = true
 	return revoked
+}
+
+func (s *SessionStore) IsLocked() bool {
+	s.PruneExpired()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.locked || s.activeCountLocked(s.now().UTC()) == 0
+}
+
+func (s *SessionStore) activeCountLocked(now time.Time) int {
+	count := 0
+	for _, session := range s.sessions {
+		if session.RevokedAt == nil && !s.sessionExpired(session, now) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *SessionStore) ActiveCount() int {
 	s.PruneExpired()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.sessions)
+	count := 0
+	now := s.now().UTC()
+	for _, session := range s.sessions {
+		if session.RevokedAt == nil && !s.sessionExpired(session, now) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *SessionStore) Snapshot() []Session {
@@ -221,7 +308,9 @@ func (s *SessionStore) Snapshot() []Session {
 
 	out := make([]Session, 0, len(s.sessions))
 	for _, session := range s.sessions {
-		out = append(out, session)
+		if session.RevokedAt == nil && !s.sessionExpired(session, s.now().UTC()) {
+			out = append(out, session)
+		}
 	}
 	return out
 }
@@ -235,19 +324,34 @@ func (s *SessionStore) ViewSnapshot() []SessionView {
 	return out
 }
 
+func (s *SessionStore) VisibleSnapshot() []Session {
+	sessions := s.Snapshot()
+	out := make([]Session, 0, len(sessions))
+	for _, session := range sessions {
+		if session.Internal {
+			continue
+		}
+		out = append(out, session)
+	}
+	return out
+}
+
 func (s *SessionStore) PruneExpired() {
 	now := s.now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for token, session := range s.sessions {
 		if s.sessionExpired(session, now) {
-			delete(s.sessions, token)
+			s.markExpiredLocked(token, session, now)
 			for pid, existing := range s.processes {
 				if existing.token == token {
 					delete(s.processes, pid)
 				}
 			}
 		}
+	}
+	if s.activeCountLocked(now) == 0 {
+		s.locked = true
 	}
 }
 
@@ -260,8 +364,10 @@ func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, ok := s.sessions[sessionToken]
-	if !ok || s.sessionExpired(session, now) {
-		delete(s.sessions, sessionToken)
+	if !ok || session.RevokedAt != nil || s.sessionExpired(session, now) {
+		if ok && session.RevokedAt == nil && s.sessionExpired(session, now) {
+			s.markExpiredLocked(sessionToken, session, now)
+		}
 		return false
 	}
 	if identityErr != nil {
@@ -305,8 +411,10 @@ func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
 		}
 		token := binding.token
 		session, ok := s.sessions[token]
-		if !ok || s.sessionExpired(session, now) {
-			delete(s.sessions, token)
+		if !ok || session.RevokedAt != nil || s.sessionExpired(session, now) {
+			if ok && session.RevokedAt == nil && s.sessionExpired(session, now) {
+				s.markExpiredLocked(token, session, now)
+			}
 			delete(s.processes, ancestor)
 			continue
 		}
@@ -338,6 +446,141 @@ func (s *SessionStore) sessionExpired(session Session, now time.Time) bool {
 		return false
 	}
 	return now.Sub(session.LastSeenAt) > s.idleTTL
+}
+
+func (s *SessionStore) markExpiredLocked(token string, session Session, now time.Time) {
+	if session.RevokedAt == nil {
+		session.RevokedAt = &now
+		session.LeaseStatus = "expired"
+		s.sessions[token] = session
+	}
+}
+
+func (s *SessionStore) RevokeLeaseID(id string) (Session, bool, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Session{}, false, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now().UTC()
+	for token, session := range s.sessions {
+		if session.ID != id {
+			continue
+		}
+		if session.RevokedAt != nil {
+			return session, true, false
+		}
+		if s.sessionExpired(session, now) {
+			s.markExpiredLocked(token, session, now)
+			return session, true, false
+		}
+		session.RevokedAt = &now
+		session.LeaseStatus = "revoked"
+		s.sessions[token] = session
+		for pid, existing := range s.processes {
+			if existing.token == token {
+				delete(s.processes, pid)
+			}
+		}
+		return session, true, true
+	}
+	return Session{}, false, false
+}
+
+func (s *SessionStore) RevokeAllForConsumer(consumerID string) []Session {
+	consumerID = strings.TrimSpace(consumerID)
+	if consumerID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now().UTC()
+	revoked := make([]Session, 0)
+	for token, session := range s.sessions {
+		if session.RevokedAt != nil || s.sessionExpired(session, now) {
+			if session.RevokedAt == nil && s.sessionExpired(session, now) {
+				s.markExpiredLocked(token, session, now)
+			}
+			continue
+		}
+		if sessionConsumerID(session) != consumerID {
+			continue
+		}
+		session.RevokedAt = &now
+		session.LeaseStatus = "revoked"
+		s.sessions[token] = session
+		revoked = append(revoked, session)
+		for pid, existing := range s.processes {
+			if existing.token == token {
+				delete(s.processes, pid)
+			}
+		}
+	}
+	return revoked
+}
+
+func (s *SessionStore) LeaseSnapshot() []leases.Lease {
+	s.PruneExpired()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := s.now().UTC()
+	out := make([]leases.Lease, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		if session.Internal {
+			continue
+		}
+		status := "active"
+		if session.RevokedAt != nil {
+			status = session.LeaseStatus
+			if status == "" {
+				status = "revoked"
+			}
+		} else if s.sessionExpired(session, now) {
+			status = "expired"
+		}
+		out = append(out, leases.Lease{
+			ID:         session.ID,
+			SecretID:   sessionSecretID(session),
+			ConsumerID: sessionConsumerID(session),
+			GrantedAt:  session.OpenedAt,
+			ExpiresAt:  session.ExpiresAt,
+			LastUsedAt: session.LastSeenAt,
+			Scope:      sessionScope(session),
+			Status:     status,
+		})
+	}
+	return out
+}
+
+func sessionConsumerID(session Session) string {
+	if strings.TrimSpace(session.ConsumerName) != "" {
+		return strings.TrimSpace(session.ConsumerName)
+	}
+	if strings.TrimSpace(session.HostLabel) != "" {
+		return strings.TrimSpace(session.HostLabel)
+	}
+	return strings.TrimSpace(session.LocalUser)
+}
+
+func sessionSecretID(session Session) string {
+	if strings.TrimSpace(session.LeaseSecretID) != "" {
+		return strings.TrimSpace(session.LeaseSecretID)
+	}
+	if strings.TrimSpace(session.ProjectRoot) != "" {
+		return strings.TrimSpace(session.ProjectRoot)
+	}
+	return "session:" + session.ID
+}
+
+func sessionScope(session Session) string {
+	if strings.TrimSpace(session.LeaseScope) != "" {
+		return strings.TrimSpace(session.LeaseScope)
+	}
+	if strings.TrimSpace(session.ProjectRoot) != "" {
+		return "project"
+	}
+	return "session"
 }
 
 func randomHex(n int) (string, error) {
@@ -384,6 +627,8 @@ func (s Session) View() SessionView {
 		ProjectRoot:  s.ProjectRoot,
 		AgentSafe:    s.AgentSafe,
 		ConsumerName: s.ConsumerName,
+		Internal:     s.Internal,
+		OpenedAt:     s.OpenedAt,
 		ExpiresAt:    s.ExpiresAt,
 		LastSeenAt:   s.LastSeenAt,
 	}

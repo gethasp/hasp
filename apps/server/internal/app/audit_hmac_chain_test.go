@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/app/auditops"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -101,6 +102,45 @@ func TestAuditVerifySubcommandAlias(t *testing.T) {
 	// Extra positional after `verify` still rejected.
 	if err := Run(context.Background(), []string{"audit", "verify", "extra"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error for extra positional after verify")
+	}
+}
+
+func TestAuditExportNDJSONMatchesSharedDispatcher(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	appendAudit(audit.EventApprove, "daemon", map[string]any{"action": "session.open", "session_id": "s-1"})
+	appendAudit(audit.EventDeny, "daemon", map[string]any{"action": "lease.revoke", "lease_id": "l-1"})
+
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"audit", "export", "--format", "ndjson"}, bytes.NewBuffer(nil), &out, io.Discard); err != nil {
+		t.Fatalf("audit export: %v", err)
+	}
+	log, err := audit.New()
+	if err != nil {
+		t.Fatalf("audit.New: %v", err)
+	}
+	handle, err := openVaultHandleFn(context.Background())
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	log = log.WithKey(handle.AuditHMACKey())
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	var expected bytes.Buffer
+	if _, err := auditops.ExportNDJSON(&expected, events, auditops.ExportOptions{}, log.HMACKey()); err != nil {
+		t.Fatalf("expected export: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), expected.Bytes()) {
+		t.Fatalf("audit export mismatch\ngot=%s\nwant=%s", out.Bytes(), expected.Bytes())
 	}
 }
 

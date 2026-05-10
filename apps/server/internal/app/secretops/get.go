@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	revealcore "github.com/gethasp/hasp/apps/server/internal/app/reveal"
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -98,20 +99,31 @@ func secretGetWithMode(ctx context.Context, deps Deps, args []string, mode strin
 	}
 	switch {
 	case *reveal:
-		if err := deps.EnforceSecretPlaintextPolicyInteractive(ctx, handle, item.Name, store.PlaintextReveal, stdin, stderr); err != nil {
+		revealed, err := revealcore.Run(ctx, revealcore.Request{Ref: item.Name}, revealcore.Deps{
+			Find: func(context.Context, string) (revealcore.Payload, error) {
+				return revealcore.FromItem(item), nil
+			},
+			Authorize: func(ctx context.Context, payload revealcore.Payload) error {
+				return deps.EnforceSecretPlaintextPolicyInteractive(ctx, handle, payload.Name, store.PlaintextReveal, stdin, stderr)
+			},
+			Audit: func(context.Context, revealcore.Payload) error {
+				deps.AppendAuditCLI("read", map[string]any{
+					"action":      "secret.get.reveal",
+					"surface":     "cli",
+					"actor_label": deps.ActorLabel(),
+					"item_name":   item.Name,
+					"outcome":     "revealed",
+				})
+				return nil
+			},
+		})
+		if err != nil {
 			return err
 		}
-		deps.AppendAuditCLI("read", map[string]any{
-			"action":      "secret.get.reveal",
-			"surface":     "cli",
-			"actor_label": deps.ActorLabel(),
-			"item_name":   item.Name,
-			"outcome":     "revealed",
-		})
 		if *jsonOutput || deps.GlobalFlagsJSON(ctx) {
-			return deps.WriteJSONResponse(stdout, deps.SecretGetJSONPayload(metadata, false, true, item.Value))
+			return deps.WriteJSONResponse(stdout, deps.SecretGetJSONPayload(metadata, false, true, revealed.Value))
 		}
-		if _, err := stdout.Write(item.Value); err != nil {
+		if _, err := stdout.Write(revealed.Value); err != nil {
 			return err
 		}
 		// Trailing-newline policy (hasp-jx3r):

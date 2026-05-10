@@ -106,6 +106,21 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "session", summary: "open, resolve, or revoke broker sessions", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return sessionCommand(ctx, args, stdout, s)
 		}},
+		{name: "lease", summary: "list or revoke active broker leases", group: commandGroupUtility, helpTopic: []string{"lease"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+			return leaseCommand(ctx, args, stdout, s)
+		}},
+		{name: "approval", summary: "list or decide broker approval requests", group: commandGroupUtility, helpTopic: []string{"approval"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+			return approvalCommand(ctx, args, stdout, s)
+		}},
+		{name: "access", summary: "inspect consumer-to-secret access grants", group: commandGroupUtility, helpTopic: []string{"access"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+			return accessCommand(ctx, args, stdout, s)
+		}},
+		{name: "policy", summary: "show, validate, or replace access policy rules", group: commandGroupUtility, helpTopic: []string{"policy"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+			return policyCommand(ctx, args, stdout, s)
+		}},
+		{name: "config", summary: "show, get, or set daemon settings", group: commandGroupUtility, helpTopic: []string{"config"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+			return configCommand(ctx, args, stdout, s)
+		}},
 		{name: "audit", summary: "print the local audit log", group: commandGroupUtility, helpTopic: []string{"audit"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return auditCommandWithArgs(ctx, args, stdout)
 		}},

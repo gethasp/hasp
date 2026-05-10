@@ -27,11 +27,21 @@ var projectSubcommands = []string{
 	"adopt", "bind", "doctor", "examples", "requirements", "status", "targets", "unbind",
 }
 
+var policySubcommands = []string{
+	"set", "show", "validate",
+}
+
+var configSubcommands = []string{
+	"get", "set", "show",
+}
+
 // subcommandMap maps a root command name to its known subcommands.
 // Only entries that have meaningful sub-dispatch are listed; unlisted
 // commands will return an empty slice.
 func subcommandMap() map[string][]string {
 	return map[string][]string{
+		"config":  configSubcommands,
+		"policy":  policySubcommands,
 		"project": projectSubcommands,
 		"secret":  secretSubcommands,
 	}

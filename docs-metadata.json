@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "latest": "v1.0.4",
+  "latest": "v2.0.0",
   "updatedLabel": "May 2026",
   "sourceFiles": [
     "public/README.md",
     "public/QUICKSTART.md",
     "public/docs/mental-model.md",
+    "public/docs/agent-mental-model.md",
     "public/docs/value-free-manifests.md",
     "public/docs/install.md",
     "public/docs/after-homebrew.md",
@@ -24,6 +25,8 @@
     "public/CHANGELOG.md",
     "public/docs/release-distribution.md",
     "public/docs/install-and-release.md",
+    "public/docs/macos-v2-licensing.md",
+    "public/docs/macos-v2-migration.md",
     "public/docs/glossary.md",
     "public/docs/cli-reference.md",
     "public/docs/error-codes.md"
@@ -52,6 +55,14 @@
       "order": 15,
       "title": "Mental model",
       "description": "How to think about vaults, repo boundaries, consumers, grants, sessions, audit, and redaction."
+    },
+    {
+      "source": "public/docs/agent-mental-model.md",
+      "slug": "agent-mental-model",
+      "section": "Start",
+      "order": 16,
+      "title": "Agent mental model",
+      "description": "How agents use HASP handles, MCP tools, grants, and brokered runs without reading raw secret values."
     },
     {
       "source": "public/docs/value-free-manifests.md",
@@ -196,6 +207,22 @@
       "order": 20,
       "title": "Install and release",
       "description": "Operator-facing release verification and install details."
+    },
+    {
+      "source": "public/docs/macos-v2-licensing.md",
+      "slug": "macos-v2-licensing",
+      "section": "Release",
+      "order": 30,
+      "title": "macOS v2 licensing",
+      "description": "Online activation, offline license blobs, support workflow, and revocation trade-offs for HASP.app."
+    },
+    {
+      "source": "public/docs/macos-v2-migration.md",
+      "slug": "macos-v2-migration",
+      "section": "Release",
+      "order": 35,
+      "title": "macOS v2 migration",
+      "description": "Formula versus cask install paths, v1 CLI continuity, and how to switch between the free CLI and paid app."
     },
     {
       "source": "public/docs/glossary.md",

@@ -55,6 +55,20 @@ func New(keyring Keyring) (*Store, error) {
 	}, nil
 }
 
+func NewForPaths(keyring Keyring, resolved paths.Paths) (*Store, error) {
+	if keyring == nil {
+		keyring = unsupportedKeyring{}
+	}
+	return &Store{
+		paths:   resolved,
+		keyring: keyring,
+		audit:   audit.NewForPaths(resolved),
+		now: func() time.Time {
+			return time.Now().UTC()
+		},
+	}, nil
+}
+
 func (s *Store) Init(_ context.Context, masterPassword string) error {
 	if err := validateMasterPassword(masterPassword); err != nil {
 		return err

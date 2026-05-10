@@ -106,6 +106,7 @@ func TestBackupAdditionalFailurePaths(t *testing.T) {
 	}
 
 	backupPath = exportBackupFixture(t)
+	stripVaultKeyFromBackupFixture(t, backupPath)
 	randomBytesFn = func(int) ([]byte, error) { return nil, fmt.Errorf("random fail") }
 	if _, err := restoreStore.RestoreBackup(context.Background(), backupPath, "backup-passphrase", "restored-password"); err == nil {
 		t.Fatal("expected restore random failure")
@@ -599,4 +600,33 @@ func writeBackupFixture(t *testing.T, path string, file BackupFile) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write backup fixture: %v", err)
 	}
+}
+
+func stripVaultKeyFromBackupFixture(t *testing.T, path string) {
+	t.Helper()
+	file := readBackupFixture(t, path)
+	key, err := deriveFromSpec("backup-passphrase", file.KDF)
+	if err != nil {
+		t.Fatalf("derive fixture wrap key: %v", err)
+	}
+	plaintext, err := openBytes(key, file.Payload)
+	if err != nil {
+		t.Fatalf("open fixture payload: %v", err)
+	}
+	var payload backupPayload
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		t.Fatalf("decode fixture payload: %v", err)
+	}
+	payload.VaultKey = nil
+	plaintext, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("encode fixture payload: %v", err)
+	}
+	sealed, err := sealBytes(key, plaintext)
+	if err != nil {
+		t.Fatalf("seal fixture payload: %v", err)
+	}
+	file.Payload = sealed
+	file.Integrity = integrityDigest(plaintext)
+	writeBackupFixture(t, path, file)
 }

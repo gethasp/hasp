@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
+	"github.com/gethasp/hasp/apps/server/internal/app/auditops"
 	"github.com/gethasp/hasp/apps/server/internal/app/cmddispatch"
 	"github.com/gethasp/hasp/apps/server/internal/app/vaultaccess"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -394,12 +395,69 @@ func auditCommand(ctx context.Context, stdout io.Writer) error {
 	return auditCommandWithArgs(ctx, nil, stdout)
 }
 
+func auditExportCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("audit export", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fromRaw := fs.String("from", "", "")
+	toRaw := fs.String("to", "", "")
+	format := fs.String("format", "ndjson", "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return errors.New("usage: hasp audit export [--from <RFC3339>] [--to <RFC3339>] [--format ndjson]")
+	}
+	if strings.TrimSpace(*format) != "ndjson" {
+		return fmt.Errorf("unsupported audit export format %q", *format)
+	}
+	opts := auditops.ExportOptions{}
+	if strings.TrimSpace(*fromRaw) != "" {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*fromRaw))
+		if err != nil {
+			return fmt.Errorf("--from: %w", err)
+		}
+		opts.From = parsed
+	}
+	if strings.TrimSpace(*toRaw) != "" {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*toRaw))
+		if err != nil {
+			return fmt.Errorf("--to: %w", err)
+		}
+		opts.To = parsed
+	}
+	if !opts.From.IsZero() && !opts.To.IsZero() && opts.To.Before(opts.From) {
+		return errors.New("--to must be greater than or equal to --from")
+	}
+	log, err := newAuditLogFn()
+	if err != nil {
+		return err
+	}
+	if key := getAuditHMACKey(); len(key) > 0 {
+		log = log.WithKey(key)
+	} else if handle, oerr := openVaultHandleFn(ctx); oerr == nil && handle != nil {
+		log = log.WithKey(handle.AuditHMACKey())
+	}
+	events, err := auditEventsFn(log)
+	if err != nil {
+		return err
+	}
+	var trailerKey []byte
+	if log != nil {
+		trailerKey = log.HMACKey()
+	}
+	_, err = auditops.ExportNDJSON(stdout, events, opts, trailerKey)
+	return err
+}
+
 func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) error {
 	// `hasp audit tail` is a streaming sub-subcommand with its own flag
 	// surface; route before the general `audit` parser so flags like `-n`
 	// and `-f` don't collide with the verify/incident parsing below.
 	if len(args) > 0 && args[0] == "tail" {
 		return auditTailCommand(ctx, args[1:], stdout, defaultAuditTailOpts())
+	}
+	if len(args) > 0 && args[0] == "export" {
+		return auditExportCommand(ctx, args[1:], stdout)
 	}
 	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -488,17 +546,54 @@ func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) 
 		} else if handle, oerr := openVaultHandleFn(ctx); oerr == nil && handle != nil {
 			log = log.WithKey(handle.AuditHMACKey())
 		}
+	}
+	if verifyMode {
+		verifiedAt := time.Now().UTC()
+		report := auditops.VerifyResponse{ChainOK: true, LastVerifiedAt: &verifiedAt}
+		if log != nil {
+			var err error
+			report, err = auditops.Verify(log, verifiedAt)
+			if err != nil {
+				return err
+			}
+		}
+		payload := map[string]any{
+			"status":              "ok",
+			"chain":               "verified",
+			"chain_ok":            report.ChainOK,
+			"last_verified_at":    report.LastVerifiedAt,
+			"total_entries":       report.TotalEntries,
+			"first_corruption_at": report.FirstCorruptionAt,
+		}
+		if !report.ChainOK {
+			payload["status"] = "corrupt"
+			payload["chain"] = "corrupt"
+			payload["error"] = report.Error
+		}
+		err := renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+			status := "ok"
+			lead := "The local audit chain authenticates under the current vault key."
+			if !report.ChainOK {
+				status = "corrupt"
+				lead = "The local audit chain failed verification."
+			}
+			return renderSimpleAction(ctx, w, "Audit verified", lead,
+				cliPair("Status", status),
+				cliPair("Entries", strconv.Itoa(report.TotalEntries)),
+			)
+		})
+		if err != nil {
+			return err
+		}
+		if !report.ChainOK {
+			return errors.New("audit chain verification failed")
+		}
+		return nil
+	}
+	if log != nil {
 		if err := log.Verify(); err != nil {
 			return err
 		}
-	}
-	if verifyMode {
-		payload := map[string]any{"status": "ok", "chain": "verified"}
-		return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-			return renderSimpleAction(ctx, w, "Audit verified", "The local audit chain authenticates under the current vault key.",
-				cliPair("Status", "ok"),
-			)
-		})
 	}
 
 	// Dispatch to human-readable renderers when --format=timeline or --format=table.

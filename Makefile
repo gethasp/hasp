@@ -2,6 +2,7 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
+PNPM ?= npx --yes pnpm@10.33.2
 TOOLS_BIN := $(REPO_ROOT)/bin/tools
 
 ## build: Build the local HASP broker binary
@@ -94,9 +95,10 @@ lint-full: lint vulncheck
 
 ## web-check: Validate exported web and download Worker surfaces
 web-check:
-	@if command -v corepack >/dev/null 2>&1; then corepack enable && corepack prepare pnpm@10.33.2 --activate; fi
-	@pnpm -C apps/web install --frozen-lockfile
-	@$(MAKE) -C apps/web check
+	@/bin/mkdir -p .cache/corepack
+	@if command -v corepack >/dev/null 2>&1; then COREPACK_HOME="$(CURDIR)/.cache/corepack" corepack enable && COREPACK_HOME="$(CURDIR)/.cache/corepack" corepack prepare pnpm@10.33.2 --activate; fi
+	@$(PNPM) -C apps/web install --frozen-lockfile
+	@$(MAKE) -C apps/web check PNPM="$(PNPM)"
 	@python3 ./scripts/check-public-docs-versioning.py
 
 ## verify-ci: Canonical fast CI gate
@@ -136,9 +138,9 @@ package-public-release:
 publish-r2:
 	@bash ./scripts/publish-release-to-r2.sh dist/public-release/v$(VERSION) v$(VERSION)
 
-## publish-tap: Copy the rendered formula into a tap checkout
+## publish-tap: Copy the rendered formula and cask into a tap checkout
 publish-tap:
-	@bash ./scripts/publish-homebrew-tap.sh $(PUSH) dist/public-release/v$(VERSION)/Formula/hasp.rb $(TAP_REPO) v$(VERSION)
+	@bash ./scripts/publish-homebrew-tap.sh $(PUSH) --cask dist/public-release/v$(VERSION)/Casks/hasp.rb dist/public-release/v$(VERSION)/Formula/hasp.rb $(TAP_REPO) v$(VERSION)
 
 ## install-hooks: Install the repo guardrail hooks into the current repo
 install-hooks:

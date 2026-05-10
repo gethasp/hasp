@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/httpapi"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -42,7 +43,7 @@ func (k *fakeKeyring) Get(service string, account string) (string, error) {
 	}
 	value, ok := k.values[service+"/"+account]
 	if !ok {
-		return "", store.ErrKeyringUnavailable
+		return "", store.KeyringItemNotFoundError{Err: errors.New("item not found")}
 	}
 	return value, nil
 }
@@ -76,6 +77,9 @@ type fakeRuntimeRPC struct {
 	now       time.Time
 	pingErr   error
 	statusErr error
+	lockCalls int
+	lockCause string
+	lockErr   error
 }
 
 func (r *fakeRuntimeRPC) Ping(runtime.PingRequest, *runtime.PingResponse) error {
@@ -116,6 +120,16 @@ func (h haspRuntimeRPC) Ping(req runtime.PingRequest, reply *runtime.PingRespons
 
 func (h haspRuntimeRPC) Status(req runtime.StatusRequest, reply *runtime.StatusResponse) error {
 	return h.inner.StatusPtr(req, reply)
+}
+
+func (h haspRuntimeRPC) LockVault(req runtime.LockVaultRequest, reply *runtime.LockVaultResponse) error {
+	h.inner.lockCalls++
+	h.inner.lockCause = req.Cause
+	if h.inner.lockErr != nil {
+		return h.inner.lockErr
+	}
+	*reply = runtime.LockVaultResponse{Locked: true, RevokedCount: 2}
+	return nil
 }
 
 func startRuntimeRPC(t *testing.T, fake *fakeRuntimeRPC) string {
@@ -204,6 +218,13 @@ func fullRuntimeDeps(t *testing.T, fake *fakeRuntimeRPC) Deps {
 			_, err := fmt.Fprintf(stdout, "not-running:%v", jsonOutput)
 			return err
 		},
+		ConnectIfRunning: func(ctx context.Context, s Starter) RuntimeClient {
+			client, err := s.Connect(ctx)
+			if err != nil {
+				return nil
+			}
+			return client
+		},
 		ReadPassphrase: func(bool, int, string, string) (string, error) { return "backup-passphrase", nil },
 		ExpandUserPath: func(path string) (string, error) {
 			return strings.Replace(path, "~", home, 1), nil
@@ -222,6 +243,9 @@ func fullRuntimeDeps(t *testing.T, fake *fakeRuntimeRPC) Deps {
 			return runtime.NewManager()
 		},
 		NewInternalError: func(msg string) error { return errors.New("internal:" + msg) },
+		HTTPKeyring: func() store.Keyring {
+			return &fakeKeyring{values: map[string]string{}}
+		},
 	}
 }
 
@@ -292,7 +316,13 @@ func TestRuntimeCommandSuccessPaths(t *testing.T) {
 	managerRunDaemon = func(*runtime.Manager, context.Context) error { return nil }
 	managerStartDaemon = func(*runtime.Manager, context.Context) error { return nil }
 	managerStopDaemon = func(*runtime.Manager) error { return nil }
-	for _, args := range [][]string{{"daemon", "serve"}, {"daemon", "start"}, {"daemon", "stop"}, {"daemon", "status"}} {
+	for _, args := range [][]string{
+		{"daemon", "run", "--foreground", "--gui-listener"},
+		{"daemon", "serve"},
+		{"daemon", "start"},
+		{"daemon", "stop"},
+		{"daemon", "status"},
+	} {
 		if err := RuntimeCommand(ctx, deps, args, strings.NewReader(""), &out, io.Discard); err != nil {
 			t.Fatalf("daemon %v: %v", args, err)
 		}
@@ -461,7 +491,7 @@ func TestRuntimeOptionalRenderingBranches(t *testing.T) {
 	ctx := context.Background()
 	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
 	var out bytes.Buffer
-	deps.ConnectIfRunning = func(context.Context, Starter) *runtime.Client { return nil }
+	deps.ConnectIfRunning = func(context.Context, Starter) RuntimeClient { return nil }
 	if err := RuntimeCommand(ctx, deps, []string{"ping", "--json"}, strings.NewReader(""), &out, io.Discard); err != nil {
 		t.Fatalf("ping not running: %v", err)
 	}
@@ -616,5 +646,144 @@ func TestDaemonStopErrorBranches(t *testing.T) {
 	managerStopDaemon = func(*runtime.Manager) error { return errors.New("stop") }
 	if err := RuntimeCommand(ctx, deps, []string{"daemon", "stop"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected stop error")
+	}
+}
+
+func TestDaemonRestartLocksVaultAndRestarts(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeRuntimeRPC{}
+	deps := fullRuntimeDeps(t, fake)
+	origStart := managerStartDaemon
+	origStop := managerStopDaemon
+	t.Cleanup(func() {
+		managerStartDaemon = origStart
+		managerStopDaemon = origStop
+	})
+	starts := 0
+	stops := 0
+	managerStartDaemon = func(*runtime.Manager, context.Context) error {
+		starts++
+		return nil
+	}
+	managerStopDaemon = func(*runtime.Manager) error {
+		stops++
+		return nil
+	}
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "app-update"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatalf("daemon restart: %v", err)
+	}
+	if fake.lockCalls != 1 {
+		t.Fatalf("LockVault calls = %d, want 1", fake.lockCalls)
+	}
+	if fake.lockCause != "daemon-restart" {
+		t.Fatalf("LockVault cause = %q", fake.lockCause)
+	}
+	if starts != 1 || stops != 1 {
+		t.Fatalf("starts/stops = %d/%d, want 1/1", starts, stops)
+	}
+}
+
+func TestDaemonRestartValidatesReason(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "bad"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("expected invalid reason error")
+	}
+}
+
+func TestDaemonHTTPKeyFingerprint(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	account, err := httpapi.HMACKeyAccount()
+	if err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	keyring := &fakeKeyring{values: map[string]string{}}
+	if _, err := httpapi.LoadOrCreateHMACKey(ctx, keyring); err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	var out bytes.Buffer
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "fingerprint"}, strings.NewReader(""), &out, io.Discard); err != nil {
+		t.Fatalf("http-key fingerprint: %v", err)
+	}
+	got := strings.TrimSpace(out.String())
+	if len(got) != 16 {
+		t.Fatalf("fingerprint length = %d, want 16: %q", len(got), got)
+	}
+	if _, ok := keyring.values["com.gethasp.hasp.daemon.http/"+account]; !ok {
+		t.Fatalf("expected HMAC key to be stored, got %+v", keyring.values)
+	}
+}
+
+func TestDaemonHTTPKeyFingerprintDoesNotCreateMissingKey(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	keyring := &fakeKeyring{values: map[string]string{}}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "fingerprint"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("expected missing HMAC key error")
+	}
+	if len(keyring.values) != 0 {
+		t.Fatalf("fingerprint should not create key, got %+v", keyring.values)
+	}
+}
+
+func TestDaemonHTTPKeyReinitializeOverwritesKey(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	keyring := &fakeKeyring{values: map[string]string{}}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	var out bytes.Buffer
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "reinitialize"}, strings.NewReader(""), &out, io.Discard); err != nil {
+		t.Fatalf("http-key reinitialize: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); !strings.HasPrefix(got, "reinitialized ") {
+		t.Fatalf("unexpected output %q", got)
+	}
+	account, err := httpapi.HMACKeyAccount()
+	if err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if _, ok := keyring.values["com.gethasp.hasp.daemon.http/"+account]; !ok {
+		t.Fatalf("expected recreated HMAC key, got %+v", keyring.values)
+	}
+}
+
+func TestDaemonHTTPKeyReinitializeRequiresApproval(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	keyring := &fakeKeyring{values: map[string]string{}}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	deps.ApproveHMACKeyReinitialize = func() error {
+		return errors.New("approval denied")
+	}
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "reinitialize"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "approval denied" {
+		t.Fatalf("expected approval failure, got %v", err)
+	}
+	if len(keyring.values) != 0 {
+		t.Fatalf("reinitialize must not write after approval failure, got %+v", keyring.values)
+	}
+}
+
+func TestDaemonHTTPKeyDoesNotConstructRuntimeManager(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	keyring := &fakeKeyring{values: map[string]string{}}
+	if _, err := httpapi.LoadOrCreateHMACKey(ctx, keyring); err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	deps.NewRuntimeManager = func() (*runtime.Manager, error) {
+		return nil, errors.New("manager should not be constructed")
+	}
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "fingerprint"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatalf("http-key fingerprint should bypass runtime manager: %v", err)
 	}
 }

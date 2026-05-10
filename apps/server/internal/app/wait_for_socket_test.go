@@ -18,11 +18,7 @@ import (
 
 func shortSocketPath(t *testing.T, _ string) string {
 	t.Helper()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get cwd: %v", err)
-	}
-	base := filepath.Clean(filepath.Join(cwd, "../../../..", ".testsock"))
+	base := filepath.Join("/tmp", "hasp-testsock")
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		t.Fatalf("create socket base: %v", err)
 	}

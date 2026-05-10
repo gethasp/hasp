@@ -132,8 +132,8 @@ func TestCLIEndToEndMatrix(t *testing.T) {
 	if _, _, err := runHasp(t, restoreEnv, "", "restore-backup", "--input", backupPath); err != nil {
 		t.Fatalf("restore-backup failed: %v", err)
 	}
-	if _, _, err := runHasp(t, restoreEnv, "", "audit"); err != nil {
-		t.Fatalf("audit after restore failed: %v", err)
+	if stdout, stderr, err := runHasp(t, restoreEnv, "", "audit"); err != nil {
+		t.Fatalf("audit after restore failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 
 	tuiOut, _, err := runHasp(t, env, "", "tui", "--project-root", env.projectRoot)

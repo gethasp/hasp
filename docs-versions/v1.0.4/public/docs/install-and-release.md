@@ -4,13 +4,17 @@ This page covers the public install path and the release trust path together.
 
 ## Homebrew
 
-Use Homebrew for the normal public install path:
+Use Homebrew for the normal public CLI install path:
 
 ```bash
 brew tap gethasp/tap
 brew install gethasp/tap/hasp
 hasp version
 ```
+
+The macOS v2 app uses a cask in the same tap. See
+[macOS v2 migration](macos-v2-migration.md) before switching between the free
+CLI formula and paid app cask.
 
 Use [Install](install.md) for Homebrew upgrade and uninstall commands.
 

@@ -32,7 +32,7 @@ func (m *memorySetupKeyring) Get(service string, account string) (string, error)
 	if value, ok := m.values[service+":"+account]; ok {
 		return value, nil
 	}
-	return "", store.ErrKeyringUnavailable
+	return "", store.KeyringItemNotFoundError{Err: store.ErrKeyringUnavailable}
 }
 
 func (m *memorySetupKeyring) Delete(service string, account string) error {

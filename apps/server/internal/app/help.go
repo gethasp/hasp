@@ -58,6 +58,22 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "session", text: sessionHelpText},
 	{key: "session grant-plaintext", text: sessionGrantPlaintextHelpText},
 	{key: "session grant-mutation", text: sessionGrantMutationHelpText},
+	{key: "lease", text: leaseHelpText},
+	{key: "lease list", text: leaseListHelpText},
+	{key: "lease revoke", text: leaseRevokeHelpText},
+	{key: "approval", text: approvalHelpText},
+	{key: "approval list", text: approvalListHelpText},
+	{key: "approval decide", text: approvalDecideHelpText},
+	{key: "access", text: accessHelpText},
+	{key: "access matrix", text: accessMatrixHelpText},
+	{key: "policy", text: policyHelpText},
+	{key: "policy show", text: policyShowHelpText},
+	{key: "policy set", text: policySetHelpText},
+	{key: "policy validate", text: policyValidateHelpText},
+	{key: "config", text: configHelpText},
+	{key: "config show", text: configShowHelpText},
+	{key: "config get", text: configGetHelpText},
+	{key: "config set", text: configSetHelpText},
 	{key: "vault", text: vaultHelpText},
 	{key: "vault lock", text: vaultLockHelpText},
 	{key: "vault forget-device", text: vaultForgetDeviceHelpText},
@@ -65,6 +81,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "status", text: statusHelpText},
 	{key: "ping", text: pingHelpText},
 	{key: "audit", text: auditHelpText},
+	{key: "audit export", text: auditExportHelpText},
 	{key: "audit tail", text: auditTailHelpText},
 	{key: "export-backup", text: exportBackupHelpText},
 	{key: "restore-backup", text: restoreBackupHelpText},
@@ -321,6 +338,8 @@ Repair
 Flags
   --project-root <path>   repo root to include in the binding health check
                           (default: current directory)
+  --target <id>           run a scoped integration doctor for one target
+  --profile <id>          limit a scoped integration doctor to one profile
   --json                  emit machine-readable result on stdout
   --fix                   attempt to repair common breakage (see above)
 
@@ -328,6 +347,7 @@ Examples
   hasp doctor
   hasp doctor --json
   hasp doctor --fix
+  hasp doctor --target shell-hook --json
 `
 
 const importHelpText = `hasp import
@@ -1023,13 +1043,20 @@ const daemonHelpText = `hasp daemon
 Manage the local runtime daemon.
 
 Subcommands
-  serve   run the daemon in the foreground
-  start   start it in the background
-  stop    stop it
-  status  inspect it
+  run        run the daemon in the foreground (LaunchAgent entry point)
+  serve      run the daemon in the foreground
+  start      start it in the background
+  stop       stop it
+  restart    lock the vault, stop the daemon, then start it again
+  status     inspect it
+  http-key   inspect or reinitialise the daemon HTTP HMAC key
 
 Examples
+  hasp daemon run --foreground --gui-listener
   hasp daemon status
+  hasp daemon restart --reason app-update
+  hasp daemon http-key fingerprint
+  hasp daemon http-key reinitialize
 `
 
 const sessionHelpText = `hasp session
@@ -1109,6 +1136,253 @@ Flags
 Examples
   hasp session grant-mutation --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action expose --grant-window 60s
   hasp session grant-mutation --token $HASP_SESSION_TOKEN --item OPENAI_API_KEY --action hide --grant-window 60s
+`
+
+const leaseHelpText = `hasp lease
+
+List or revoke broker leases exposed through the daemon API.
+
+Subcommands
+  list      list leases with optional consumer, status, expiry, and cursor filters
+  revoke    revoke one lease id or every active lease for a consumer
+
+Common flags
+  --json   emit machine-readable result on stdout
+
+Examples
+  hasp lease list --json
+  hasp lease list --consumer ci-runner --status active
+  hasp lease revoke <lease-id> --reason operator-request
+  hasp lease revoke --all-for-consumer ci-runner
+`
+
+const leaseListHelpText = `hasp lease list
+
+List leases using the same response schema as GET /v1/leases.
+
+Flags
+  --json                 emit machine-readable result on stdout
+  --consumer <id>        filter to one consumer id
+  --status <status>      filter to active, revoked, or expired leases
+  --expiring-in <dur>    filter active leases expiring within a duration
+  --cursor <cursor>      pagination cursor from next_cursor
+  --limit <n>            maximum rows to return (default: 100)
+
+Examples
+  hasp lease list --json
+  hasp lease list --consumer ci-runner --status active
+  hasp lease list --expiring-in 10m --limit 25
+`
+
+const leaseRevokeHelpText = `hasp lease revoke
+
+Revoke a lease by id, or revoke every active lease for one consumer.
+
+Flags
+  --json                    emit machine-readable result on stdout
+  --reason <text>           reason recorded with the revoke audit event
+  --all-for-consumer <id>   revoke all active leases for one consumer id
+
+Examples
+  hasp lease revoke <lease-id> --reason operator-request
+  hasp lease revoke --all-for-consumer ci-runner --reason cleanup
+`
+
+const approvalHelpText = `hasp approval
+
+List or decide broker approval requests.
+
+Subcommands
+  list      list approval requests by status or consumer
+  decide    grant or deny one pending approval
+
+Common flags
+  --json   emit machine-readable result on stdout
+
+Examples
+  hasp approval list --json
+  hasp approval list --status pending --consumer ci-runner
+  hasp approval decide <approval-id> --grant --ttl 15m --scope window --auth-method device-owner --hold-proof 1500ms
+  hasp approval decide <approval-id> --deny --reason not-now
+`
+
+const approvalListHelpText = `hasp approval list
+
+List approval requests using the same response schema as GET /v1/approvals.
+
+Flags
+  --json            emit machine-readable result on stdout
+  --status <state>  filter to pending, granted, denied, or expired
+  --consumer <id>   filter to one requester consumer id
+
+Examples
+  hasp approval list --json
+  hasp approval list --status pending
+  hasp approval list --consumer ci-runner
+`
+
+const approvalDecideHelpText = `hasp approval decide
+
+Grant or deny one pending approval request.
+
+Flags
+  --json           emit machine-readable result on stdout
+  --grant          grant the approval and create a lease
+  --deny           deny the approval without creating a lease
+  --ttl <dur>              granted lease lifetime for --grant
+  --scope <scope>          granted scope for --grant
+  --auth-method <method>   local auth proof for --grant: touch-id|device-owner
+  --hold-proof <duration>  hold duration proof for --grant, minimum 1500ms
+  --reason <text>          decision reason, usually for --deny
+
+Examples
+  hasp approval decide <approval-id> --grant --ttl 15m --scope window --auth-method device-owner --hold-proof 1500ms
+  hasp approval decide <approval-id> --deny --reason not-now
+`
+
+const accessHelpText = `hasp access
+
+Inspect read-side access surfaces exposed through the daemon API.
+
+Subcommands
+  matrix    show the sparse consumer by secret grant matrix
+
+Common flags
+  --json   emit machine-readable result on stdout
+
+Examples
+  hasp access matrix --json
+  hasp access matrix --consumer ci-runner --json
+`
+
+const accessMatrixHelpText = `hasp access matrix
+
+Show the same sparse matrix schema as GET /v1/access/matrix.
+
+Flags
+  --json                         emit machine-readable result on stdout
+  --consumer <id>                filter to one consumer id
+  --secret <id>                  filter to one secret id or path
+  --scope <scope>                filter to one grant scope
+  --source <source>              filter to policy or manual grants
+  --has-active-lease <bool>      filter by active lease presence
+  --cursor <cursor>              pagination cursor from next_cursor
+  --limit <n>                    maximum grant rows to return (default: 100)
+
+Examples
+  hasp access matrix --json
+  hasp access matrix --consumer ci-runner --json
+  hasp access matrix --source manual --has-active-lease true
+`
+
+const policyHelpText = `hasp policy
+
+Show, validate, or replace daemon policy rules.
+
+Subcommands
+  show        print the current policy document
+  set         replace the policy from a JSON file
+  validate    validate a policy JSON file without persisting it
+
+Examples
+  hasp policy show --json
+  hasp policy validate --file policy.json
+  hasp policy set --file policy.json
+  hasp policy set --file policy.json --force
+`
+
+const policyShowHelpText = `hasp policy show
+
+Print the current policy document using the same schema as GET /v1/policy.
+
+Options
+  --json    emit machine-readable JSON
+
+Examples
+  hasp policy show
+  hasp policy show --json
+`
+
+const policySetHelpText = `hasp policy set
+
+Replace the current policy from a JSON file. The file's version is used as the
+optimistic concurrency precondition unless --force is passed.
+
+Options
+  --file <path>    policy JSON file to apply
+  --force          skip version precondition; validation still runs
+  --json           emit machine-readable JSON
+
+Examples
+  hasp policy set --file policy.json
+  hasp policy set --file policy.json --force --json
+`
+
+const policyValidateHelpText = `hasp policy validate
+
+Validate a policy JSON file through the daemon without persisting it.
+
+Options
+  --file <path>    policy JSON file to validate
+  --json           emit machine-readable JSON
+
+Examples
+  hasp policy validate --file policy.json
+  hasp policy validate --file policy.json --json
+`
+
+const configHelpText = `hasp config
+
+Show, read, or update whitelisted daemon settings.
+
+Subcommands
+  show    print the full safe config map
+  get     print one config key
+  set     update one config key
+
+Examples
+  hasp config show --json
+  hasp config get vault.idle_relock_s
+  hasp config set reveal.scrub_seconds 45
+`
+
+const configShowHelpText = `hasp config show
+
+Print the full safe config map. Secret material such as HMAC keys, master
+password material, and license blobs is never part of this surface.
+
+Options
+  --json    emit machine-readable JSON
+
+Examples
+  hasp config show
+  hasp config show --json
+`
+
+const configGetHelpText = `hasp config get
+
+Print one whitelisted config key.
+
+Options
+  --json    emit machine-readable JSON
+
+Examples
+  hasp config get vault.auto_relock_enabled
+  hasp config get integrations.disabled_targets --json
+`
+
+const configSetHelpText = `hasp config set
+
+Update one whitelisted config key. Values are typed by key: booleans use
+true/false, numbers use decimal integers, arrays use JSON string arrays.
+
+Options
+  --json    emit machine-readable JSON
+
+Examples
+  hasp config set clipboard.scrub_seconds 90
+  hasp config set ui.reduce_motion_override on
+  hasp config set integrations.disabled_targets '["shell-hook"]'
 `
 
 const vaultHelpText = `hasp vault
@@ -1223,6 +1497,7 @@ Print the local audit log.
 Subcommands
   tail      print the most recent events; -f streams new appends
   verify    verify the local audit chain HMAC and exit
+  export    stream audit events as NDJSON with a trailer HMAC
 
 Flags
   --json                   emit one JSON event per line (NDJSON)
@@ -1240,7 +1515,23 @@ Flags
 Examples
   hasp audit
   hasp audit --incident-bundle --json
+  hasp audit export --from 2026-05-10T00:00:00Z --to 2026-05-10T01:00:00Z
   hasp audit tail -n 20 -f
+`
+
+const auditExportHelpText = `hasp audit export
+
+Stream audit events as NDJSON and append a trailer line containing the SHA-256
+of streamed event bytes, HMAC, and count.
+
+Flags
+  --from <time>      include events at or after this RFC3339 timestamp
+  --to <time>        include events at or before this RFC3339 timestamp
+  --format <fmt>     output format (currently ndjson)
+
+Examples
+  hasp audit export --format ndjson
+  hasp audit export --from 2026-05-10T00:00:00Z --to 2026-05-10T01:00:00Z
 `
 
 const auditTailHelpText = `hasp audit tail

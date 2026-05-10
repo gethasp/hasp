@@ -42,8 +42,12 @@ func runtimeDepsWithStarter(s starter) runtimeops.Deps {
 	deps := defaultRuntimeDeps()
 	if s != nil {
 		deps.NewStarter = func() (runtimeops.Starter, error) { return s, nil }
-		deps.ConnectIfRunning = func(ctx context.Context, _ runtimeops.Starter) *runtime.Client {
-			return connectIfRunning(ctx, s)
+		deps.ConnectIfRunning = func(ctx context.Context, _ runtimeops.Starter) runtimeops.RuntimeClient {
+			client := connectIfRunning(ctx, s)
+			if client == nil {
+				return nil
+			}
+			return client
 		}
 	}
 	return deps

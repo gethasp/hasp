@@ -69,9 +69,85 @@ func (c *Client) RevokeAllSessions(ctx context.Context) (RevokeAllSessionsRespon
 	return reply, err
 }
 
+func (c *Client) ListLeases(ctx context.Context, req ListLeasesRequest) (ListLeasesResponse, error) {
+	var reply ListLeasesResponse
+	err := c.call(ctx, "HASP.ListLeases", req, &reply)
+	return reply, err
+}
+
+func (c *Client) AccessMatrix(ctx context.Context, req AccessMatrixRequest) (AccessMatrixResponse, error) {
+	var reply AccessMatrixResponse
+	err := c.call(ctx, "HASP.AccessMatrix", req, &reply)
+	return reply, err
+}
+
+func (c *Client) Policy(ctx context.Context) (PolicyResponse, error) {
+	var reply PolicyResponse
+	err := c.call(ctx, "HASP.Policy", PolicyGetRequest{}, &reply)
+	return reply, err
+}
+
+func (c *Client) SetPolicy(ctx context.Context, req PolicySetRequest) (PolicyResponse, error) {
+	var reply PolicyResponse
+	err := c.call(ctx, "HASP.SetPolicy", req, &reply)
+	return reply, err
+}
+
+func (c *Client) Config(ctx context.Context) (ConfigResponse, error) {
+	var reply ConfigResponse
+	err := c.call(ctx, "HASP.Config", ConfigGetRequest{}, &reply)
+	return reply, err
+}
+
+func (c *Client) SetConfig(ctx context.Context, req ConfigSetRequest) (ConfigValueResponse, error) {
+	var reply ConfigValueResponse
+	err := c.call(ctx, "HASP.SetConfig", req, &reply)
+	return reply, err
+}
+
+func (c *Client) Integrations(ctx context.Context) (IntegrationListResponse, error) {
+	var reply IntegrationListResponse
+	err := c.call(ctx, "HASP.Integrations", IntegrationGetRequest{}, &reply)
+	return reply, err
+}
+
+func (c *Client) IntegrationProfiles(ctx context.Context, req IntegrationProfilesRequest) (IntegrationProfilesResponse, error) {
+	var reply IntegrationProfilesResponse
+	err := c.call(ctx, "HASP.IntegrationProfiles", req, &reply)
+	return reply, err
+}
+
+func (c *Client) DoctorIntegration(ctx context.Context, req IntegrationDoctorRPCRequest) (IntegrationDoctorResponse, error) {
+	var reply IntegrationDoctorResponse
+	err := c.call(ctx, "HASP.DoctorIntegration", req, &reply)
+	return reply, err
+}
+
+func (c *Client) RevokeLease(ctx context.Context, req RevokeLeaseRequest) (RevokeLeaseResponse, error) {
+	var reply RevokeLeaseResponse
+	err := c.call(ctx, "HASP.RevokeLease", req, &reply)
+	return reply, err
+}
+
+func (c *Client) ListApprovals(ctx context.Context, req ListApprovalsRequest) (ListApprovalsResponse, error) {
+	var reply ListApprovalsResponse
+	err := c.call(ctx, "HASP.ListApprovals", req, &reply)
+	return reply, err
+}
+
+func (c *Client) DecideApproval(ctx context.Context, req DecideApprovalRequest) (DecideApprovalResponse, error) {
+	var reply DecideApprovalResponse
+	err := c.call(ctx, "HASP.DecideApproval", req, &reply)
+	return reply, err
+}
+
 func (c *Client) LockVault(ctx context.Context) (LockVaultResponse, error) {
+	return c.LockVaultWithCause(ctx, "")
+}
+
+func (c *Client) LockVaultWithCause(ctx context.Context, cause string) (LockVaultResponse, error) {
 	var reply LockVaultResponse
-	err := c.call(ctx, "HASP.LockVault", LockVaultRequest{}, &reply)
+	err := c.call(ctx, "HASP.LockVault", LockVaultRequest{Cause: cause}, &reply)
 	return reply, err
 }
 

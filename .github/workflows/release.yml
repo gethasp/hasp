@@ -68,8 +68,32 @@ jobs:
       - name: Smoke release artifact
         run: bash ./scripts/release-smoke.sh --target "${{ matrix.goos }}/${{ matrix.goarch }}" --release-dir "dist/public-release/${GITHUB_REF_NAME}"
 
-  build-public-release:
+  release-preflight:
     needs: release-targets
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+      - name: Bootstrap Go tools
+        run: bash ./scripts/bootstrap_go_tools.sh verify
+      - name: Run release preflight
+        env:
+          HASP_TEAM_ID: ${{ secrets.HASP_TEAM_ID }}
+        run: make release-preflight
+
+  build-public-release:
+    needs:
+      - release-targets
+      - release-preflight
+      - build-notarized-macos-dmg
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -112,7 +136,14 @@ jobs:
           HASP_UPGRADE_TRUST_ROOTS_HEX: ${{ secrets.HASP_UPGRADE_TRUST_ROOTS_HEX }}
           HASP_UPGRADE_SIGNING_KEY_B64: ${{ secrets.HASP_UPGRADE_SIGNING_KEY_B64 }}
           HASP_RELEASE_BASE_URL: https://downloads.gethasp.com/hasp/releases
-        run: bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
+          HASP_MACOS_DMG_SHA256: ${{ needs.build-notarized-macos-dmg.outputs.sha256 }}
+          HASP_MACOS_DMG_URL: https://download.gethasp.com/macos/HASP-${{ needs.build-notarized-macos-dmg.outputs.version }}.dmg
+        run: |
+          : "${HASP_MACOS_DMG_SHA256:?HASP_MACOS_DMG_SHA256 is required}"
+          : "${HASP_MACOS_DMG_URL:?HASP_MACOS_DMG_URL is required}"
+          bash ./scripts/package-public-release.sh "${GITHUB_REF_NAME}"
+      - name: Verify cask artifact exists
+        run: test -s "dist/public-release/${GITHUB_REF_NAME}/Casks/hasp.rb"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-release
@@ -120,31 +151,164 @@ jobs:
             dist/public-release/${{ github.ref_name }}/**/*
             release-notes.md
 
+  build-notarized-macos-dmg:
+    needs: release-preflight
+    runs-on: macos-15
+    outputs:
+      sha256: ${{ steps.dmg.outputs.sha256 }}
+      version: ${{ steps.dmg.outputs.version }}
+    env:
+      HASP_FLOWDECK_VERSION: "1.14.1"
+      HASP_CREATE_DMG_VERSION: "1.2.3"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Install macOS packaging tools
+        run: |
+          brew install flowdeck create-dmg
+          flowdeck --version | grep -F "$HASP_FLOWDECK_VERSION"
+          brew list --versions create-dmg | grep -F "$HASP_CREATE_DMG_VERSION"
+      - name: Build, sign, notarize, and staple DMG
+        id: dmg
+        env:
+          HASP_TEAM_ID: ${{ secrets.HASP_TEAM_ID }}
+          HASP_DEVELOPER_ID_APPLICATION: ${{ secrets.HASP_DEVELOPER_ID_APPLICATION }}
+          HASP_DEVELOPER_ID_APPLICATION_P12_B64: ${{ secrets.HASP_DEVELOPER_ID_APPLICATION_P12_B64 }}
+          HASP_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.HASP_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          HASP_NOTARY_KEY_B64: ${{ secrets.HASP_NOTARY_KEY_B64 }}
+          HASP_NOTARY_KEY_ID: ${{ secrets.HASP_NOTARY_KEY_ID }}
+          HASP_NOTARY_ISSUER_ID: ${{ secrets.HASP_NOTARY_ISSUER_ID }}
+          HASP_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.HASP_SPARKLE_PUBLIC_ED_KEY }}
+        run: |
+          : "${HASP_TEAM_ID:?HASP_TEAM_ID is required}"
+          : "${HASP_DEVELOPER_ID_APPLICATION:?HASP_DEVELOPER_ID_APPLICATION is required}"
+          : "${HASP_DEVELOPER_ID_APPLICATION_P12_B64:?HASP_DEVELOPER_ID_APPLICATION_P12_B64 is required}"
+          : "${HASP_DEVELOPER_ID_APPLICATION_P12_PASSWORD:?HASP_DEVELOPER_ID_APPLICATION_P12_PASSWORD is required}"
+          : "${HASP_NOTARY_KEY_B64:?HASP_NOTARY_KEY_B64 is required}"
+          : "${HASP_NOTARY_KEY_ID:?HASP_NOTARY_KEY_ID is required}"
+          : "${HASP_NOTARY_ISSUER_ID:?HASP_NOTARY_ISSUER_ID is required}"
+          : "${HASP_SPARKLE_PUBLIC_ED_KEY:?HASP_SPARKLE_PUBLIC_ED_KEY is required}"
+          notary_key="$RUNNER_TEMP/AuthKey_${HASP_NOTARY_KEY_ID}.p8"
+          printf '%s' "$HASP_NOTARY_KEY_B64" | base64 --decode > "$notary_key"
+          trap 'rm -f "$notary_key"' EXIT
+          bash ./scripts/package-macos-dmg.sh \
+            --identity "$HASP_DEVELOPER_ID_APPLICATION" \
+            --p12-b64 "$HASP_DEVELOPER_ID_APPLICATION_P12_B64" \
+            --p12-password "$HASP_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+            --notarize \
+            --notary-key "$notary_key" \
+            --notary-key-id "$HASP_NOTARY_KEY_ID" \
+            --notary-issuer-id "$HASP_NOTARY_ISSUER_ID"
+          version="$(cat VERSION)"
+          dmg="dist/macos/HASP-${version}.dmg"
+          test -s "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type install -vv "$dmg"
+          spctl -a -t open --context context:primary-signature -vv "$dmg"
+          mount_dir="$(mktemp -d)"
+          hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -quiet
+          trap 'hdiutil detach "$mount_dir" -quiet || true; rm -rf "$mount_dir"; rm -f "$notary_key"' EXIT
+          codesign --verify --strict --verbose=2 "$mount_dir/HASP.app"
+          spctl --assess --type exec -vv "$mount_dir/HASP.app"
+          sha256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          {
+            printf 'version=%s\n' "$version"
+            printf 'sha256=%s\n' "$sha256"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notarized-macos-dmg
+          path: |
+            dist/macos/HASP-*.dmg
+            dist/macos/HASP-*.dmg.sha256
+
   publish-r2:
-    needs: release-smoke
+    needs:
+      - release-smoke
+      - build-notarized-macos-dmg
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: public-release
-      - name: Publish immutable release assets to Cloudflare R2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: notarized-macos-dmg
+          path: dist/macos
+      - name: Publish notarized macOS DMG to Cloudflare R2
         env:
           HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
           HASP_R2_BUCKET: ${{ secrets.HASP_R2_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.HASP_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HASP_R2_SECRET_ACCESS_KEY }}
+          EXPECTED_DMG_SHA256: ${{ needs.build-notarized-macos-dmg.outputs.sha256 }}
+          HASP_RELEASE_GPG_KEY_ID: ${{ secrets.HASP_RELEASE_GPG_KEY_ID }}
+          HASP_RELEASE_GPG_PASSPHRASE: ${{ secrets.HASP_RELEASE_GPG_PASSPHRASE }}
         run: |
           : "${HASP_R2_ENDPOINT:?HASP_R2_ENDPOINT is required}"
           : "${HASP_R2_BUCKET:?HASP_R2_BUCKET is required}"
           : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
           : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+          : "${EXPECTED_DMG_SHA256:?EXPECTED_DMG_SHA256 is required}"
+          RELEASE_TAG="${GITHUB_REF_NAME}"
           release_dir="dist/public-release/${GITHUB_REF_NAME}"
+          metadata="$release_dir/release-metadata.json"
           test -d "$release_dir"
-          bash ./scripts/publish-release-to-r2.sh "$release_dir" "${GITHUB_REF_NAME}"
+          test -f "$metadata"
+          actual_version="$(python3 - <<'PY' "$metadata"
+          import json
+          import sys
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              print(json.load(handle)["version"])
+          PY
+          )"
+          test "v${actual_version}" = "$RELEASE_TAG"
+          bash ./scripts/publish-release-to-r2.sh "$release_dir" "$RELEASE_TAG"
+          version="${GITHUB_REF_NAME#v}"
+          dmg="dist/macos/HASP-${version}.dmg"
+          sha_file="${dmg}.sha256"
+          test -s "$dmg"
+          test -s "$sha_file"
+          computed_sha256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          recorded_sha256="$(awk '{print $1}' "$sha_file")"
+          test "$computed_sha256" = "$recorded_sha256"
+          test "$computed_sha256" = "$EXPECTED_DMG_SHA256"
+          go run ./apps/server/cmd/release-sign tarball "$dmg"
+          gpg --batch --yes --armor --detach-sign "$dmg"
+          aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object --bucket "$HASP_R2_BUCKET" --key "macos/HASP-${version}.dmg" --body "$dmg" --if-none-match '*' >/dev/null
+          aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object --bucket "$HASP_R2_BUCKET" --key "macos/HASP-${version}.dmg.sha256" --body "$sha_file" --if-none-match '*' >/dev/null
+          aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object --bucket "$HASP_R2_BUCKET" --key "macos/HASP-${version}.dmg.sig" --body "${dmg}.sig" --if-none-match '*' >/dev/null
+          aws --endpoint-url "$HASP_R2_ENDPOINT" s3api put-object --bucket "$HASP_R2_BUCKET" --key "macos/HASP-${version}.dmg.asc" --body "${dmg}.asc" --if-none-match '*' >/dev/null
+
+  deploy-beta-appcast-worker:
+    needs: publish-r2
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+      - name: Bootstrap web tools
+        run: bash ./scripts/bootstrap_web_tools.sh
+      - name: Deploy beta appcast Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm -C apps/web exec wrangler deploy --config beta-appcast/wrangler.toml
+      - name: Smoke beta appcast Worker auth boundary
+        run: |
+          test "$(curl -sS -o /tmp/beta-appcast.xml -w '%{http_code}' https://appcast-beta.gethasp.com/appcast-beta.xml)" = "401"
 
   deploy-download-worker:
-    needs: publish-r2
+    needs:
+      - publish-r2
+      - deploy-beta-appcast-worker
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -279,10 +443,23 @@ jobs:
         run: |
           bash ./scripts/homebrew-formula-smoke.sh "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb"
 
+  homebrew-cask-smoke:
+    needs: publish-r2
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
+      - name: Smoke packaged Homebrew cask
+        run: |
+          bash ./scripts/homebrew-cask-smoke.sh "dist/public-release/${GITHUB_REF_NAME}/Casks/hasp.rb"
+
   publish-homebrew-tap:
     needs:
       - deploy-download-worker
       - homebrew-formula-smoke
+      - homebrew-cask-smoke
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -311,7 +488,7 @@ jobs:
             echo "HASP_HOMEBREW_TAP_TOKEN or HASP_HOMEBREW_TAP_PUSH_KEY is required" >&2
             exit 1
           fi
-          bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
+          bash ./scripts/publish-homebrew-tap.sh --push --cask "dist/public-release/${GITHUB_REF_NAME}/Casks/hasp.rb" "dist/public-release/${GITHUB_REF_NAME}/Formula/hasp.rb" tap-repo "${GITHUB_REF_NAME}"
 
   published-release-live-smoke:
     needs: publish-homebrew-tap

@@ -2,12 +2,16 @@ package store
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
@@ -22,6 +26,7 @@ type BackupFile struct {
 	Payload         sealedBlob      `json:"payload"`
 	Integrity       string          `json:"integrity"`
 	AuditCheckpoint AuditCheckpoint `json:"audit_checkpoint"`
+	Signature       BackupSignature `json:"signature,omitempty"`
 }
 
 type AuditCheckpoint struct {
@@ -29,8 +34,16 @@ type AuditCheckpoint struct {
 	Hash     string `json:"hash"`
 }
 
+type BackupSignature struct {
+	Algorithm string `json:"algorithm"`
+	PublicKey string `json:"public_key"`
+	Value     string `json:"value"`
+}
+
 type backupPayload struct {
-	State persistedState `json:"state"`
+	State      persistedState `json:"state"`
+	VaultKey   []byte         `json:"vault_key,omitempty"`
+	AuditJSONL []byte         `json:"audit_jsonl,omitempty"`
 }
 
 func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPassphrase string) (AuditCheckpoint, error) {
@@ -46,7 +59,15 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 		return AuditCheckpoint{}, err
 	}
 
-	payload := backupPayload{State: h.state}
+	payload := backupPayload{
+		State:    h.state,
+		VaultKey: append([]byte(nil), h.vaultKey...),
+	}
+	if auditJSONL, err := os.ReadFile(h.store.paths.AuditPath); err == nil {
+		payload.AuditJSONL = auditJSONL
+	} else if !os.IsNotExist(err) {
+		return AuditCheckpoint{}, fmt.Errorf("read audit chain: %w", err)
+	}
 	plaintext, err := jsonMarshalFn(payload)
 	if err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("encode backup payload: %w", err)
@@ -66,6 +87,9 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 		Payload:         sealed,
 		Integrity:       integrityDigest(plaintext),
 		AuditCheckpoint: AuditCheckpoint{Sequence: sequence, Hash: hash},
+	}
+	if err := signBackupFile(&file); err != nil {
+		return AuditCheckpoint{}, err
 	}
 	data, err := jsonMarshalIndentFn(file, "", "  ")
 	if err != nil {
@@ -101,6 +125,9 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 	if err := json.Unmarshal(data, &file); err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("decode backup file: %w", err)
 	}
+	if err := verifyBackupFileSignature(file); err != nil {
+		return AuditCheckpoint{}, err
+	}
 	key, err := deriveFromSpec(recoveryPassphrase, file.KDF)
 	if err != nil {
 		return AuditCheckpoint{}, err
@@ -116,10 +143,14 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("decode backup payload: %w", err)
 	}
-
-	vaultKey, err := randomBytesFn(keyLength)
-	if err != nil {
-		return AuditCheckpoint{}, err
+	vaultKey := append([]byte(nil), payload.VaultKey...)
+	if len(vaultKey) == 0 {
+		vaultKey, err = randomBytesFn(keyLength)
+		if err != nil {
+			return AuditCheckpoint{}, err
+		}
+	} else if len(vaultKey) != keyLength {
+		return AuditCheckpoint{}, fmt.Errorf("backup vault key is invalid")
 	}
 	kdf, wrapKey, err := deriveWrapFn(masterPassword)
 	if err != nil {
@@ -129,6 +160,16 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 	if err != nil {
 		return AuditCheckpoint{}, err
 	}
+	snapshot, err := s.createPreRestoreSnapshot()
+	if err != nil {
+		return AuditCheckpoint{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = s.restorePreRestoreSnapshot(snapshot)
+		}
+	}()
 	if err := s.writeEnvelope(vaultKey, payload.State, envelopeHeader{
 		Version:      formatVersion,
 		CreatedAt:    s.now(),
@@ -138,16 +179,30 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 	}); err != nil {
 		return AuditCheckpoint{}, err
 	}
+	if len(payload.AuditJSONL) > 0 {
+		if err := os.MkdirAll(filepath.Dir(s.paths.AuditPath), 0o700); err != nil {
+			return AuditCheckpoint{}, fmt.Errorf("create audit dir: %w", err)
+		}
+		if err := os.WriteFile(s.paths.AuditPath, payload.AuditJSONL, 0o600); err != nil {
+			return AuditCheckpoint{}, fmt.Errorf("restore audit chain: %w", err)
+		}
+	}
 	log, err := newAuditLogFn()
 	if err != nil {
 		return AuditCheckpoint{}, err
 	}
-	_, _ = log.Append("restore", "user", map[string]any{
+	if len(vaultKey) > 0 {
+		log = log.WithKey((&Handle{vaultKey: vaultKey}).AuditHMACKey())
+	}
+	if _, err := log.Append("restore", "user", map[string]any{
 		"source_path":      backupPath,
 		"checkpoint_hash":  file.AuditCheckpoint.Hash,
 		"checkpoint_seq":   file.AuditCheckpoint.Sequence,
 		"new_append_chain": true,
-	})
+	}); err != nil {
+		return AuditCheckpoint{}, fmt.Errorf("append restore audit event: %w", err)
+	}
+	committed = true
 	if handle, err := s.OpenWithPassword(ctx, masterPassword); err == nil {
 		_ = handle.EnableConvenienceUnlock(ctx)
 	}
@@ -157,4 +212,251 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 func integrityDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func signBackupFile(file *BackupFile) error {
+	if file == nil {
+		return fmt.Errorf("backup file is required")
+	}
+	privateKey, ok, err := backupSigningPrivateKey()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	publicKey, ok := privateKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return fmt.Errorf("backup signing key is invalid")
+	}
+	if trusted, _, err := backupTrustedPublicKeys(); err != nil {
+		return err
+	} else if len(trusted) > 0 && !slices.ContainsFunc(trusted, func(candidate ed25519.PublicKey) bool {
+		return string(candidate) == string(publicKey)
+	}) {
+		return fmt.Errorf("backup signing key is not trusted")
+	}
+	payload, err := backupSigningPayload(*file)
+	if err != nil {
+		return err
+	}
+	file.Signature = BackupSignature{
+		Algorithm: "Ed25519",
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+		Value:     base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload)),
+	}
+	return nil
+}
+
+func verifyBackupFileSignature(file BackupFile) error {
+	if file.Signature.Value == "" && file.Signature.PublicKey == "" {
+		_, required, err := backupTrustedPublicKeys()
+		if err != nil {
+			return err
+		}
+		if required {
+			return fmt.Errorf("backup signature is required")
+		}
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(file.Signature.Algorithm), "Ed25519") {
+		return fmt.Errorf("backup signature algorithm is unsupported")
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(file.Signature.PublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("backup signature public key is invalid")
+	}
+	signature, err := base64.StdEncoding.DecodeString(file.Signature.Value)
+	if err != nil || len(signature) != ed25519.SignatureSize {
+		return fmt.Errorf("backup signature is invalid")
+	}
+	trusted, required, err := backupTrustedPublicKeys()
+	if err != nil {
+		return err
+	}
+	if !required {
+		return fmt.Errorf("backup signature trust roots are not configured")
+	}
+	if !slices.ContainsFunc(trusted, func(candidate ed25519.PublicKey) bool {
+		return string(candidate) == string(publicKey)
+	}) {
+		return fmt.Errorf("backup signature signer is not trusted")
+	}
+	payload, err := backupSigningPayload(file)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(ed25519.PublicKey(publicKey), payload, signature) {
+		return fmt.Errorf("backup signature verification failed")
+	}
+	return nil
+}
+
+func backupSigningPayload(file BackupFile) ([]byte, error) {
+	file.Signature = BackupSignature{}
+	data, err := json.Marshal(file)
+	if err != nil {
+		return nil, fmt.Errorf("encode backup signature payload: %w", err)
+	}
+	return data, nil
+}
+
+type preRestoreSnapshot struct {
+	Dir string
+}
+
+func (s *Store) createPreRestoreSnapshot() (preRestoreSnapshot, error) {
+	dir := filepath.Join(s.paths.HomeDir, fmt.Sprintf(".pre-restore-%d", s.now().UnixNano()))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return preRestoreSnapshot{}, fmt.Errorf("create pre-restore snapshot: %w", err)
+	}
+	for _, file := range []struct {
+		source string
+		name   string
+	}{
+		{source: s.paths.StatePath, name: "vault.json"},
+		{source: s.paths.AuditPath, name: "audit.jsonl"},
+	} {
+		data, err := os.ReadFile(file.source)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return preRestoreSnapshot{}, fmt.Errorf("snapshot %s: %w", file.name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, file.name), data, 0o600); err != nil {
+			return preRestoreSnapshot{}, fmt.Errorf("write pre-restore %s: %w", file.name, err)
+		}
+	}
+	return preRestoreSnapshot{Dir: dir}, nil
+}
+
+func (s *Store) restorePreRestoreSnapshot(snapshot preRestoreSnapshot) error {
+	if snapshot.Dir == "" {
+		return nil
+	}
+	for _, file := range []struct {
+		target string
+		name   string
+	}{
+		{target: s.paths.StatePath, name: "vault.json"},
+		{target: s.paths.AuditPath, name: "audit.jsonl"},
+	} {
+		snapshotPath := filepath.Join(snapshot.Dir, file.name)
+		data, err := os.ReadFile(snapshotPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if removeErr := os.Remove(file.target); removeErr != nil && !os.IsNotExist(removeErr) {
+					return fmt.Errorf("remove restored %s: %w", file.name, removeErr)
+				}
+				continue
+			}
+			return fmt.Errorf("read pre-restore %s: %w", file.name, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(file.target), 0o700); err != nil {
+			return fmt.Errorf("create restore dir for %s: %w", file.name, err)
+		}
+		if err := os.WriteFile(file.target, data, 0o600); err != nil {
+			return fmt.Errorf("restore %s: %w", file.name, err)
+		}
+	}
+	return nil
+}
+
+func backupSigningPrivateKey() (ed25519.PrivateKey, bool, error) {
+	raw := strings.TrimSpace(os.Getenv("HASP_BACKUP_SIGNING_KEY_B64"))
+	if raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, false, fmt.Errorf("decode HASP_BACKUP_SIGNING_KEY_B64: %w", err)
+		}
+		if len(key) != ed25519.PrivateKeySize {
+			return nil, false, fmt.Errorf("HASP_BACKUP_SIGNING_KEY_B64 must decode to %d bytes", ed25519.PrivateKeySize)
+		}
+		return ed25519.PrivateKey(key), true, nil
+	}
+	raw = strings.TrimSpace(os.Getenv("HASP_BACKUP_SIGNING_KEY_HEX"))
+	if raw == "" {
+		return nil, false, nil
+	}
+	key, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode HASP_BACKUP_SIGNING_KEY_HEX: %w", err)
+	}
+	if len(key) != ed25519.PrivateKeySize {
+		return nil, false, fmt.Errorf("HASP_BACKUP_SIGNING_KEY_HEX must decode to %d bytes", ed25519.PrivateKeySize)
+	}
+	return ed25519.PrivateKey(key), true, nil
+}
+
+func backupTrustedPublicKeys() ([]ed25519.PublicKey, bool, error) {
+	raw := strings.TrimSpace(os.Getenv("HASP_BACKUP_TRUST_ROOTS_HEX"))
+	if raw == "" {
+		return nil, false, nil
+	}
+	parts := strings.Split(raw, ",")
+	keys := make([]ed25519.PublicKey, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, err := hex.DecodeString(part)
+		if err != nil {
+			return nil, true, fmt.Errorf("decode HASP_BACKUP_TRUST_ROOTS_HEX: %w", err)
+		}
+		if len(key) != ed25519.PublicKeySize {
+			return nil, true, fmt.Errorf("HASP_BACKUP_TRUST_ROOTS_HEX keys must be %d bytes", ed25519.PublicKeySize)
+		}
+		keys = append(keys, ed25519.PublicKey(key))
+	}
+	if len(keys) == 0 {
+		return nil, true, fmt.Errorf("HASP_BACKUP_TRUST_ROOTS_HEX does not contain a key")
+	}
+	return keys, true, nil
+}
+
+func PruneBackupDirectory(dir string, keep int) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" || keep < 1 {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read backup dir: %w", err)
+	}
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+	candidates := make([]candidate, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".hasp-backup") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat backup %s: %w", name, err)
+		}
+		candidates = append(candidates, candidate{
+			path:    filepath.Join(dir, name),
+			modTime: info.ModTime(),
+		})
+	}
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return b.modTime.Compare(a.modTime)
+	})
+	for _, stale := range candidates[keep:] {
+		if err := os.Remove(stale.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale backup: %w", err)
+		}
+	}
+	return nil
 }

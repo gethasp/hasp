@@ -52,11 +52,16 @@ func doctorCommand(ctx context.Context, args []string, stdout io.Writer, s start
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	fix := fs.Bool("fix", false, "")
+	target := fs.String("target", "", "")
+	profile := fs.String("profile", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: hasp doctor [--json] [--fix] [--project-root <path>]")
+		return errors.New("usage: hasp doctor [--json] [--fix] [--project-root <path>] [--target <integration-id>] [--profile <profile-id>]")
+	}
+	if strings.TrimSpace(*target) != "" {
+		return doctorIntegrationCommand(ctx, strings.TrimSpace(*target), strings.TrimSpace(*profile), *jsonOutput || globalFlagsFromContext(ctx).json, stdout, s)
 	}
 	expandedRoot, err := expandUserPath(strings.TrimSpace(*projectRoot))
 	if err != nil {
@@ -76,6 +81,38 @@ func doctorCommand(ctx context.Context, args []string, stdout io.Writer, s start
 		Disable:     gf.noColor,
 	}
 	return renderDoctorHumanWithColor(stdout, report, opts)
+}
+
+func doctorIntegrationCommand(ctx context.Context, target string, profile string, jsonOutput bool, stdout io.Writer, s starter) error {
+	client, err := ensureClient(ctx, s)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	reply, err := client.DoctorIntegration(ctx, runtime.IntegrationDoctorRPCRequest{TargetID: target, ProfileID: profile})
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeJSONResponse(stdout, reply)
+	}
+	return renderIntegrationDoctorHuman(stdout, reply)
+}
+
+func renderIntegrationDoctorHuman(stdout io.Writer, reply runtime.IntegrationDoctorResponse) error {
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "HASP integration doctor\t%s\t%t\n", reply.TargetID, reply.OK)
+	if reply.ProfileID != "" {
+		fmt.Fprintf(tw, "profile\t%s\n", reply.ProfileID)
+	}
+	fmt.Fprintf(tw, "duration_ms\t%d\n", reply.DurationMS)
+	for _, check := range reply.Checks {
+		fmt.Fprintf(tw, "%s\t%t\t%s\n", check.Name, check.OK, check.Message)
+		if check.FixHint != "" {
+			fmt.Fprintf(tw, "%s_fix\t%s\n", check.Name, check.FixHint)
+		}
+	}
+	return tw.Flush()
 }
 
 // applyDoctorFixes attempts a small, documented set of repairs. Each repair

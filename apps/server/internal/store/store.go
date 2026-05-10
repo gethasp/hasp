@@ -158,6 +158,8 @@ type persistedState struct {
 	AppConsumers      map[string]AppConsumer      `json:"app_consumers"`
 	AgentConsumers    map[string]AgentConsumer    `json:"agent_consumers"`
 	ManifestReviews   map[string]ManifestReview   `json:"manifest_reviews,omitempty"`
+	Policy            PolicyDocument              `json:"policy,omitempty"`
+	Config            ConfigDocument              `json:"config,omitempty"`
 }
 
 type fileEnvelope struct {

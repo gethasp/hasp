@@ -6,6 +6,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/app/runtimeops"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
+	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 // defaultRuntimeDeps builds a runtimeops.Deps wired to the package-level seam
@@ -25,7 +26,7 @@ func defaultRuntimeDeps() runtimeops.Deps {
 		},
 		RenderPingJSONOrHuman: renderPingJSONOrHuman,
 		RenderNotRunning:      renderNotRunning,
-		ConnectIfRunning: func(ctx context.Context, s runtimeops.Starter) *runtime.Client {
+		ConnectIfRunning: func(ctx context.Context, s runtimeops.Starter) runtimeops.RuntimeClient {
 			// *runtimeStarter satisfies the package-private starter interface via
 			// structural typing (same method set). Type-assert so connectIfRunning
 			// can accept it.
@@ -33,7 +34,11 @@ func defaultRuntimeDeps() runtimeops.Deps {
 			if !ok || priv == nil {
 				return nil
 			}
-			return connectIfRunning(ctx, priv)
+			client := connectIfRunning(ctx, priv)
+			if client == nil {
+				return nil
+			}
+			return client
 		},
 		NewStarter: func() (runtimeops.Starter, error) {
 			// *runtimeStarter satisfies runtimeops.Starter via structural typing.
@@ -53,5 +58,6 @@ func defaultRuntimeDeps() runtimeops.Deps {
 		NewInternalError: func(msg string) error {
 			return newAppError(errCodeInternal, msg)
 		},
+		HTTPKeyring: store.NewDefaultKeyring,
 	}
 }
