@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts test-release-publication test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full web-check verify-ci verify release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs workflow-lint shellcheck test-scripts test-release-publication test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full web-check verify-ci verify release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -106,6 +106,9 @@ verify-ci: check-links check-tidy check-generated-docs workflow-lint shellcheck 
 
 ## verify: Default public verification gate
 verify: verify-ci release-smoke coverage vulncheck
+
+## release-preflight: Fast local preflight before publishing a release tag
+release-preflight: verify-ci test-release-publication
 
 ## release-gate: Release-blocking gate with all tests and 100% Go coverage
 release-gate:
