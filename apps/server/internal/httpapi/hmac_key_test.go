@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"testing"
@@ -128,6 +129,44 @@ func TestLoadOrCreateHMACKeyCreatesMissingKey(t *testing.T) {
 	}
 	if string(decoded) != string(key) {
 		t.Fatal("stored key does not match returned key")
+	}
+}
+
+func TestLocalDebugHMACKeyUsesHASPHomeFile(t *testing.T) {
+	if goruntime.GOOS != "darwin" {
+		t.Skip("local debug HMAC file is a Darwin debug-app path")
+	}
+	restoreTeamID := setHMACTeamIDForTest("TEAM123456")
+	t.Cleanup(restoreTeamID)
+	home := t.TempDir()
+	t.Setenv("HASP_HOME", home)
+	keyring := &nativeMemoryHMACKeyring{
+		nativeErr: errors.New("native keychain should not be used"),
+	}
+
+	key, err := LoadOrCreateHMACKey(context.Background(), keyring)
+	if err != nil {
+		t.Fatalf("create local debug key: %v", err)
+	}
+	if len(key) != sha256.Size {
+		t.Fatalf("key length = %d, want %d", len(key), sha256.Size)
+	}
+	if keyring.nativeGets != 0 || keyring.genericGets != 0 {
+		t.Fatalf("keyring was used: native=%d generic=%d", keyring.nativeGets, keyring.genericGets)
+	}
+	path := filepath.Join(home, localDebugHMACKeyFile)
+	if info, err := os.Stat(path); err != nil {
+		t.Fatalf("stat local debug key: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("local debug key mode = %v, want 0600", info.Mode().Perm())
+	}
+
+	loaded, err := LoadProvisionedHMACKey(keyring)
+	if err != nil {
+		t.Fatalf("load local debug key: %v", err)
+	}
+	if string(loaded) != string(key) {
+		t.Fatal("loaded local debug key does not match created key")
 	}
 }
 

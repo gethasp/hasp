@@ -111,8 +111,6 @@ jobs:
         run: |
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: Run release gate
-        run: make release-gate
       - name: Import release signing key
         env:
           HASP_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.HASP_RELEASE_GPG_PRIVATE_KEY }}

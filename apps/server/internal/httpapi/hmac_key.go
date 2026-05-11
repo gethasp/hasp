@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -17,6 +19,7 @@ import (
 
 const (
 	HMACKeyService           = "com.gethasp.hasp.daemon.http"
+	localDebugHMACKeyFile    = "daemon.http.hmac.debug"
 	HMACKeyFingerprintLength = 16
 	HASPDaemonBundleID       = "com.gethasp.hasp.daemon"
 )
@@ -54,6 +57,9 @@ func LoadOrCreateHMACKey(ctx context.Context, keyring store.Keyring) ([]byte, er
 	}
 	if keyring == nil {
 		keyring = store.NewDefaultKeyring()
+	}
+	if usesLocalDebugHMACKey() {
+		return loadOrCreateLocalDebugHMACKey()
 	}
 	key, err := LoadHMACKey(keyring)
 	if err == nil {
@@ -116,12 +122,22 @@ func designatedRequirement(bundleID string, teamID string) (string, error) {
 	if bundleID == "" || teamID == "" {
 		return "", errors.New("httpapi: bundle id and team id are required for designated requirement")
 	}
+	if teamID == "TEAM123456" {
+		return fmt.Sprintf(`identifier "%s"`, bundleID), nil
+	}
 	return fmt.Sprintf(`identifier "%s" and anchor apple generic and certificate leaf[subject.OU] = "%s" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`, bundleID, teamID), nil
 }
 
 func LoadHMACKey(keyring store.Keyring) ([]byte, error) {
 	if keyring == nil {
 		keyring = store.NewDefaultKeyring()
+	}
+	if usesLocalDebugHMACKey() {
+		key, err := loadLocalDebugHMACKey()
+		if err != nil {
+			return nil, fmt.Errorf("read HTTP HMAC key: %w", err)
+		}
+		return key, nil
 	}
 	account, err := HMACKeyAccount()
 	if err != nil {
@@ -151,6 +167,9 @@ func ReinitializeHMACKey(ctx context.Context, keyring store.Keyring) ([]byte, er
 	}
 	if keyring == nil {
 		keyring = store.NewDefaultKeyring()
+	}
+	if usesLocalDebugHMACKey() {
+		return createLocalDebugHMACKey()
 	}
 	account, err := HMACKeyAccount()
 	if err != nil {
@@ -213,6 +232,65 @@ func isRecoverableMissingHMACKey(err error) bool {
 
 func isGoTestProcess() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
+}
+
+func usesLocalDebugHMACKey() bool {
+	return runtime.GOOS == "darwin" && strings.TrimSpace(HMACTeamID) == "TEAM123456"
+}
+
+func loadOrCreateLocalDebugHMACKey() ([]byte, error) {
+	key, err := loadLocalDebugHMACKey()
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) && !strings.Contains(strings.ToLower(err.Error()), "invalid") {
+		return nil, err
+	}
+	return createLocalDebugHMACKey()
+}
+
+func loadLocalDebugHMACKey() ([]byte, error) {
+	path, err := localDebugHMACKeyPath()
+	if err != nil {
+		return nil, err
+	}
+	key, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != sha256.Size {
+		return nil, fmt.Errorf("invalid local debug HTTP HMAC key length %d", len(key))
+	}
+	return key, nil
+}
+
+func createLocalDebugHMACKey() ([]byte, error) {
+	path, err := localDebugHMACKeyPath()
+	if err != nil {
+		return nil, err
+	}
+	key := make([]byte, sha256.Size)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate HTTP HMAC key: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func localDebugHMACKeyPath() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("HASP_HOME")); home != "" {
+		return filepath.Join(home, localDebugHMACKeyFile), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", errors.New("httpapi: user home is required for local debug HMAC key")
+	}
+	return filepath.Join(home, "Library", "Application Support", "hasp", localDebugHMACKeyFile), nil
 }
 
 func getHMACKey(keyring store.Keyring, account string) (string, error) {
