@@ -111,6 +111,8 @@ jobs:
         run: |
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Validate release contains core CLI changes
+        run: bash ./scripts/check-release-core-change.sh "${GITHUB_REF_NAME}"
       - name: Import release signing key
         env:
           HASP_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.HASP_RELEASE_GPG_PRIVATE_KEY }}

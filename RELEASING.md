@@ -10,7 +10,11 @@ Contributors should not push release tags.
 
 ## What triggers a release
 
-Push a `v*` tag on this repository.
+A release is only valid when a `v*` tag points at a commit that includes a
+core terminal app change under `apps/server/` or `packages/`.
+
+Website, docs-only, workflow-only, release-plumbing, public mirror, and macOS
+app-only changes do not qualify a new HASP app tag or public release.
 
 Example:
 
@@ -28,7 +32,9 @@ git push origin v1.0.0
    release contract, docs page, and web surface has been updated in the same
    change. Do not defer docs or reference updates to a follow-up release.
 5. `/docs/` and `/docs/vX.Y.Z/` have both been regenerated from the exact
-   source being tagged.
+   source being tagged. The canonical `make cut-public-release TAG=vX.Y.Z`
+   driver regenerates the CLI reference and docs snapshot automatically before
+   it creates the tag.
 6. `make release-gate` passes. This runs the maintainer verification suite,
    integration-tagged tests, conformance, release smoke, and the Go coverage
    gate with `HASP_COVERAGE_TARGET=100`.
@@ -58,7 +64,7 @@ the release artifact. If code changes any public behavior, update the matching
 public docs and generated references before the tag. If docs change without
 code, still update the versioned docs snapshot and run the docs checks.
 
-Before every tag:
+For manual verification before every tag:
 
 ```bash
 make build
@@ -69,9 +75,10 @@ make release-gate
 
 Canonical-source maintainers should use the guarded release driver rather than
 manually repeating the export, tag, public workflow, install-script, and
-Homebrew checks. The driver pushes the private source, tags both repositories,
-then waits for R2, the Download Worker, the hosted installer, and the
-published Homebrew tap to verify live:
+Homebrew checks. The driver first proves the candidate includes core terminal
+app changes, regenerates and commits the docs snapshot if needed, pushes the
+private source, tags both repositories, then waits for R2, the Download Worker,
+the hosted installer, and the published Homebrew tap to verify live:
 
 ```bash
 make cut-public-release TAG=vX.Y.Z
