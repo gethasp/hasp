@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "latest": "v2.0.0",
+  "latest": "v2.0.1",
   "updatedLabel": "May 2026",
   "sourceFiles": [
     "public/README.md",
@@ -25,8 +25,6 @@
     "public/CHANGELOG.md",
     "public/docs/release-distribution.md",
     "public/docs/install-and-release.md",
-    "public/docs/macos-v2-licensing.md",
-    "public/docs/macos-v2-migration.md",
     "public/docs/glossary.md",
     "public/docs/cli-reference.md",
     "public/docs/error-codes.md"
@@ -207,22 +205,6 @@
       "order": 20,
       "title": "Install and release",
       "description": "Operator-facing release verification and install details."
-    },
-    {
-      "source": "public/docs/macos-v2-licensing.md",
-      "slug": "macos-v2-licensing",
-      "section": "Release",
-      "order": 30,
-      "title": "macOS v2 licensing",
-      "description": "Online activation, offline license blobs, support workflow, and revocation trade-offs for HASP.app."
-    },
-    {
-      "source": "public/docs/macos-v2-migration.md",
-      "slug": "macos-v2-migration",
-      "section": "Release",
-      "order": 35,
-      "title": "macOS v2 migration",
-      "description": "Formula versus cask install paths, v1 CLI continuity, and how to switch between the free CLI and paid app."
     },
     {
       "source": "public/docs/glossary.md",

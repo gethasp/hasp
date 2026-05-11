@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -79,6 +80,7 @@ const (
 	revealRateLimitCount  = 10
 	revealResponseTTL     = 60
 	backupSchedulerTick   = time.Minute
+	backupPassphraseSvc   = "com.gethasp.hasp.backup.passphrase"
 )
 
 type revealCacheEntry struct {
@@ -516,6 +518,58 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		_ = jsonwire.WriteResponse(w, reply)
 	})
 	mux.HandleFunc("/v1/integrations/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() == "/v1/integrations/profiles" {
+			switch r.Method {
+			case http.MethodGet:
+				var reply IntegrationProfilesResponse
+				if err := rpcSrv.broker().IntegrationProfileCatalog(IntegrationGetRequest{}, &reply); err != nil {
+					httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_profiles_failed", "Integration profiles failed", err.Error())
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = jsonwire.WriteResponse(w, reply)
+			case http.MethodPost:
+				var body IntegrationProfileMutationRequest
+				if !decodeJSONObject(w, r, &body, "profile body must contain exactly one JSON object") {
+					return
+				}
+				var reply IntegrationProfileMutationResponse
+				err := rpcSrv.broker().CreateIntegrationProfile(IntegrationProfileMutationRPCRequest{Body: body}, &reply)
+				if writeIntegrationProfileMutationError(w, err) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = jsonwire.WriteResponse(w, reply)
+			default:
+				httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET or POST is required")
+			}
+			return
+		}
+		if targetID, profileID, ok := integrationProfilePath(r.URL.EscapedPath()); ok {
+			var body IntegrationProfileMutationRequest
+			var reply IntegrationProfileMutationResponse
+			switch r.Method {
+			case http.MethodPut:
+				if !decodeJSONObject(w, r, &body, "profile body must contain exactly one JSON object") {
+					return
+				}
+				err := rpcSrv.broker().UpdateIntegrationProfile(IntegrationProfileMutationRPCRequest{TargetID: targetID, ProfileID: profileID, IfMatch: r.Header.Get("If-Match"), Body: body}, &reply)
+				if writeIntegrationProfileMutationError(w, err) {
+					return
+				}
+			case http.MethodDelete:
+				err := rpcSrv.broker().DeleteIntegrationProfile(IntegrationProfileMutationRPCRequest{TargetID: targetID, ProfileID: profileID, IfMatch: r.Header.Get("If-Match")}, &reply)
+				if writeIntegrationProfileMutationError(w, err) {
+					return
+				}
+			default:
+				httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "PUT or DELETE is required")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = jsonwire.WriteResponse(w, reply)
+			return
+		}
 		targetID, action, ok := integrationActionFromPath(r.URL.EscapedPath())
 		if !ok {
 			httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "integration_not_found", "Integration not found", r.URL.Path)
@@ -787,6 +841,45 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 	}
 	mux.HandleFunc("/v1/backup", backupHandler)
 	mux.HandleFunc("/v1/backups/export", backupHandler)
+	mux.HandleFunc("/v1/backups/passphrase", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			reply := rpcSrv.broker().BackupPassphraseStatus()
+			w.Header().Set("Content-Type", "application/json")
+			_ = jsonwire.WriteResponse(w, reply)
+		case http.MethodPut:
+			r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+			defer r.Body.Close()
+			var req BackupPassphraseRequest
+			decoder := json.NewDecoder(r.Body)
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&req); err != nil {
+				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				return
+			}
+			if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "backup passphrase body must contain exactly one JSON object")
+				return
+			}
+			reply, err := rpcSrv.broker().SetBackupPassphrase(req)
+			if err != nil {
+				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err.Error())
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = jsonwire.WriteResponse(w, reply)
+		case http.MethodDelete:
+			reply, err := rpcSrv.broker().DeleteBackupPassphrase()
+			if err != nil {
+				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err.Error())
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = jsonwire.WriteResponse(w, reply)
+		default:
+			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET, PUT, or DELETE is required")
+		}
+	})
 	mux.HandleFunc("/v1/vault/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET is required")
@@ -924,6 +1017,16 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "password body must contain exactly one JSON object")
 			return
 		}
+		callerKey := rpcSrv.masterPasswordCallerKey(r)
+		details := rpcSrv.masterPasswordAuditDetails(r)
+		if retryAfter := rpcSrv.masterPasswordRetryAfter(callerKey, time.Now().UTC()); retryAfter > 0 {
+			details["result"] = "rate_limited"
+			details["retry_after_seconds"] = int(math.Ceil(retryAfter.Seconds()))
+			rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+			httpapi.WriteErrorEnvelope(w, http.StatusTooManyRequests, "master_password_rate_limited", "Too many attempts", "too many failed master password change attempts; wait before retrying")
+			return
+		}
 		vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 		if err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err.Error())
@@ -933,10 +1036,18 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrInvalidPassword):
+				rpcSrv.recordMasterPasswordFailure(callerKey, time.Now().UTC())
+				details["result"] = "invalid_current_password"
+				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
 				httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "current master password is incorrect")
 			case errors.Is(err, store.ErrVaultNotInitialized):
+				details["result"] = "vault_not_initialized"
+				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
 				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
 			default:
+				details["result"] = "open_failed"
+				details["error"] = err.Error()
+				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
 				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err.Error())
 			}
 			return
@@ -944,12 +1055,21 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if err := handle.RekeyPassword(r.Context(), req.CurrentPassword, req.NewPassword); err != nil {
 			switch {
 			case errors.Is(err, store.ErrInvalidPassword):
+				rpcSrv.recordMasterPasswordFailure(callerKey, time.Now().UTC())
+				details["result"] = "invalid_current_password"
+				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
 				httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "current master password is incorrect")
 			default:
+				details["result"] = "invalid_new_password"
+				details["error"] = err.Error()
+				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
 				httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "invalid_new_master_password", "Invalid new master password", err.Error())
 			}
 			return
 		}
+		rpcSrv.clearMasterPasswordFailures(callerKey)
+		details["result"] = "rotated"
+		rpcSrv.appendMasterPasswordAudit(audit.EventApprove, details)
 		var lockReply LockVaultResponse
 		if err := rpcSrv.broker().LockVault(LockVaultRequest{Cause: "master-password-change"}, &lockReply); err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_lock_failed", "Vault lock failed", err.Error())
@@ -983,6 +1103,28 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = jsonwire.WriteResponse(w, reply)
+	})
+	mux.HandleFunc("/v1/daemon/http-key/fingerprint", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET is required")
+			return
+		}
+		key := rpcSrv.httpRevealKey()
+		if len(key) == 0 {
+			details := rpcSrv.httpAuditDetails(r, httpKeyFingerprintAction)
+			details["result"] = "missing_key"
+			rpcSrv.appendDaemonSecurityAudit(audit.EventDeny, details)
+			httpapi.WriteErrorEnvelope(w, http.StatusServiceUnavailable, "hmac_key_unavailable", "HMAC key unavailable", "daemon HTTP HMAC key is not available")
+			return
+		}
+		details := rpcSrv.httpAuditDetails(r, httpKeyFingerprintAction)
+		details["result"] = "revealed"
+		rpcSrv.appendDaemonSecurityAudit(audit.EventApprove, details)
+		w.Header().Set("Content-Type", "application/json")
+		_ = jsonwire.WriteResponse(w, HTTPKeyFingerprintResponse{
+			Schema:      jsonwire.SchemaVersion,
+			Fingerprint: strings.ToUpper(httpapi.HMACKeyFingerprintForKey(key)),
+		})
 	})
 	mux.HandleFunc("/v1/daemon/restart", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1356,6 +1498,7 @@ func (s *rpcServer) broker() *brokerRPC {
 		audit:       s.audit,
 		auditState:  s.auditState,
 		events:      s.events,
+		keyring:     s.keyring,
 		matrixInput: s.accessMatrixInput,
 	}
 }
@@ -1468,6 +1611,66 @@ func integrationActionFromPath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return targetID, action, true
+}
+
+func integrationProfilePath(path string) (string, string, bool) {
+	const prefix = "/v1/integrations/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	parts := strings.Split(rest, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] != "profiles" || parts[2] == "" {
+		return "", "", false
+	}
+	targetID, err := url.PathUnescape(parts[0])
+	if err != nil || strings.Contains(targetID, "/") || strings.TrimSpace(targetID) != targetID {
+		return "", "", false
+	}
+	profileID, err := url.PathUnescape(parts[2])
+	if err != nil || strings.Contains(profileID, "/") || strings.TrimSpace(profileID) != profileID {
+		return "", "", false
+	}
+	return targetID, profileID, true
+}
+
+func decodeJSONObject(w http.ResponseWriter, r *http.Request, dst any, trailingMessage string) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", trailingMessage)
+		return false
+	}
+	return true
+}
+
+func writeIntegrationProfileMutationError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, integrations.ErrTargetNotFound), errors.Is(err, integrations.ErrProfileNotFound):
+		httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "integration_not_found", "Integration not found", err.Error())
+	case errors.Is(err, integrations.ErrProfileConflict):
+		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "integration_profile_conflict", "Integration profile conflict", err.Error())
+	case errors.Is(err, integrations.ErrProfileImmutable):
+		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "integration_profile_immutable", "Integration profile immutable", err.Error())
+	case errors.Is(err, integrations.ErrProfileVersion):
+		httpapi.WriteErrorEnvelope(w, http.StatusPreconditionFailed, "integration_profile_version_mismatch", "Integration profile version mismatch", err.Error())
+	case errors.Is(err, integrations.ErrPreconditionRequired):
+		httpapi.WriteErrorEnvelope(w, http.StatusPreconditionRequired, "precondition_required", "Precondition required", "If-Match is required")
+	case errors.Is(err, integrations.ErrProfileInvalid):
+		httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "integration_profile_invalid", "Integration profile invalid", err.Error())
+	default:
+		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_profile_failed", "Integration profile failed", err.Error())
+	}
+	return true
 }
 
 func (s *rpcServer) handleHTTPEvents(w http.ResponseWriter, r *http.Request) {
@@ -2077,6 +2280,8 @@ type rpcServer struct {
 	revealCache         map[string]revealCacheEntry
 	revealInflight      map[string]*revealInflight
 	revealRates         map[string][]time.Time
+	masterPasswordMu    sync.Mutex
+	masterPasswordRates map[string][]time.Time
 	auditVerifyMu       sync.Mutex
 	auditVerifyCached   AuditVerifyResponse
 	auditVerifyCachedAt time.Time
@@ -2187,6 +2392,7 @@ func newRPCServer(runtimePaths paths.Paths) *rpcServer {
 		revealCache:         make(map[string]revealCacheEntry),
 		revealInflight:      make(map[string]*revealInflight),
 		revealRates:         make(map[string][]time.Time),
+		masterPasswordRates: make(map[string][]time.Time),
 	}
 	approvalStore.SetOnQueue(server.publishQueuedApproval)
 	return server
@@ -2440,6 +2646,128 @@ func (s *rpcServer) recordAttestationFailure(r *http.Request, failure error) {
 	s.appendPeerRejectAudit(details)
 }
 
+const (
+	masterPasswordFailureWindow   = 5 * time.Minute
+	masterPasswordFailureLimit    = 3
+	masterPasswordRateLimitAction = "vault.master_password.change"
+	httpKeyFingerprintAction      = "daemon.http_key.fingerprint"
+)
+
+func (s *rpcServer) masterPasswordCallerKey(r *http.Request) string {
+	if pid, err := httpapi.PeerPIDFromContext(r); err == nil && pid > 0 {
+		return fmt.Sprintf("pid:%d", pid)
+	}
+	if r != nil {
+		host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+		if err == nil && host != "" {
+			return "remote:" + host
+		}
+		if remote := strings.TrimSpace(r.RemoteAddr); remote != "" {
+			return "remote:" + remote
+		}
+	}
+	return "remote:unknown"
+}
+
+func (s *rpcServer) masterPasswordAuditDetails(r *http.Request) map[string]any {
+	return s.httpAuditDetails(r, masterPasswordRateLimitAction)
+}
+
+func (s *rpcServer) httpAuditDetails(r *http.Request, action string) map[string]any {
+	details := map[string]any{
+		"action": action,
+	}
+	if r == nil {
+		return details
+	}
+	if r.URL != nil {
+		details["path"] = r.URL.EscapedPath()
+	}
+	if remote := strings.TrimSpace(r.RemoteAddr); remote != "" {
+		details["remote_addr"] = remote
+	}
+	if ua := strings.TrimSpace(r.UserAgent()); ua != "" {
+		details["user_agent"] = ua
+	}
+	if pid, err := httpapi.PeerPIDFromContext(r); err == nil && pid > 0 {
+		details["peer_pid"] = pid
+	}
+	return details
+}
+
+func (s *rpcServer) masterPasswordRetryAfter(callerKey string, now time.Time) time.Duration {
+	if s == nil {
+		return 0
+	}
+	s.masterPasswordMu.Lock()
+	defer s.masterPasswordMu.Unlock()
+	if s.masterPasswordRates == nil {
+		s.masterPasswordRates = make(map[string][]time.Time)
+	}
+	attempts := recentAttempts(s.masterPasswordRates[callerKey], now, masterPasswordFailureWindow)
+	s.masterPasswordRates[callerKey] = attempts
+	if len(attempts) < masterPasswordFailureLimit {
+		return 0
+	}
+	retryAfter := attempts[0].Add(masterPasswordFailureWindow).Sub(now)
+	if retryAfter < time.Second {
+		return time.Second
+	}
+	return retryAfter
+}
+
+func (s *rpcServer) recordMasterPasswordFailure(callerKey string, now time.Time) {
+	if s == nil {
+		return
+	}
+	s.masterPasswordMu.Lock()
+	defer s.masterPasswordMu.Unlock()
+	if s.masterPasswordRates == nil {
+		s.masterPasswordRates = make(map[string][]time.Time)
+	}
+	attempts := recentAttempts(s.masterPasswordRates[callerKey], now, masterPasswordFailureWindow)
+	attempts = append(attempts, now)
+	s.masterPasswordRates[callerKey] = attempts
+}
+
+func (s *rpcServer) clearMasterPasswordFailures(callerKey string) {
+	if s == nil {
+		return
+	}
+	s.masterPasswordMu.Lock()
+	defer s.masterPasswordMu.Unlock()
+	delete(s.masterPasswordRates, callerKey)
+}
+
+func recentAttempts(attempts []time.Time, now time.Time, window time.Duration) []time.Time {
+	cutoff := now.Add(-window)
+	filtered := attempts[:0]
+	for _, attempt := range attempts {
+		if !attempt.Before(cutoff) {
+			filtered = append(filtered, attempt)
+		}
+	}
+	return filtered
+}
+
+func (s *rpcServer) appendMasterPasswordAudit(eventType string, details map[string]any) {
+	s.appendDaemonSecurityAudit(eventType, details)
+}
+
+func (s *rpcServer) appendDaemonSecurityAudit(eventType string, details map[string]any) {
+	if s == nil {
+		return
+	}
+	log := audit.NewForPaths(s.paths)
+	_, err := log.Append(eventType, "daemon", details)
+	if s.auditState != nil {
+		s.auditState.RecordAppendResult(err)
+	}
+	if err == nil && s.events != nil {
+		s.events.publish("audit.changed", fmt.Sprintf(`{"type":%q}`, eventType))
+	}
+}
+
 func installAuditHMACKey(log *audit.Log, key []byte) error {
 	if log == nil || len(key) == 0 {
 		return nil
@@ -2480,6 +2808,7 @@ type brokerRPC struct {
 	audit       *audit.Log
 	auditState  *AuditState
 	events      *runtimeEventHub
+	keyring     store.Keyring
 	matrixInput func(context.Context, paths.Paths, *SessionStore) (accessmatrix.Input, error)
 	// peerPID is the PID of the unix-socket peer for this connection, captured
 	// at accept time via SO_PEERCRED / LOCAL_PEERPID. Zero means "unknown" —
@@ -2748,12 +3077,16 @@ func (b *brokerRPC) Backup(req BackupRequest, reply *BackupResponse) error {
 	if err != nil {
 		return err
 	}
+	signatureStatus, err := store.BackupSignatureStatusForFile(outputPath)
+	if err != nil {
+		return err
+	}
 	config := handle.GetConfig()
 	retention := 5
 	if raw, ok := config["backup.retention_count"].(int); ok && raw > 0 {
 		retention = raw
 	}
-	if err := store.PruneBackupDirectory(filepath.Dir(outputPath), retention); err != nil {
+	if err := store.PruneBackupDirectory(filepath.Dir(outputPath), retention, handle.BackupVaultID()); err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -2764,6 +3097,7 @@ func (b *brokerRPC) Backup(req BackupRequest, reply *BackupResponse) error {
 		Path:       outputPath,
 		Checkpoint: checkpoint,
 		Pruned:     true,
+		Signature:  signatureStatus,
 	}
 	if b.events != nil {
 		b.events.publish("backup.created", fmt.Sprintf(`{"path":%q}`, outputPath))
@@ -2771,6 +3105,61 @@ func (b *brokerRPC) Backup(req BackupRequest, reply *BackupResponse) error {
 		b.events.publish("dashboard.changed", `{"source":"backup.export"}`)
 	}
 	return nil
+}
+
+func (b *brokerRPC) BackupPassphraseStatus() BackupPassphraseStatusResponse {
+	_, err := b.backupPassphraseFromKeyring()
+	if err == nil {
+		return BackupPassphraseStatusResponse{Schema: jsonwire.SchemaVersion, Enrolled: true, Available: true, Source: "keychain"}
+	}
+	return BackupPassphraseStatusResponse{Schema: jsonwire.SchemaVersion, Enrolled: false, Available: !errors.Is(err, store.ErrKeyringUnavailable)}
+}
+
+func (b *brokerRPC) SetBackupPassphrase(req BackupPassphraseRequest) (BackupPassphraseStatusResponse, error) {
+	if strings.TrimSpace(req.Passphrase) == "" {
+		return BackupPassphraseStatusResponse{}, errors.New("passphrase is required")
+	}
+	if err := b.keyring.Set(context.Background(), backupPassphraseSvc, backupPassphraseAccount(), req.Passphrase); err != nil {
+		return BackupPassphraseStatusResponse{}, err
+	}
+	b.appendBackupPassphraseAudit("backup.passphrase.enroll")
+	return BackupPassphraseStatusResponse{Schema: jsonwire.SchemaVersion, Enrolled: true, Available: true, Source: "keychain"}, nil
+}
+
+func (b *brokerRPC) DeleteBackupPassphrase() (BackupPassphraseStatusResponse, error) {
+	if err := b.keyring.Delete(backupPassphraseSvc, backupPassphraseAccount()); err != nil && !store.IsKeyringItemNotFound(err) {
+		return BackupPassphraseStatusResponse{}, err
+	}
+	b.appendBackupPassphraseAudit("backup.passphrase.remove")
+	return BackupPassphraseStatusResponse{Schema: jsonwire.SchemaVersion, Enrolled: false, Available: true}, nil
+}
+
+func (b *brokerRPC) backupPassphraseFromKeyring() (string, error) {
+	passphrase, err := b.keyring.Get(backupPassphraseSvc, backupPassphraseAccount())
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(passphrase) == "" {
+		return "", store.ErrKeyringUnavailable
+	}
+	return passphrase, nil
+}
+
+func (b *brokerRPC) appendBackupPassphraseAudit(action string) {
+	if b.audit == nil {
+		return
+	}
+	_, _ = b.audit.Append(audit.EventOverride, "user", map[string]any{"action": action, "custody": "keychain"})
+}
+
+func backupPassphraseAccount() string {
+	for _, value := range []string{os.Getenv("USER"), os.Getenv("LOGNAME"), os.Getenv("USERNAME")} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return "default"
 }
 
 func (b *brokerRPC) runScheduledBackups(ctx context.Context) {
@@ -2789,7 +3178,11 @@ func (b *brokerRPC) runScheduledBackups(ctx context.Context) {
 func (b *brokerRPC) runScheduledBackupOnce(ctx context.Context, now time.Time) error {
 	passphrase := os.Getenv("HASP_BACKUP_PASSPHRASE")
 	if strings.TrimSpace(passphrase) == "" {
-		return nil
+		var err error
+		passphrase, err = b.backupPassphraseFromKeyring()
+		if err != nil {
+			return nil
+		}
 	}
 	handle, err := openRuntimeVaultHandle(ctx, b.paths)
 	if err != nil {
@@ -2852,7 +3245,7 @@ func scheduledBackupPath(destination string, now time.Time) string {
 }
 
 func (b *brokerRPC) Integrations(_ IntegrationGetRequest, reply *IntegrationListResponse) error {
-	out, err := integrations.List(integrations.Options{SchemaVersion: jsonwire.SchemaVersion})
+	out, err := integrations.List(b.integrationOptions())
 	if err != nil {
 		return err
 	}
@@ -2861,11 +3254,30 @@ func (b *brokerRPC) Integrations(_ IntegrationGetRequest, reply *IntegrationList
 	return nil
 }
 
+func (b *brokerRPC) IntegrationProfileCatalog(_ IntegrationGetRequest, reply *IntegrationProfilesResponse) error {
+	out, err := integrations.ProfileCatalog(b.integrationOptions())
+	if err != nil {
+		return err
+	}
+	disabled := b.disabledIntegrationTargets()
+	if len(disabled) > 0 {
+		filtered := out.Profiles[:0]
+		for _, profile := range out.Profiles {
+			if !disabled[strings.TrimSpace(profile.TargetID)] {
+				filtered = append(filtered, profile)
+			}
+		}
+		out.Profiles = filtered
+	}
+	*reply = out
+	return nil
+}
+
 func (b *brokerRPC) IntegrationProfiles(req IntegrationProfilesRequest, reply *IntegrationProfilesResponse) error {
 	if b.disabledIntegrationTargets()[strings.TrimSpace(req.TargetID)] {
 		return fmt.Errorf("%w: %s", integrations.ErrTargetNotFound, req.TargetID)
 	}
-	out, err := integrations.Profiles(req.TargetID, integrations.Options{SchemaVersion: jsonwire.SchemaVersion})
+	out, err := integrations.Profiles(req.TargetID, b.integrationOptions())
 	if err != nil {
 		return err
 	}
@@ -2877,7 +3289,7 @@ func (b *brokerRPC) DoctorIntegration(req IntegrationDoctorRPCRequest, reply *In
 	if b.disabledIntegrationTargets()[strings.TrimSpace(req.TargetID)] {
 		return fmt.Errorf("%w: %s", integrations.ErrTargetNotFound, req.TargetID)
 	}
-	out, err := integrations.Doctor(req.TargetID, integrations.DoctorRequest{ProfileID: req.ProfileID}, integrations.Options{SchemaVersion: jsonwire.SchemaVersion})
+	out, err := integrations.Doctor(req.TargetID, integrations.DoctorRequest{ProfileID: req.ProfileID}, b.integrationOptions())
 	if err != nil {
 		return err
 	}
@@ -2887,6 +3299,77 @@ func (b *brokerRPC) DoctorIntegration(req IntegrationDoctorRPCRequest, reply *In
 		b.events.publish("dashboard.changed", `{"source":"integration.doctor"}`)
 	}
 	return nil
+}
+
+func (b *brokerRPC) CreateIntegrationProfile(req IntegrationProfileMutationRPCRequest, reply *IntegrationProfileMutationResponse) error {
+	if b.disabledIntegrationTargets()[strings.TrimSpace(req.Body.TargetID)] {
+		return fmt.Errorf("%w: %s", integrations.ErrTargetNotFound, req.Body.TargetID)
+	}
+	out, err := integrations.CreateProfile(req.Body, b.integrationOptions())
+	if err != nil {
+		return err
+	}
+	*reply = out
+	b.recordIntegrationProfileMutation(audit.EventApprove, "integration.profile.create", out.Profile)
+	return nil
+}
+
+func (b *brokerRPC) UpdateIntegrationProfile(req IntegrationProfileMutationRPCRequest, reply *IntegrationProfileMutationResponse) error {
+	if b.disabledIntegrationTargets()[strings.TrimSpace(req.TargetID)] {
+		return fmt.Errorf("%w: %s", integrations.ErrTargetNotFound, req.TargetID)
+	}
+	out, err := integrations.UpdateProfile(req.TargetID, req.ProfileID, req.Body, req.IfMatch, b.integrationOptions())
+	if err != nil {
+		return err
+	}
+	*reply = out
+	b.recordIntegrationProfileMutation(audit.EventOverride, "integration.profile.update", out.Profile)
+	return nil
+}
+
+func (b *brokerRPC) DeleteIntegrationProfile(req IntegrationProfileMutationRPCRequest, reply *IntegrationProfileMutationResponse) error {
+	if b.disabledIntegrationTargets()[strings.TrimSpace(req.TargetID)] {
+		return fmt.Errorf("%w: %s", integrations.ErrTargetNotFound, req.TargetID)
+	}
+	out, err := integrations.DeleteProfile(req.TargetID, req.ProfileID, req.IfMatch, b.integrationOptions())
+	if err != nil {
+		return err
+	}
+	*reply = out
+	b.recordIntegrationProfileMutation(audit.EventOverride, "integration.profile.delete", out.Profile)
+	return nil
+}
+
+func (b *brokerRPC) integrationOptions() integrations.Options {
+	return integrations.Options{
+		SchemaVersion:      jsonwire.SchemaVersion,
+		ProfileCatalogPath: integrationProfileCatalogPath(b.paths),
+	}
+}
+
+func integrationProfileCatalogPath(runtimePaths paths.Paths) string {
+	if strings.TrimSpace(runtimePaths.HomeDir) == "" {
+		return ""
+	}
+	return filepath.Join(runtimePaths.HomeDir, "integrations.profiles.json")
+}
+
+func (b *brokerRPC) recordIntegrationProfileMutation(eventType string, action string, profile IntegrationProfile) {
+	details := map[string]any{
+		"action":     action,
+		"target_id":  profile.TargetID,
+		"profile_id": profile.ID,
+	}
+	_, err := audit.NewForPaths(b.paths).Append(eventType, "daemon", details)
+	if b.auditState != nil {
+		b.auditState.RecordAppendResult(err)
+	}
+	if b.events != nil {
+		payload := integrationProfileChangedPayload(profile.TargetID, profile.ID, strings.TrimPrefix(action, "integration.profile."))
+		b.events.publish("integrations.profiles.changed", payload)
+		b.events.publish("integrations.changed", integrationChangedPayload(profile.TargetID, "ok"))
+		b.events.publish("dashboard.changed", `{"source":"integration.profile"}`)
+	}
 }
 
 func (b *brokerRPC) disabledIntegrationTargets() map[string]bool {
@@ -2943,7 +3426,22 @@ func integrationChangedPayload(id string, status string) string {
 	return string(data)
 }
 
+func integrationProfileChangedPayload(targetID string, profileID string, action string) string {
+	data, err := json.Marshal(struct {
+		TargetID  string `json:"target_id"`
+		ProfileID string `json:"profile_id"`
+		Action    string `json:"action"`
+	}{TargetID: targetID, ProfileID: profileID, Action: action})
+	if err != nil {
+		return `{"target_id":"","profile_id":"","action":"changed"}`
+	}
+	return string(data)
+}
+
 func statusFromIntegrationDoctor(reply IntegrationDoctorResponse) string {
+	if !reply.RuntimeProbe {
+		return "metadata_only"
+	}
 	if reply.OK {
 		return "ok"
 	}

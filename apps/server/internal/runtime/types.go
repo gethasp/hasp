@@ -204,16 +204,33 @@ type RotateMasterPasswordResponse struct {
 	RevokedCount int  `json:"revoked_count"`
 }
 
+type HTTPKeyFingerprintResponse struct {
+	Schema      int    `json:"_schema"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 type BackupRequest struct {
 	DestinationPath string `json:"destination_path"`
 	Passphrase      string `json:"passphrase"`
 }
 
+type BackupPassphraseRequest struct {
+	Passphrase string `json:"passphrase"`
+}
+
+type BackupPassphraseStatusResponse struct {
+	Schema    int    `json:"_schema"`
+	Enrolled  bool   `json:"enrolled"`
+	Available bool   `json:"available"`
+	Source    string `json:"source,omitempty"`
+}
+
 type BackupResponse struct {
-	Schema     int                   `json:"_schema"`
-	Path       string                `json:"path"`
-	Checkpoint store.AuditCheckpoint `json:"checkpoint"`
-	Pruned     bool                  `json:"pruned"`
+	Schema     int                         `json:"_schema"`
+	Path       string                      `json:"path"`
+	Checkpoint store.AuditCheckpoint       `json:"checkpoint"`
+	Pruned     bool                        `json:"pruned"`
+	Signature  store.BackupSignatureStatus `json:"signature"`
 }
 
 type Integration = integrations.Integration
@@ -221,6 +238,8 @@ type IntegrationProfile = integrations.Profile
 type IntegrationDoctorCheck = integrations.DoctorCheck
 type IntegrationListResponse = integrations.ListResponse
 type IntegrationProfilesResponse = integrations.ProfilesResponse
+type IntegrationProfileMutationRequest = integrations.ProfileMutationRequest
+type IntegrationProfileMutationResponse = integrations.ProfileMutationResponse
 type IntegrationDoctorRequest = integrations.DoctorRequest
 type IntegrationDoctorResponse = integrations.DoctorResponse
 
@@ -233,6 +252,13 @@ type IntegrationProfilesRequest struct {
 type IntegrationDoctorRPCRequest struct {
 	TargetID  string `json:"target_id"`
 	ProfileID string `json:"profile_id,omitempty"`
+}
+
+type IntegrationProfileMutationRPCRequest struct {
+	TargetID  string                            `json:"target_id,omitempty"`
+	ProfileID string                            `json:"profile_id,omitempty"`
+	IfMatch   string                            `json:"if_match,omitempty"`
+	Body      IntegrationProfileMutationRequest `json:"body"`
 }
 
 type SecretListItem struct {

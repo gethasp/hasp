@@ -28,8 +28,6 @@ workflows.
 ## Build and release
 
 - [Install and release](install-and-release.md): packaged release mechanics.
-- [macOS v2 migration](macos-v2-migration.md): formula versus cask install
-  paths for the free CLI and paid Mac app.
 - [Release distribution](release-distribution.md): artifact layout and mirrors.
 - [Repo targets](repo-targets.md): supported release targets.
 - [V1 production guide](v1-production-guide.md): production readiness checks for

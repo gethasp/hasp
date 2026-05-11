@@ -6,16 +6,17 @@ All notable public releases should be summarized here.
 
 ## [v2.0.0]
 
-- Ship HASP for macOS as the paid native app wrapper over the free local
-  CLI/daemon, including the Swift app shell, menu bar, command palette,
-  approval flows, policies, settings, integrations, onboarding, licensing, and
-  failure-mode hardening.
-- Add signed local daemon HTTP APIs, HMAC keychain pairing, notarized DMG
-  packaging, Homebrew Cask rendering, Sparkle appcast generation, private beta
-  appcast Worker, download Worker macOS routing, and production license Worker
-  support.
-- Publish macOS v2 public docs covering licensing, migration from the CLI
-  formula to the app cask, and release/distribution verification.
+- Add the HASP for macOS v2 product line with signed-app release metadata,
+  Sparkle update checks, setup and backup UX foundations, and app-target
+  release verification gates.
+- Harden backup custody with scoped retention, offline signer trust status, and
+  keychain-backed scheduled backup passphrase custody.
+- Tighten agent and integration surfaces with explicit metadata-only doctor
+  status, manageable profile metadata, step-up-gated HMAC fingerprint reveal,
+  and normalized lease matrix state.
+- Improve public release readiness with v2 release metadata, CI signing
+  fallbacks, release-publication regression coverage, and Homebrew tap publish
+  verification.
 
 ## [v1.0.4]
 

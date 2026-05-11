@@ -105,6 +105,7 @@ func renderIntegrationDoctorHuman(stdout io.Writer, reply runtime.IntegrationDoc
 	if reply.ProfileID != "" {
 		fmt.Fprintf(tw, "profile\t%s\n", reply.ProfileID)
 	}
+	fmt.Fprintf(tw, "runtime_probe\t%t\n", reply.RuntimeProbe)
 	fmt.Fprintf(tw, "duration_ms\t%d\n", reply.DurationMS)
 	for _, check := range reply.Checks {
 		fmt.Fprintf(tw, "%s\t%t\t%s\n", check.Name, check.OK, check.Message)

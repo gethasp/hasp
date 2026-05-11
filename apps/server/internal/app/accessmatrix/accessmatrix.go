@@ -404,8 +404,10 @@ func projectCells(input Input, matrixRange string, consumers []Consumer, secrets
 		now = time.Now().UTC()
 	}
 	secretByID := make(map[string]Secret, len(secrets))
+	secretByName := make(map[string]Secret, len(secrets))
 	for _, secret := range secrets {
 		secretByID[secret.ID] = secret
+		secretByName[secret.Path] = secret
 	}
 	grantByCell := make(map[string][]Grant)
 	for _, grant := range grants {
@@ -436,7 +438,7 @@ func projectCells(input Input, matrixRange string, consumers []Consumer, secrets
 				if strings.Contains(live.Scope, "session") {
 					state, glyph, label = "session", "clock", "session"
 				}
-				if expiringLease(input.Leases, consumer.ID, secret.ID, now) {
+				if expiringLease(input.Leases, consumer.ID, secret.ID, secretByName, secretByID, now) {
 					state, glyph, label = "expiring", "warn", "expiring"
 				}
 				cell = Cell{
@@ -494,9 +496,12 @@ func highestLiveGrant(grants []Grant) *Grant {
 	return best
 }
 
-func expiringLease(input []leases.Lease, consumerID, secretID string, now time.Time) bool {
+func expiringLease(input []leases.Lease, consumerID, secretID string, byName map[string]Secret, byID map[string]Secret, now time.Time) bool {
 	for _, lease := range input {
-		if lease.Status != "active" || lease.ConsumerID != consumerID || strings.TrimSpace(lease.SecretID) != secretID {
+		if strings.TrimSpace(lease.Status) != "active" || strings.TrimSpace(lease.ConsumerID) != consumerID {
+			continue
+		}
+		if resolveSecretID(lease.SecretID, byName, byID) != secretID {
 			continue
 		}
 		remaining := lease.ExpiresAt.Sub(now)

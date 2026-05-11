@@ -21,6 +21,7 @@ const backupFormatVersion = 1
 
 type BackupFile struct {
 	Version         int             `json:"version"`
+	VaultID         string          `json:"vault_id,omitempty"`
 	ExportedAt      time.Time       `json:"exported_at"`
 	KDF             kdfSpec         `json:"kdf"`
 	Payload         sealedBlob      `json:"payload"`
@@ -38,6 +39,15 @@ type BackupSignature struct {
 	Algorithm string `json:"algorithm"`
 	PublicKey string `json:"public_key"`
 	Value     string `json:"value"`
+}
+
+type BackupSignatureStatus struct {
+	Signed            bool   `json:"signed"`
+	Trusted           bool   `json:"trusted"`
+	Required          bool   `json:"required"`
+	TrustRootCount    int    `json:"trust_root_count"`
+	SignerFingerprint string `json:"signer_fingerprint,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 type backupPayload struct {
@@ -82,6 +92,7 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 	}
 	file := BackupFile{
 		Version:         backupFormatVersion,
+		VaultID:         h.BackupVaultID(),
 		ExportedAt:      h.store.now(),
 		KDF:             kdf,
 		Payload:         sealed,
@@ -108,6 +119,15 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 		"audit_checkpoint": hash,
 	})
 	return file.AuditCheckpoint, nil
+}
+
+func (h *Handle) BackupVaultID() string {
+	return backupVaultID(h.vaultKey)
+}
+
+func backupVaultID(vaultKey []byte) string {
+	sum := sha256.Sum256(vaultKey)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPassphrase string, masterPassword string) (AuditCheckpoint, error) {
@@ -246,6 +266,54 @@ func signBackupFile(file *BackupFile) error {
 		Value:     base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload)),
 	}
 	return nil
+}
+
+func BackupSignatureStatusForFile(path string) (BackupSignatureStatus, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return BackupSignatureStatus{}, fmt.Errorf("read backup file: %w", err)
+	}
+	var file BackupFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return BackupSignatureStatus{}, fmt.Errorf("decode backup file: %w", err)
+	}
+	return BackupSignatureStatusForBackupFile(file)
+}
+
+func BackupSignatureStatusForBackupFile(file BackupFile) (BackupSignatureStatus, error) {
+	trusted, required, err := backupTrustedPublicKeys()
+	if err != nil {
+		return BackupSignatureStatus{}, err
+	}
+	status := BackupSignatureStatus{
+		Required:       required,
+		TrustRootCount: len(trusted),
+	}
+	if file.Signature.Value == "" && file.Signature.PublicKey == "" {
+		if required {
+			status.Error = "backup signature is required"
+		}
+		return status, nil
+	}
+	status.Signed = true
+	if !strings.EqualFold(strings.TrimSpace(file.Signature.Algorithm), "Ed25519") {
+		status.Error = "backup signature algorithm is unsupported"
+		return status, nil
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(file.Signature.PublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		status.Error = "backup signature public key is invalid"
+		return status, nil
+	}
+	fingerprint := sha256.Sum256(publicKey)
+	status.SignerFingerprint = hex.EncodeToString(fingerprint[:])
+	status.Trusted = slices.ContainsFunc(trusted, func(candidate ed25519.PublicKey) bool {
+		return string(candidate) == string(publicKey)
+	})
+	if required && !status.Trusted {
+		status.Error = "backup signature signer is not trusted"
+	}
+	return status, nil
 }
 
 func verifyBackupFileSignature(file BackupFile) error {
@@ -416,11 +484,12 @@ func backupTrustedPublicKeys() ([]ed25519.PublicKey, bool, error) {
 	return keys, true, nil
 }
 
-func PruneBackupDirectory(dir string, keep int) error {
+func PruneBackupDirectory(dir string, keep int, vaultID string) error {
 	dir = strings.TrimSpace(dir)
 	if dir == "" || keep < 1 {
 		return nil
 	}
+	vaultID = strings.TrimSpace(vaultID)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -441,22 +510,47 @@ func PruneBackupDirectory(dir string, keep int) error {
 		if !strings.HasSuffix(name, ".hasp-backup") {
 			continue
 		}
+		path := filepath.Join(dir, name)
+		if vaultID != "" {
+			fileVaultID, err := readBackupVaultID(path)
+			if err != nil {
+				return fmt.Errorf("read backup %s identity: %w", name, err)
+			}
+			if fileVaultID != vaultID {
+				continue
+			}
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return fmt.Errorf("stat backup %s: %w", name, err)
 		}
 		candidates = append(candidates, candidate{
-			path:    filepath.Join(dir, name),
+			path:    path,
 			modTime: info.ModTime(),
 		})
 	}
 	slices.SortFunc(candidates, func(a, b candidate) int {
 		return b.modTime.Compare(a.modTime)
 	})
+	if len(candidates) <= keep {
+		return nil
+	}
 	for _, stale := range candidates[keep:] {
 		if err := os.Remove(stale.path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale backup: %w", err)
 		}
 	}
 	return nil
+}
+
+func readBackupVaultID(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var file BackupFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(file.VaultID), nil
 }

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import hashlib
+import subprocess
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -30,6 +31,50 @@ def normalize_version(value: str) -> str:
     if not DOCS_VERSION_ID_PATTERN.fullmatch(version):
         fail(f"invalid docs version id: {raw}")
     return version
+
+
+def released_app_versions(root: Path) -> list[str]:
+    try:
+        output = subprocess.check_output(
+            ["git", "tag", "--list", "v[0-9]*"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    versions = []
+    for line in output.splitlines():
+        tag = line.strip()
+        if re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+            versions.append(tag)
+    return versions
+
+
+def semver_key(version: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?", version)
+    if not match:
+        fail(f"invalid docs semantic version: {version}")
+    return tuple(int(part) for part in match.groups())
+
+
+def latest_released_app_version(root: Path) -> str:
+    versions = released_app_versions(root)
+    if not versions:
+        version_path = root / "VERSION"
+        if version_path.exists():
+            return normalize_version(version_path.read_text(encoding="utf-8"))
+        fail("no released HASP app tags found for docs versioning")
+    return max(versions, key=semver_key)
+
+
+def docs_release_candidate_version(root: Path) -> str | None:
+    if os.environ.get("HASP_DOCS_VERSIONING_RELEASE_CANDIDATE") != "1":
+        return None
+    version_path = root / "VERSION"
+    if not version_path.exists():
+        fail("release-candidate docs versioning requested but VERSION is missing")
+    return normalize_version(version_path.read_text(encoding="utf-8"))
 
 
 def normalize_source(source: str) -> str:
@@ -155,9 +200,11 @@ def main() -> int:
 
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     latest_id = normalize_version(registry.get("latest", ""))
-    repo_version = normalize_version((root / "VERSION").read_text(encoding="utf-8").strip())
-    if latest_id != repo_version:
-        fail(f"docs latest {latest_id} does not match VERSION {repo_version}")
+    latest_app_version = docs_release_candidate_version(root) or latest_released_app_version(root)
+    if latest_id != latest_app_version:
+        fail(
+            f"docs latest {latest_id} does not match latest released HASP app version {latest_app_version}"
+        )
     if canonical_latest != latest_id:
         fail(f"public docs metadata latest {canonical_latest} does not match docs latest {latest_id}")
 
@@ -167,6 +214,10 @@ def main() -> int:
 
     for entry in versions:
         version_id = normalize_version(entry.get("id", ""))
+        if "-" not in latest_app_version and semver_key(version_id) > semver_key(latest_app_version):
+            fail(
+                f"docs version {version_id} is newer than latest released HASP app version {latest_app_version}"
+            )
         manifest_path = archive_root / version_id / "manifest.json"
         if not manifest_path.exists():
             fail(f"missing docs manifest: {manifest_path.relative_to(root)}")

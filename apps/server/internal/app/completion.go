@@ -16,35 +16,19 @@ type CompletionOptions struct {
 	IncludeSecretNames bool
 }
 
-// secretSubcommands is the canonical list of subcommands under `hasp secret`.
-// Mirrors the switch in secretCommand so completions never lag the dispatcher.
-var secretSubcommands = []string{
-	"add", "copy", "delete", "diff", "expose", "get",
-	"hide", "list", "reveal", "rotate", "search", "show", "update",
-}
-
-var projectSubcommands = []string{
-	"adopt", "bind", "doctor", "examples", "requirements", "status", "targets", "unbind",
-}
-
-var policySubcommands = []string{
-	"set", "show", "validate",
-}
-
-var configSubcommands = []string{
-	"get", "set", "show",
-}
-
-// subcommandMap maps a root command name to its known subcommands.
-// Only entries that have meaningful sub-dispatch are listed; unlisted
-// commands will return an empty slice.
+// subcommandMap derives nested completions from rootCommandInventory so shell
+// completion cannot drift from the dispatcher.
 func subcommandMap() map[string][]string {
-	return map[string][]string{
-		"config":  configSubcommands,
-		"policy":  policySubcommands,
-		"project": projectSubcommands,
-		"secret":  secretSubcommands,
+	out := map[string][]string{}
+	for _, spec := range rootCommandInventory() {
+		if len(spec.subcommands) == 0 {
+			continue
+		}
+		subs := append([]string(nil), spec.subcommands...)
+		sort.Strings(subs)
+		out[spec.name] = subs
 	}
+	return out
 }
 
 // runFlagNames returns the flag names (without leading --) defined for

@@ -12,10 +12,6 @@ brew install gethasp/tap/hasp
 hasp version
 ```
 
-The macOS v2 app uses a cask in the same tap. See
-[macOS v2 migration](macos-v2-migration.md) before switching between the free
-CLI formula and paid app cask.
-
 Use [Install](install.md) for Homebrew upgrade and uninstall commands.
 
 ## Hosted release layout
@@ -33,14 +29,16 @@ Before creating a tag:
 1. Update every public doc page affected by new or exposed functionality.
 2. Update examples, command output, install steps, agent profile pages, and error guidance when behavior changes.
 3. Add any new docs page to the docs index/navigation source.
-4. Publish the matching versioned docs from the canonical release source.
+4. Do not publish a new docs version yet; versioned public docs are created
+   only after the core HASP app release tag exists.
 5. Keep the release gate process-bounded: the Go test wrapper defaults package
    parallelism to `-p 1`, and daemon lifecycle changes should leave no
    `app.test daemon serve`, `runtime.test daemon serve`, or
    `hasp-evals-bin*/hasp daemon serve` helpers behind.
 
-The public `/docs/` route and the release route `/docs/vX.Y.Z/` must describe
-the tag that is about to be published.
+The public `/docs/` route and every release route `/docs/vX.Y.Z/` must describe
+a currently released core HASP app tag. Do not use the macOS wrapper roadmap or
+an unreleased `VERSION` bump to create a public docs version.
 
 ## Source build
 

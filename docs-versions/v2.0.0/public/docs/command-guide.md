@@ -969,6 +969,10 @@ Use this to write an encrypted backup of local HASP state.
 
 Backups protect against machine loss and bad local edits. Store the backup away from the repo and protect the backup passphrase.
 
+Production backups should be signed with the offline Ed25519 backup signer. Configure the daemon environment with `HASP_BACKUP_SIGNING_KEY_B64` or `HASP_BACKUP_SIGNING_KEY_HEX`, and configure every restore environment with `HASP_BACKUP_TRUST_ROOTS_HEX`.
+
+When trust roots are set, unsigned backups and backups signed by unknown keys fail closed. Keep the private signer on offline media, publish only the public trust root, and rotate by distributing both old and new public keys during the transition window.
+
 ```bash
 hasp export-backup --output ./hasp.backup.json
 ```

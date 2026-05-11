@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -51,6 +52,9 @@ func TestExportAndRestoreBackup(t *testing.T) {
 	var backup BackupFile
 	if err := json.Unmarshal(data, &backup); err != nil {
 		t.Fatalf("decode backup: %v", err)
+	}
+	if backup.VaultID == "" || backup.VaultID != handle.BackupVaultID() {
+		t.Fatalf("backup vault id = %q, want current vault id %q", backup.VaultID, handle.BackupVaultID())
 	}
 	if backup.Signature.Algorithm != "Ed25519" || backup.Signature.PublicKey == "" || backup.Signature.Value == "" {
 		t.Fatalf("missing backup signature: %+v", backup.Signature)
@@ -98,6 +102,31 @@ func TestExportAndRestoreBackup(t *testing.T) {
 	for _, want := range []string{`"type":"init"`, `"type":"restore"`} {
 		if !strings.Contains(string(restoredAudit), want) {
 			t.Fatalf("restored audit missing %s: %s", want, restoredAudit)
+		}
+	}
+}
+
+func TestPruneBackupDirectorySkipsOtherVaultIDs(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	currentVaultID := strings.Repeat("a", 64)
+	otherVaultID := strings.Repeat("b", 64)
+
+	currentOld := writeBackupCandidate(t, dir, "current-old.hasp-backup", currentVaultID, now.Add(-4*time.Hour))
+	currentMid := writeBackupCandidate(t, dir, "current-mid.hasp-backup", currentVaultID, now.Add(-3*time.Hour))
+	currentNew := writeBackupCandidate(t, dir, "current-new.hasp-backup", currentVaultID, now.Add(-2*time.Hour))
+	otherOld := writeBackupCandidate(t, dir, "other-old.hasp-backup", otherVaultID, now.Add(-24*time.Hour))
+	legacyOld := writeBackupCandidate(t, dir, "legacy-old.hasp-backup", "", now.Add(-48*time.Hour))
+
+	if err := PruneBackupDirectory(dir, 2, currentVaultID); err != nil {
+		t.Fatalf("prune backup dir: %v", err)
+	}
+	if fileExists(currentOld) {
+		t.Fatalf("oldest current-vault backup survived pruning: %s", currentOld)
+	}
+	for _, path := range []string{currentMid, currentNew, otherOld, legacyOld} {
+		if !fileExists(path) {
+			t.Fatalf("backup %s was pruned unexpectedly", path)
 		}
 	}
 }
@@ -223,4 +252,25 @@ func rewriteBackupPayload(t *testing.T, path string, passphrase string, edit fun
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write backup: %v", err)
 	}
+}
+
+func writeBackupCandidate(t *testing.T, dir string, name string, vaultID string, modTime time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	data, err := json.Marshal(BackupFile{Version: backupFormatVersion, VaultID: vaultID})
+	if err != nil {
+		t.Fatalf("encode backup candidate: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write backup candidate: %v", err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("set backup candidate time: %v", err)
+	}
+	return path
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

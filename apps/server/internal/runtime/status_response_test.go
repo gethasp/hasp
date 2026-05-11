@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -124,6 +125,7 @@ func TestHTTPDashboardReturnsStatusPayload(t *testing.T) {
 	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
 	rpcSrv := newRPCServer(paths.Paths{
 		HomeDir:          t.TempDir(),
+		AuditPath:        fmt.Sprintf("%s/audit.jsonl", t.TempDir()),
 		SocketPath:       "/tmp/hasp.sock",
 		HTTPPortFilePath: fmt.Sprintf("%s/daemon.http.port", t.TempDir()),
 	})
@@ -782,8 +784,10 @@ func TestHTTPIntegrationsListProfilesDoctorAndSSE(t *testing.T) {
 	oldHTTPHMACKey := httpHMACKey
 	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
 	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+	home := t.TempDir()
 	rpcSrv := newRPCServer(paths.Paths{
-		HomeDir:          t.TempDir(),
+		HomeDir:          home,
+		AuditPath:        filepath.Join(home, "audit.jsonl"),
 		SocketPath:       "/tmp/hasp.sock",
 		HTTPPortFilePath: fmt.Sprintf("%s/daemon.http.port", t.TempDir()),
 	})
@@ -799,7 +803,7 @@ func TestHTTPIntegrationsListProfilesDoctorAndSSE(t *testing.T) {
 		_ = httpSrv.Close()
 	}()
 
-	eventsURL := fmt.Sprintf("http://127.0.0.1:%d/v1/events?topic=integrations.changed", httpSrv.Ports().V4)
+	eventsURL := fmt.Sprintf("http://127.0.0.1:%d/v1/events?topic=integrations.changed,integrations.profiles.changed", httpSrv.Ports().V4)
 	eventsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
 	if err != nil {
 		t.Fatalf("new events request: %v", err)
@@ -849,7 +853,7 @@ func TestHTTPIntegrationsListProfilesDoctorAndSSE(t *testing.T) {
 	if err := json.Unmarshal(doctorBody, &doctorReply); err != nil {
 		t.Fatalf("decode doctor: %v\n%s", err, doctorBody)
 	}
-	if !doctorReply.OK || doctorReply.TargetID != "shell-hook" || doctorReply.DurationMS >= 2000 {
+	if !doctorReply.OK || doctorReply.RuntimeProbe || doctorReply.TargetID != "shell-hook" || doctorReply.DurationMS >= 2000 {
 		t.Fatalf("doctor reply = %+v", doctorReply)
 	}
 	waitForSSELineWithin(t, lines, "event: integrations.changed", 250*time.Millisecond)
@@ -858,8 +862,52 @@ func TestHTTPIntegrationsListProfilesDoctorAndSSE(t *testing.T) {
 	if err := json.Unmarshal(doctorProfileBody, &doctorProfileReply); err != nil {
 		t.Fatalf("decode profile doctor: %v\n%s", err, doctorProfileBody)
 	}
-	if !doctorProfileReply.OK || doctorProfileReply.TargetID != "mcp" || doctorProfileReply.ProfileID != "claude-code" {
+	if !doctorProfileReply.OK || doctorProfileReply.RuntimeProbe || doctorProfileReply.TargetID != "mcp" || doctorProfileReply.ProfileID != "claude-code" {
 		t.Fatalf("profile doctor reply = %+v", doctorProfileReply)
+	}
+
+	createBody := signedHTTPJSON(t, ctx, key, http.MethodPost, baseURL+"/profiles", []byte(`{"target_id":"mcp","id":"custom-agent","name":"Custom Agent","target_pattern":"hasp agent mcp custom-agent","scope":"agent"}`))
+	var created IntegrationProfileMutationResponse
+	if err := json.Unmarshal(createBody, &created); err != nil {
+		t.Fatalf("decode created profile: %v\n%s", err, createBody)
+	}
+	if created.Profile.ID != "custom-agent" || created.Profile.TargetID != "mcp" || created.Profile.Version == "" || !created.Profile.Managed {
+		t.Fatalf("created profile = %+v", created.Profile)
+	}
+	waitForSSELine(t, lines, "event: integrations.profiles.changed")
+	waitForSSELine(t, lines, `data: {"target_id":"mcp","profile_id":"custom-agent","action":"create"}`)
+	catalogBody := signedHTTPJSON(t, ctx, key, http.MethodGet, baseURL+"/profiles", nil)
+	var catalog IntegrationProfilesResponse
+	if err := json.Unmarshal(catalogBody, &catalog); err != nil {
+		t.Fatalf("decode profile catalog: %v\n%s", err, catalogBody)
+	}
+	if !slices.ContainsFunc(catalog.Profiles, func(profile IntegrationProfile) bool {
+		return profile.ID == "custom-agent" && profile.TargetID == "mcp"
+	}) {
+		t.Fatalf("catalog missing custom profile: %+v", catalog)
+	}
+	updateBody := signedHTTPJSONWithHeaders(t, ctx, key, http.MethodPut, baseURL+"/mcp/profiles/custom-agent", []byte(`{"name":"Custom Agent 2","target_pattern":"hasp agent mcp custom-agent-v2","scope":"agent","enabled":false}`), map[string]string{"If-Match": created.Profile.Version})
+	var updated IntegrationProfileMutationResponse
+	if err := json.Unmarshal(updateBody, &updated); err != nil {
+		t.Fatalf("decode updated profile: %v\n%s", err, updateBody)
+	}
+	if updated.Profile.Name != "Custom Agent 2" || updated.Profile.Enabled || updated.Profile.Version == created.Profile.Version {
+		t.Fatalf("updated profile = %+v", updated.Profile)
+	}
+	staleBody, staleStatus := signedHTTPJSONStatusWithHeaders(t, ctx, key, http.MethodPut, baseURL+"/mcp/profiles/custom-agent", []byte(`{"name":"Stale","target_pattern":"stale","scope":"agent"}`), map[string]string{"If-Match": created.Profile.Version})
+	if staleStatus != http.StatusPreconditionFailed {
+		t.Fatalf("stale update status=%d body=%s, want 412", staleStatus, staleBody)
+	}
+	deleteBody, deleteStatus := signedHTTPJSONStatusWithHeaders(t, ctx, key, http.MethodDelete, baseURL+"/mcp/profiles/custom-agent", nil, map[string]string{"If-Match": updated.Profile.Version})
+	if deleteStatus != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s, want 200", deleteStatus, deleteBody)
+	}
+	events, err := audit.NewForPaths(rpcSrv.paths).Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if !hasIntegrationProfileAudit(events, "integration.profile.delete", "custom-agent") {
+		t.Fatalf("missing profile delete audit event: %+v", events)
 	}
 
 	badProfileBody, badProfileStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, baseURL+"/mcp/doctor", []byte(`{"profile_id":"missing-profile"}`))
@@ -2151,6 +2199,159 @@ func TestHTTPVaultMasterPasswordChangeRekeysAndLocksVault(t *testing.T) {
 	if _, err := vaultStore.OpenWithPassword(ctx, "new correct horse battery staple"); err != nil {
 		t.Fatalf("new password open: %v", err)
 	}
+	events, err := audit.NewForPaths(runtimePaths).Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if !hasMasterPasswordAudit(events, audit.EventDeny, "invalid_current_password") {
+		t.Fatalf("missing invalid current password audit event: %+v", events)
+	}
+	if !hasMasterPasswordAudit(events, audit.EventApprove, "rotated") {
+		t.Fatalf("missing successful master password audit event: %+v", events)
+	}
+}
+
+func TestHTTPVaultMasterPasswordChangeRateLimitsBadPasswords(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(ctx, "correct horse battery staple"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+	errCh := make(chan error, 1)
+	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = httpSrv.Close()
+	}()
+
+	changeURL := fmt.Sprintf("http://127.0.0.1:%d/v1/vault/master-password", httpSrv.Ports().V4)
+	for i := 0; i < masterPasswordFailureLimit; i++ {
+		body, status := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, changeURL, []byte(`{"current_password":"wrong password","new_password":"new correct horse battery staple"}`))
+		if status != http.StatusForbidden {
+			t.Fatalf("attempt %d status = %d body=%s, want 403", i+1, status, body)
+		}
+	}
+	body, status := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, changeURL, []byte(`{"current_password":"wrong password","new_password":"new correct horse battery staple"}`))
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("rate limited status = %d body=%s, want 429", status, body)
+	}
+	events, err := audit.NewForPaths(runtimePaths).Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if !hasMasterPasswordAudit(events, audit.EventDeny, "rate_limited") {
+		t.Fatalf("missing rate-limited audit event: %+v", events)
+	}
+}
+
+func TestHTTPKeyFingerprintReturnsCurrentKeyAndAuditsReveal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+	errCh := make(chan error, 1)
+	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = httpSrv.Close()
+	}()
+
+	body := signedHTTPJSON(t, ctx, key, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/v1/daemon/http-key/fingerprint", httpSrv.Ports().V4), nil)
+	var reply HTTPKeyFingerprintResponse
+	if err := json.Unmarshal(body, &reply); err != nil {
+		t.Fatalf("decode fingerprint response: %v\n%s", err, body)
+	}
+	want := strings.ToUpper(httpapi.HMACKeyFingerprintForKey(key))
+	if reply.Fingerprint != want {
+		t.Fatalf("fingerprint = %q, want %q", reply.Fingerprint, want)
+	}
+	events, err := audit.NewForPaths(runtimePaths).Events()
+	if err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if !hasSecurityAudit(events, audit.EventApprove, httpKeyFingerprintAction, "revealed") {
+		t.Fatalf("missing fingerprint reveal audit event: %+v", events)
+	}
+}
+
+func hasMasterPasswordAudit(events []audit.Event, eventType string, result string) bool {
+	return hasSecurityAudit(events, eventType, masterPasswordRateLimitAction, result)
+}
+
+func hasSecurityAudit(events []audit.Event, eventType string, action string, result string) bool {
+	for _, event := range events {
+		if event.Type != eventType || event.Details["action"] != action || event.Details["result"] != result {
+			continue
+		}
+		if _, ok := event.Details["remote_addr"].(string); !ok {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func hasIntegrationProfileAudit(events []audit.Event, action string, profileID string) bool {
+	for _, event := range events {
+		if event.Details["action"] == action && event.Details["profile_id"] == profileID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMasterPasswordAuditDetailsIncludesTrustedPeerPID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/vault/master-password", nil)
+	req = req.WithContext(httpapi.WithPeerPID(req.Context(), 4242))
+	details := (&rpcServer{}).masterPasswordAuditDetails(req)
+	if details["action"] != masterPasswordRateLimitAction {
+		t.Fatalf("action = %v", details["action"])
+	}
+	if details["peer_pid"] != 4242 {
+		t.Fatalf("peer_pid = %v, want 4242", details["peer_pid"])
+	}
 }
 
 func TestHTTPBackupCreatesSignedFileUpdatesConfigAndPrunesRetention(t *testing.T) {
@@ -2224,6 +2425,9 @@ func TestHTTPBackupCreatesSignedFileUpdatesConfigAndPrunesRetention(t *testing.T
 	if reply.Path != firstPath || reply.Checkpoint.Sequence < 0 {
 		t.Fatalf("backup response = %+v", reply)
 	}
+	if !reply.Signature.Signed || !reply.Signature.Trusted || !reply.Signature.Required || reply.Signature.TrustRootCount != 1 || reply.Signature.SignerFingerprint == "" || reply.Signature.Error != "" {
+		t.Fatalf("backup signature status = %+v", reply.Signature)
+	}
 	data, err := os.ReadFile(firstPath)
 	if err != nil {
 		t.Fatalf("read backup: %v", err)
@@ -2256,6 +2460,118 @@ func TestHTTPBackupCreatesSignedFileUpdatesConfigAndPrunesRetention(t *testing.T
 	}
 	if config.Config["backup.last_backup_at"] == "" {
 		t.Fatalf("last backup timestamp not set: %#v", config.Config["backup.last_backup_at"])
+	}
+}
+
+func TestHTTPBackupPassphraseCustodyUsesKeyring(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+	rpcSrv.keyring = newHTTPTestKeyring()
+	errCh := make(chan error, 1)
+	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = httpSrv.Close()
+	}()
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d/v1/backups/passphrase", httpSrv.Ports().V4)
+
+	body := signedHTTPJSON(t, ctx, key, http.MethodGet, baseURL, nil)
+	var status BackupPassphraseStatusResponse
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("decode initial status: %v\n%s", err, body)
+	}
+	if status.Enrolled || status.Available {
+		t.Fatalf("initial status = %+v, want not enrolled and unavailable", status)
+	}
+
+	body = signedHTTPJSON(t, ctx, key, http.MethodPut, baseURL, []byte(`{"passphrase":"scheduled-passphrase"}`))
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("decode enroll status: %v\n%s", err, body)
+	}
+	if !status.Enrolled || !status.Available || status.Source != "keychain" {
+		t.Fatalf("enroll status = %+v", status)
+	}
+	if got, err := rpcSrv.keyring.Get(backupPassphraseSvc, backupPassphraseAccount()); err != nil || got != "scheduled-passphrase" {
+		t.Fatalf("stored passphrase = %q err=%v", got, err)
+	}
+
+	body = signedHTTPJSON(t, ctx, key, http.MethodDelete, baseURL, nil)
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("decode delete status: %v\n%s", err, body)
+	}
+	if status.Enrolled || !status.Available {
+		t.Fatalf("delete status = %+v", status)
+	}
+	if _, err := rpcSrv.keyring.Get(backupPassphraseSvc, backupPassphraseAccount()); err == nil {
+		t.Fatal("expected deleted backup passphrase")
+	}
+}
+
+func TestScheduledBackupUsesKeychainCustodyWhenEnvMissing(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("HASP_BACKUP_PASSPHRASE", "")
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	keyring := newHTTPTestKeyring()
+	vaultStore, err := store.NewForPaths(keyring, runtimePaths)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := vaultStore.Init(ctx, "correct horse battery staple"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	handle, err := vaultStore.OpenWithPassword(ctx, "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	backupDir := filepath.Join(home, "backups")
+	if _, err := handle.SetConfigValue("backup.schedule", "daily", "test"); err != nil {
+		t.Fatalf("set schedule: %v", err)
+	}
+	if _, err := handle.SetConfigValue("backup.destination_path", backupDir, "test"); err != nil {
+		t.Fatalf("set destination: %v", err)
+	}
+	if err := keyring.Set(ctx, backupPassphraseSvc, backupPassphraseAccount(), "scheduled-passphrase"); err != nil {
+		t.Fatalf("set backup passphrase custody: %v", err)
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+	rpcSrv.keyring = keyring
+	now := time.Date(2026, 5, 11, 2, 0, 0, 0, time.UTC)
+
+	if err := rpcSrv.broker().runScheduledBackupOnce(ctx, now); err != nil {
+		t.Fatalf("scheduled backup: %v", err)
+	}
+	backupPath := filepath.Join(backupDir, "HASP-20260511-020000.hasp-backup")
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("scheduled backup missing: %v", err)
 	}
 }
 

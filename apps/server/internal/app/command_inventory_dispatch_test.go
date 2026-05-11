@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,24 @@ func TestRootCommandInventoryReturnsSameBackingArray(t *testing.T) {
 	}
 	if &a[0] != &b[0] {
 		t.Fatal("rootCommandInventory must memoize: repeated calls should return the same backing array")
+	}
+}
+
+func TestCompletionSubcommandsComeFromInventory(t *testing.T) {
+	got := subcommandMap()
+	for _, spec := range rootCommandInventory() {
+		if len(spec.subcommands) == 0 {
+			continue
+		}
+		subs, ok := got[spec.name]
+		if !ok {
+			t.Fatalf("completion map missing inventory subcommands for %q", spec.name)
+		}
+		for _, sub := range spec.subcommands {
+			if !slices.Contains(subs, sub) {
+				t.Fatalf("completion map for %q missing %q from inventory: %v", spec.name, sub, subs)
+			}
+		}
 	}
 }
 

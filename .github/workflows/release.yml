@@ -157,7 +157,6 @@ jobs:
       sha256: ${{ steps.dmg.outputs.sha256 }}
       version: ${{ steps.dmg.outputs.version }}
     env:
-      HASP_FLOWDECK_VERSION: "1.14.1"
       HASP_CREATE_DMG_VERSION: "1.2.3"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -170,11 +169,6 @@ jobs:
       - name: Install macOS packaging tools
         run: |
           brew install create-dmg
-          curl -fsSL https://flowdeck.studio/install.sh -o "$RUNNER_TEMP/install-flowdeck.sh"
-          FLOWDECK_VERSION="$HASP_FLOWDECK_VERSION" sh "$RUNNER_TEMP/install-flowdeck.sh"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.local/bin:$PATH"
-          flowdeck --version | grep -F "$HASP_FLOWDECK_VERSION"
           brew list --versions create-dmg | grep -F "$HASP_CREATE_DMG_VERSION"
       - name: Build, sign, notarize, and staple DMG
         id: dmg
@@ -187,7 +181,6 @@ jobs:
           HASP_NOTARY_KEY_ID: ${{ secrets.HASP_NOTARY_KEY_ID }}
           HASP_NOTARY_ISSUER_ID: ${{ secrets.HASP_NOTARY_ISSUER_ID }}
           HASP_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.HASP_SPARKLE_PUBLIC_ED_KEY }}
-          FLOWDECK_LICENSE_KEY: ${{ secrets.FLOWDECK_LICENSE_KEY }}
         run: |
           : "${HASP_TEAM_ID:?HASP_TEAM_ID is required}"
           : "${HASP_DEVELOPER_ID_APPLICATION:?HASP_DEVELOPER_ID_APPLICATION is required}"
@@ -197,7 +190,6 @@ jobs:
           : "${HASP_NOTARY_KEY_ID:?HASP_NOTARY_KEY_ID is required}"
           : "${HASP_NOTARY_ISSUER_ID:?HASP_NOTARY_ISSUER_ID is required}"
           : "${HASP_SPARKLE_PUBLIC_ED_KEY:?HASP_SPARKLE_PUBLIC_ED_KEY is required}"
-          : "${FLOWDECK_LICENSE_KEY:?FLOWDECK_LICENSE_KEY is required}"
           notary_key="$RUNNER_TEMP/AuthKey_${HASP_NOTARY_KEY_ID}.p8"
           printf '%s' "$HASP_NOTARY_KEY_B64" | base64 --decode > "$notary_key"
           trap 'rm -f "$notary_key"' EXIT

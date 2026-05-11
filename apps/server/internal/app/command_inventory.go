@@ -18,12 +18,13 @@ const (
 type rootCommandHandler func(context.Context, []string, io.Reader, io.Writer, io.Writer, starter) error
 
 type rootCommandSpec struct {
-	name      string
-	summary   string
-	group     string
-	helpTopic []string
-	hidden    bool
-	handler   rootCommandHandler
+	name        string
+	summary     string
+	group       string
+	helpTopic   []string
+	subcommands []string
+	hidden      bool
+	handler     rootCommandHandler
 }
 
 var (
@@ -53,17 +54,17 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "doctor", summary: "diagnose daemon, vault, binding, hooks, and audit state", group: commandGroupDaily, helpTopic: []string{"doctor"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return doctorCommand(ctx, args, stdout, s)
 		}},
-		{name: "secret", summary: "add, update, show/reveal/copy, expose, and hide vault items", group: commandGroupDaily, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "secret", summary: "add, update, show/reveal/copy, expose, and hide vault items", group: commandGroupDaily, subcommands: []string{"add", "copy", "delete", "diff", "expose", "get", "hide", "list", "reveal", "rotate", "search", "show", "update"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return secretCommand(ctx, args, stdin, stdout, stderr)
 		}},
-		{name: "app", summary: "connect an app profile and run it with managed secrets", group: commandGroupDaily, handler: appConsumerCommand},
-		{name: "agent", summary: "connect an agent once and let it pull through HASP", group: commandGroupDaily, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "app", summary: "connect an app profile and run it with managed secrets", group: commandGroupDaily, subcommands: []string{"connect", "disconnect", "install", "list", "run", "shell"}, handler: appConsumerCommand},
+		{name: "agent", summary: "connect an agent once and let it pull through HASP", group: commandGroupDaily, subcommands: []string{"connect", "disconnect", "launch", "list", "list-supported", "mcp", "shell"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return agentConsumerCommand(ctx, args, stdin, stdout, stderr)
 		}},
-		{name: "vault", summary: "lock local vault/session material", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "vault", summary: "lock local vault/session material", group: commandGroupUtility, subcommands: []string{"lock", "forget-device"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return vaultCommand(ctx, args, stdout, s)
 		}},
-		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, subcommands: []string{"adopt", "bind", "doctor", "examples", "requirements", "status", "targets", "unbind"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return projectCommandWithStderr(ctx, args, stdout, stderr)
 		}},
 		{name: "run", summary: "run a repo-scoped command through the broker", group: commandGroupDaily, helpTopic: []string{"run"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
@@ -100,25 +101,25 @@ func buildRootCommandInventory() []rootCommandSpec {
 			emitDeprecationWarning(ctx, stderr, "[hasp] 'hasp capture' is deprecated; use 'hasp secret add' with --expose=always (or --vault-only).\n")
 			return captureCommand(ctx, args, stdout, s)
 		}},
-		{name: "daemon", summary: "serve, start, stop, or inspect the local runtime", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "daemon", summary: "serve, start, stop, or inspect the local runtime", group: commandGroupUtility, subcommands: []string{"http-key", "restart", "run", "serve", "start", "status", "stop"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return daemonCommand(ctx, args, stdout, s)
 		}},
-		{name: "session", summary: "open, resolve, or revoke broker sessions", group: commandGroupUtility, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "session", summary: "open, resolve, or revoke broker sessions", group: commandGroupUtility, subcommands: []string{"grant-plaintext", "list", "open", "resolve", "revoke"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return sessionCommand(ctx, args, stdout, s)
 		}},
-		{name: "lease", summary: "list or revoke active broker leases", group: commandGroupUtility, helpTopic: []string{"lease"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "lease", summary: "list or revoke active broker leases", group: commandGroupUtility, helpTopic: []string{"lease"}, subcommands: []string{"list", "revoke"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return leaseCommand(ctx, args, stdout, s)
 		}},
-		{name: "approval", summary: "list or decide broker approval requests", group: commandGroupUtility, helpTopic: []string{"approval"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "approval", summary: "list or decide broker approval requests", group: commandGroupUtility, helpTopic: []string{"approval"}, subcommands: []string{"decide", "list"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return approvalCommand(ctx, args, stdout, s)
 		}},
-		{name: "access", summary: "inspect consumer-to-secret access grants", group: commandGroupUtility, helpTopic: []string{"access"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "access", summary: "inspect consumer-to-secret access grants", group: commandGroupUtility, helpTopic: []string{"access"}, subcommands: []string{"matrix"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return accessCommand(ctx, args, stdout, s)
 		}},
-		{name: "policy", summary: "show, validate, or replace access policy rules", group: commandGroupUtility, helpTopic: []string{"policy"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "policy", summary: "show, validate, or replace access policy rules", group: commandGroupUtility, helpTopic: []string{"policy"}, subcommands: []string{"set", "show", "validate"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return policyCommand(ctx, args, stdout, s)
 		}},
-		{name: "config", summary: "show, get, or set daemon settings", group: commandGroupUtility, helpTopic: []string{"config"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "config", summary: "show, get, or set daemon settings", group: commandGroupUtility, helpTopic: []string{"config"}, subcommands: []string{"get", "set", "show"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return configCommand(ctx, args, stdout, s)
 		}},
 		{name: "audit", summary: "print the local audit log", group: commandGroupUtility, helpTopic: []string{"audit"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {

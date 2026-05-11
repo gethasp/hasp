@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -104,6 +105,25 @@ func TestCompletionCzalHiddenCompleteSubcommandRoutes(t *testing.T) {
 		for _, sub := range []string{"add", "list", "expose"} {
 			if !strings.Contains(body, sub) {
 				t.Errorf("`hasp __complete secret` missing %q in:\n%s", sub, body)
+			}
+		}
+	})
+
+	t.Run("inventory-derived nested commands", func(t *testing.T) {
+		for command, want := range map[string][]string{
+			"lease":    {"list", "revoke"},
+			"approval": {"decide", "list"},
+			"access":   {"matrix"},
+		} {
+			var stdout bytes.Buffer
+			if err := Run(context.Background(), []string{"__complete", command}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+				t.Fatalf("Run __complete %s: %v", command, err)
+			}
+			got := strings.Fields(stdout.String())
+			for _, sub := range want {
+				if !slices.Contains(got, sub) {
+					t.Errorf("`hasp __complete %s` missing %q in %v", command, sub, got)
+				}
 			}
 		}
 	})

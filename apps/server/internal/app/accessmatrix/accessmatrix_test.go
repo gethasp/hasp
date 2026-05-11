@@ -100,7 +100,7 @@ func TestBuildProjectsCanonicalCellStatesByPrecedenceAndRange(t *testing.T) {
 			RequestedScope: "window", RequestedAt: now.Add(-30 * time.Second), ExpiresAt: now.Add(time.Minute), Status: "pending",
 		}},
 		Leases: []leases.Lease{{
-			ID: "lease-1", SecretID: "expiring", ConsumerID: "ci-runner", GrantedAt: now.Add(-time.Minute),
+			ID: "lease-1", SecretID: "prod/expiring", ConsumerID: "ci-runner", GrantedAt: now.Add(-time.Minute),
 			ExpiresAt: now.Add(30 * time.Second), LastUsedAt: now.Add(-time.Second), Scope: "window", Status: "active",
 		}},
 		AuditEvents: []audit.Event{

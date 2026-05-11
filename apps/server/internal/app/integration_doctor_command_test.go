@@ -41,6 +41,9 @@ func TestDoctorTargetJSONMatchesDaemonDoctor(t *testing.T) {
 	if !reflect.DeepEqual(cliReply, rpcReply) {
 		t.Fatalf("CLI/RPC doctor mismatch\ncli=%+v\nrpc=%+v", cliReply, rpcReply)
 	}
+	if cliReply.RuntimeProbe {
+		t.Fatalf("integration doctor must not claim runtime probing for metadata-only checks: %+v", cliReply)
+	}
 	if strings.Contains(out.String(), "do-not-expose") || strings.Contains(out.String(), "HASP_MASTER_PASSWORD") {
 		t.Fatalf("doctor output leaked forbidden token: %s", out.String())
 	}
