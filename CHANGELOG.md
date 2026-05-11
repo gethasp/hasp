@@ -4,40 +4,6 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
-## [v2.0.3]
-
-- Keep the hosted public release packaging job from rerunning the full release
-  gate after the dedicated preflight job has already passed.
-
-## [v2.0.2]
-
-- Keep the public terminal release workflow independent from the macOS app
-  release lane by removing hosted DMG notarization, appcast deployment, and
-  cask publication from the tag gate.
-- Validate the Homebrew tap token through the formula-only release path.
-
-## [v2.0.1]
-
-- Fix the Darwin public source build by keeping the Go keyring's Security shim
-  sources inside the exported server tree instead of depending on non-exported
-  macOS app sources.
-- Recut the v2 release after the `v2.0.0` source tag exposed the public export
-  build gap before any public tag was published.
-
-## [v2.0.0]
-
-- Add the HASP for macOS v2 product line with signed-app release metadata,
-  Sparkle update checks, setup and backup UX foundations, and app-target
-  release verification gates.
-- Harden backup custody with scoped retention, offline signer trust status, and
-  keychain-backed scheduled backup passphrase custody.
-- Tighten agent and integration surfaces with explicit metadata-only doctor
-  status, manageable profile metadata, step-up-gated HMAC fingerprint reveal,
-  and normalized lease matrix state.
-- Improve public release readiness with v2 release metadata, CI signing
-  fallbacks, release-publication regression coverage, and Homebrew tap publish
-  verification.
-
 ## [v1.0.4]
 
 - Harden the private-to-public release driver so live verification waits for

@@ -1,50 +1,14 @@
 {
-  "latest": "v2.0.3",
+  "latest": "v1.0.4",
   "versions": [
-    {
-      "id": "v2.0.3",
-      "label": "v2.0.3",
-      "version": "2.0.3",
-      "path": "/docs/v2.0.3/",
-      "snapshot": "v2.0.3/manifest.json",
-      "createdAt": "2026-05-11T05:46:54.141Z",
-      "sourceCommit": "94cf9fa86af45c2f4f0142cde08f8f50a098c43f"
-    },
-    {
-      "id": "v2.0.2",
-      "label": "v2.0.2",
-      "version": "2.0.2",
-      "path": "/docs/v2.0.2/",
-      "snapshot": "v2.0.2/manifest.json",
-      "createdAt": "2026-05-11T05:05:22.249Z",
-      "sourceCommit": "eba7a63782f6eff6863cea8318d8edd8925cc9f4"
-    },
-    {
-      "id": "v2.0.1",
-      "label": "v2.0.1",
-      "version": "2.0.1",
-      "path": "/docs/v2.0.1/",
-      "snapshot": "v2.0.1/manifest.json",
-      "createdAt": "2026-05-11T03:52:11.251Z",
-      "sourceCommit": "b4b4cd75bd47a9618dcaba6d73030a5dc40ee5c5"
-    },
-    {
-      "id": "v2.0.0",
-      "label": "v2.0.0",
-      "version": "2.0.0",
-      "path": "/docs/v2.0.0/",
-      "snapshot": "v2.0.0/manifest.json",
-      "createdAt": "2026-05-11T03:38:43.656Z",
-      "sourceCommit": "975addc39a3efac3b1163e27bd312844ff4855cf"
-    },
     {
       "id": "v1.0.4",
       "label": "v1.0.4",
       "version": "1.0.4",
       "path": "/docs/v1.0.4/",
       "snapshot": "v1.0.4/manifest.json",
-      "createdAt": "2026-05-11T03:17:24.639Z",
-      "sourceCommit": "b2db162241146b4c137009f0214ad1a33b952652"
+      "createdAt": "2026-05-11T05:59:34.613Z",
+      "sourceCommit": "d0890c9a6954b68b643d0474d73129a3f59c0a32"
     },
     {
       "id": "v1.0.3",
