@@ -23,7 +23,6 @@ poll_seconds=15
 install_script_smoke=1
 brew_mode=fetch
 github_release_check=1
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -160,7 +159,6 @@ check_url_head() {
 
 homebrew_tap_repo=""
 homebrew_formula=""
-homebrew_cask=""
 canonical_tap_url="https://github.com/gethasp/homebrew-tap.git"
 normalize_git_remote_url() {
   local url="$1"
@@ -195,22 +193,12 @@ check_homebrew_tap() {
     git -C "$homebrew_tap_repo" checkout --quiet origin/main || return 1
   fi
   homebrew_formula="$homebrew_tap_repo/Formula/hasp.rb"
-  homebrew_cask="$homebrew_tap_repo/Casks/hasp.rb"
   if [[ ! -f "$homebrew_formula" ]]; then
     printf 'published Homebrew formula not found: %s\n' "$homebrew_formula" >&2
     return 1
   fi
-  if [[ ! -f "$homebrew_cask" ]]; then
-    printf 'published Homebrew cask not found: %s\n' "$homebrew_cask" >&2
-    return 1
-  fi
   grep -F "version \"${version}\"" "$homebrew_formula" >/dev/null || return 1
   grep -F "downloads.gethasp.com/hasp/releases/${release_tag}/" "$homebrew_formula" >/dev/null || return 1
-  grep -F "version \"${version}\"" "$homebrew_cask" >/dev/null || return 1
-  grep -F 'brew uninstall hasp' "$homebrew_cask" >/dev/null || return 1
-  grep -F '"list", "--formula", "hasp"' "$homebrew_cask" >/dev/null || return 1
-  grep -F 'https://download.gethasp.com/macos/HASP-'"${version}"'.dmg' "$homebrew_cask" >/dev/null || return 1
-  bash "$script_dir/homebrew-cask-smoke.sh" "$homebrew_cask" >/dev/null || return 1
 }
 
 wait_for() {
@@ -261,7 +249,6 @@ case "$brew_mode" in
     need brew
     wait_for "Homebrew tap for $release_tag" check_homebrew_tap
     HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew fetch --force --formula gethasp/tap/hasp >/dev/null
-    HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew fetch --force --cask gethasp/tap/hasp >/dev/null
     if [[ "$brew_mode" == "install" ]]; then
       if brew list --formula --versions hasp >/dev/null 2>&1; then
         installed_version="$(brew list --formula --versions hasp | awk '{print $2; exit}')"

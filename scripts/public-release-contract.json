@@ -130,7 +130,7 @@
           ]
         },
         "publish-homebrew-tap": {
-          "needs_include": ["deploy-download-worker", "homebrew-formula-smoke", "homebrew-cask-smoke"]
+          "needs_include": ["deploy-download-worker", "homebrew-formula-smoke"]
         },
         "published-release-live-smoke": {
           "needs_include": ["publish-homebrew-tap"],
