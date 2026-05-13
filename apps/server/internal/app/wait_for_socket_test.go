@@ -30,6 +30,20 @@ func shortSocketPath(t *testing.T, _ string) string {
 	return filepath.Join(dir, "s.sock")
 }
 
+func shortTempDir(t *testing.T, prefix string) string {
+	t.Helper()
+	base := filepath.Join("/tmp", "hasp-testtmp")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("create temp base: %v", err)
+	}
+	dir, err := os.MkdirTemp(base, prefix)
+	if err != nil {
+		t.Fatalf("mkdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestWaitForSocketReadyTreatsStaleFileAsNotReady(t *testing.T) {
 	socketPath := shortSocketPath(t, fmt.Sprintf("stale-%d.sock", time.Now().UnixNano()))
 	f, err := os.Create(socketPath)

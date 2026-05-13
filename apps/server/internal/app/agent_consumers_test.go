@@ -492,7 +492,7 @@ func TestAgentOpenSessionRequestIncludesAuditHMACKey(t *testing.T) {
 func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	lockAppSeams(t)
 
-	homeDir := t.TempDir()
+	homeDir := shortTempDir(t, "agent-mcp-")
 	projectRoot := t.TempDir()
 	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
