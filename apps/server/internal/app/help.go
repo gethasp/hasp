@@ -74,6 +74,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "config show", text: configShowHelpText},
 	{key: "config get", text: configGetHelpText},
 	{key: "config set", text: configSetHelpText},
+	{key: "telemetry", text: telemetryHelpText},
 	{key: "vault", text: vaultHelpText},
 	{key: "vault lock", text: vaultLockHelpText},
 	{key: "vault forget-device", text: vaultForgetDeviceHelpText},
@@ -189,6 +190,7 @@ Advanced and automation
   hasp help completion
   hasp help docs
   hasp help upgrade
+  hasp help telemetry
 
 Output
   --json    machine-readable output on stdout for status, list, and mutation commands.
@@ -278,10 +280,12 @@ Flags
                                  always|never|ask: enable keychain unlock
   --overwrite-existing-config <val>
                                  always|never|ask: overwrite existing config
+  --telemetry <val>              always|never|on|off|ask: optional CLI telemetry;
+                                 default is never in non-interactive setup
 
 Examples
   hasp setup
-  hasp setup --non-interactive --hasp-home ~/.hasp --project-root . --agent claude-code
+  hasp setup --non-interactive --hasp-home ~/.hasp --project-root . --agent claude-code --telemetry=never
 `
 
 const bootstrapHelpText = `hasp bootstrap
@@ -1383,6 +1387,35 @@ Examples
   hasp config set clipboard.scrub_seconds 90
   hasp config set ui.reduce_motion_override on
   hasp config set integrations.disabled_targets '["shell-hook"]'
+`
+
+const telemetryHelpText = `hasp telemetry
+
+Inspect or change optional CLI telemetry. Telemetry is disabled by default and
+requires explicit opt-in through setup or ` + "`hasp telemetry enable`" + `.
+
+Telemetry sends daily aggregate command and reliability counters only. It never
+sends secrets, secret names, aliases, refs, paths, repo names, command args,
+stdout/stderr, raw errors, stack traces, or audit logs.
+
+Set HASP_TELEMETRY_DISABLED=1 to block telemetry regardless of saved consent.
+
+Subcommands
+  status    show consent, env override, endpoint, last ping, and schema
+  enable    opt in after a policy summary and confirmation
+  disable   withdraw consent and stop collection/sending
+  forget    delete local telemetry identity/counters and request erasure
+  preview   print the exact payload that would be sent, without sending it
+
+Options
+  --json    emit machine-readable JSON
+  --yes     skip the interactive confirmation for enable
+
+Examples
+  hasp telemetry status
+  hasp telemetry enable
+  hasp telemetry preview --json
+  hasp telemetry forget
 `
 
 const vaultHelpText = `hasp vault

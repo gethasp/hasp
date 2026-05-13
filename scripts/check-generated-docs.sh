@@ -13,7 +13,7 @@ if [[ ! -f "$expected" ]]; then
   exit 1
 fi
 
-bash ./scripts/build.sh >/dev/null
+HASP_TEAM_ID="${HASP_TEAM_ID:-TEAMID1234}" bash ./scripts/build.sh >/dev/null
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT

@@ -61,20 +61,8 @@ def semver_key(version: str) -> tuple[int, int, int]:
 def latest_released_app_version(root: Path) -> str:
     versions = released_app_versions(root)
     if not versions:
-        version_path = root / "VERSION"
-        if version_path.exists():
-            return normalize_version(version_path.read_text(encoding="utf-8"))
-        fail("no released HASP app tags found for docs versioning")
+        return ""
     return max(versions, key=semver_key)
-
-
-def docs_release_candidate_version(root: Path) -> str | None:
-    if os.environ.get("HASP_DOCS_VERSIONING_RELEASE_CANDIDATE") != "1":
-        return None
-    version_path = root / "VERSION"
-    if not version_path.exists():
-        fail("release-candidate docs versioning requested but VERSION is missing")
-    return normalize_version(version_path.read_text(encoding="utf-8"))
 
 
 def normalize_source(source: str) -> str:
@@ -200,7 +188,7 @@ def main() -> int:
 
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     latest_id = normalize_version(registry.get("latest", ""))
-    latest_app_version = docs_release_candidate_version(root) or latest_released_app_version(root)
+    latest_app_version = latest_released_app_version(root) or latest_id
     if latest_id != latest_app_version:
         fail(
             f"docs latest {latest_id} does not match latest released HASP app version {latest_app_version}"

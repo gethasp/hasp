@@ -66,6 +66,7 @@ build_date="${HASP_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 runtime_pkg="github.com/gethasp/hasp/apps/server/internal/runtime"
 release_pkg="github.com/gethasp/hasp/apps/server/internal/release"
 httpapi_pkg="github.com/gethasp/hasp/apps/server/internal/httpapi"
+telemetry_pkg="github.com/gethasp/hasp/apps/server/internal/telemetry"
 upgrade_trust_roots="${HASP_UPGRADE_TRUST_ROOTS_HEX:-}"
 if [[ -n "$upgrade_trust_roots" && ! "$upgrade_trust_roots" =~ ^[0-9a-fA-F]{64}(,[0-9a-fA-F]{64})*$ ]]; then
   echo "HASP_UPGRADE_TRUST_ROOTS_HEX must be one or more comma-separated 64-hex Ed25519 public keys" >&2
@@ -90,6 +91,17 @@ if [[ -n "$upgrade_trust_roots" ]]; then
 fi
 if [[ -n "$hmac_team_id" ]]; then
   ldflags_base+=" -X ${httpapi_pkg}.HMACTeamID=${hmac_team_id}"
+fi
+telemetry_endpoint="${HASP_TELEMETRY_ENDPOINT:-}"
+if [[ -n "$telemetry_endpoint" ]]; then
+  case "$telemetry_endpoint" in
+    https://telemetry.gethasp.com/v1/cli/ping) ;;
+    *)
+      echo "HASP_TELEMETRY_ENDPOINT must be https://telemetry.gethasp.com/v1/cli/ping for release builds" >&2
+      exit 1
+      ;;
+  esac
+  ldflags_base+=" -X ${telemetry_pkg}.Endpoint=${telemetry_endpoint}"
 fi
 
 server_mod="./apps/server/go.mod"

@@ -205,6 +205,30 @@ maybeOverwrite:
 	return nil
 }
 
+func setupResolveTelemetryOption(opts *setupOptions, prompt *setupPrompter) error {
+	if opts.Telemetry.set {
+		return nil
+	}
+	if opts.NonInteractive {
+		opts.Telemetry = setupOptionalBool{set: true, value: false}
+		return nil
+	}
+	if err := setupWriteStage(prompt.out, "Telemetry",
+		"HASP CLI telemetry is optional and disabled by default.",
+		"It sends daily aggregate command and reliability counters only.",
+		"It never sends secrets, secret names, aliases, refs, paths, repo names, command args, stdout/stderr, raw errors, or audit logs.",
+		"Set HASP_TELEMETRY_DISABLED=1 to block telemetry at runtime.",
+	); err != nil {
+		return err
+	}
+	value, err := promptBool(prompt, "Allow optional HASP CLI telemetry", false)
+	if err != nil {
+		return err
+	}
+	opts.Telemetry = setupOptionalBool{set: true, value: value}
+	return nil
+}
+
 func validateSetupNonInteractive(opts setupOptions) error {
 	if !opts.NonInteractive {
 		return nil

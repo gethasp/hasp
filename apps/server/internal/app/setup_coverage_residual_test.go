@@ -559,7 +559,7 @@ func TestSetupFinalCoverageBranches(t *testing.T) {
 			InstallHooks:            setupOptionalBool{set: true, value: false},
 			EnableConvenienceUnlock: setupOptionalBool{set: true, value: false},
 			OverwriteExistingConfig: setupOptionalBool{set: true, value: true},
-		}, bytes.NewBufferString("y\nn\ny\nn\nmyapp\ntrue\ny\nMISSING\nenv\nOPENAI_API_KEY\nn\nn\n"), io.Discard)
+		}, bytes.NewBufferString("n\ny\nn\ny\nn\nmyapp\ntrue\ny\nMISSING\nenv\nOPENAI_API_KEY\nn\nn\n"), io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "item not found") {
 			t.Fatalf("expected first-run connect-app failure, got %v", err)
 		}

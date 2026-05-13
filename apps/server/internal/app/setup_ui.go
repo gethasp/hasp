@@ -32,6 +32,7 @@ func renderSetupSummary(out io.Writer, summary setupSummary) error {
 		setupSummaryKeyValue(out, "Automatic repo guardrails", setupYesNo(summary.AutoInstallHooks)),
 		setupSummaryKeyValue(out, "Vault state", summary.InitState),
 		setupSummaryKeyValue(out, "Convenience unlock", summary.ConvenienceUnlock),
+		setupSummaryKeyValue(out, "Telemetry", summary.Telemetry),
 	}
 	if strings.TrimSpace(summary.ConvenienceDetail) != "" {
 		defaults = append(defaults, setupSummaryKeyValue(out, "Convenience detail", summary.ConvenienceDetail))
@@ -556,6 +557,7 @@ func setupWriteConfirmation(out io.Writer, plan setupPlanPreview) error {
 		setupSummaryKeyValue(out, "Automatic repo adoption", setupEnabledDisabled(plan.AutoProtectRepos)),
 		setupSummaryKeyValue(out, "Install repo guardrails", setupYesNo(plan.InstallHooks)),
 		setupSummaryKeyValue(out, "Convenience unlock", setupEnabledDisabled(plan.EnableConvenienceUnlock)),
+		setupSummaryKeyValue(out, "Telemetry", setupEnabledDisabled(plan.Telemetry)),
 	}
 	if strings.TrimSpace(plan.ProjectRoot) != "" {
 		lines = append(lines, setupSummaryKeyValue(out, "Protect this repo now", plan.ProjectRoot))

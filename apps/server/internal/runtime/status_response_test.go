@@ -2070,6 +2070,65 @@ func TestHTTPVaultUnlockOpensSessionAndPublishesEvents(t *testing.T) {
 	waitForSSELine(t, lines, "event: dashboard.changed")
 }
 
+func TestHTTPVaultUnlockAcceptsMasterPasswordFallback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+
+	home, err := os.MkdirTemp("", "hasp-master-password-unlock-*")
+	if err != nil {
+		t.Fatalf("create temp home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json.enc"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	const password = "correct horse battery staple"
+	if err := vaultStore.Init(ctx, password); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+
+	errCh := make(chan error, 1)
+	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = httpSrv.Close()
+	}()
+
+	unlockURL := fmt.Sprintf("http://127.0.0.1:%d/v1/vault/unlock", httpSrv.Ports().V4)
+	rejectedBody, rejectedStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, unlockURL, []byte(`{"method":"master-password","master_password":"wrong password"}`))
+	if rejectedStatus != http.StatusForbidden {
+		t.Fatalf("wrong master password status = %d body=%s, want 403", rejectedStatus, rejectedBody)
+	}
+
+	body := signedHTTPJSON(t, ctx, key, http.MethodPost, unlockURL, []byte(`{"method":"master-password","master_password":"correct horse battery staple"}`))
+	var unlock UnlockVaultResponse
+	if err := json.Unmarshal(body, &unlock); err != nil {
+		t.Fatalf("decode unlock response: %v", err)
+	}
+	if !unlock.Unlocked || unlock.RemainingTTL <= 0 {
+		t.Fatalf("unlock response = %+v, want unlocked with ttl", unlock)
+	}
+}
+
 func TestHTTPVaultInitCreatesVaultUnlocksAndRejectsRepeat(t *testing.T) {
 	if goruntime.GOOS != "darwin" {
 		t.Skip("vault init convenience unlock path requires macOS keyring")

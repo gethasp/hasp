@@ -961,16 +961,39 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				return
 			}
 		}
-		if strings.TrimSpace(req.Method) != "device-owner" {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "unlock method must be device-owner")
-			return
-		}
-		validateUnlock := rpcSrv.validateVaultUnlock
-		if validateUnlock == nil {
-			validateUnlock = defaultValidateVaultUnlock
-		}
-		if err := validateUnlock(r.Context(), rpcSrv.paths); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+		method := strings.TrimSpace(req.Method)
+		switch method {
+		case "device-owner":
+			validateUnlock := rpcSrv.validateVaultUnlock
+			if validateUnlock == nil {
+				validateUnlock = defaultValidateVaultUnlock
+			}
+			if err := validateUnlock(r.Context(), rpcSrv.paths); err != nil {
+				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				return
+			}
+		case "master-password":
+			if strings.TrimSpace(req.MasterPassword) == "" {
+				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "master_password is required")
+				return
+			}
+			vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
+			if err != nil {
+				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err.Error())
+				return
+			}
+			handle, err := vaultStore.OpenWithPassword(r.Context(), req.MasterPassword)
+			if err != nil {
+				if errors.Is(err, store.ErrInvalidPassword) {
+					httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "master password is incorrect")
+					return
+				}
+				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				return
+			}
+			_ = handle
+		default:
+			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "unlock method must be device-owner or master-password")
 			return
 		}
 		broker := rpcSrv.broker()
@@ -986,7 +1009,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		broker.appendAudit(audit.EventApprove, "daemon", map[string]any{
 			"action":      "vault.unlock",
-			"auth_method": strings.TrimSpace(req.Method),
+			"auth_method": method,
 			"internal":    true,
 		})
 		remainingTTL := time.Until(session.ExpiresAt).Seconds()

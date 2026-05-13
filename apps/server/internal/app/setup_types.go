@@ -34,10 +34,10 @@ func (b *setupOptionalBool) String() string {
 
 func (b *setupOptionalBool) Set(value string) error {
 	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "always", "true", "1", "yes", "y":
+	case "always", "true", "1", "yes", "y", "on":
 		b.set = true
 		b.value = true
-	case "never", "false", "0", "no", "n":
+	case "never", "false", "0", "no", "n", "off":
 		b.set = true
 		b.value = false
 	case "ask":
@@ -87,6 +87,7 @@ type setupOptions struct {
 	InstallHooks            setupOptionalBool
 	EnableConvenienceUnlock setupOptionalBool
 	OverwriteExistingConfig setupOptionalBool
+	Telemetry               setupOptionalBool
 	SkipPasswordPolicy      bool
 }
 
@@ -99,6 +100,7 @@ type setupPlanPreview struct {
 	BindImports             bool
 	InstallHooks            bool
 	EnableConvenienceUnlock bool
+	Telemetry               bool
 	ConfigExists            bool
 }
 
@@ -119,6 +121,7 @@ type setupSummary struct {
 	Agents            []setupAgentOutcome      `json:"agents,omitempty"`
 	ConvenienceUnlock string                   `json:"convenience_unlock"`
 	ConvenienceDetail string                   `json:"convenience_detail,omitempty"`
+	Telemetry         string                   `json:"telemetry"`
 	Verification      map[string]any           `json:"verification"`
 	Notes             []string                 `json:"notes,omitempty"`
 	NextSteps         []string                 `json:"next_steps,omitempty"`

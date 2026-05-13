@@ -6,6 +6,7 @@
         "$(MAKE) check-tidy",
         "$(MAKE) check-docs-portability",
         "$(MAKE) check-generated-docs",
+        "$(MAKE) check-telemetry-release-gate",
         "$(MAKE) workflow-lint",
         "$(MAKE) shellcheck",
         "$(MAKE) test-scripts",
@@ -35,7 +36,7 @@
   },
   "public_makefile_targets": {
     "verify-ci": {
-      "deps_exact": ["check-links", "check-tidy", "check-generated-docs", "workflow-lint", "shellcheck", "test-scripts", "web-check", "test", "lint"]
+      "deps_exact": ["check-links", "check-tidy", "check-generated-docs", "check-telemetry-release-gate", "workflow-lint", "shellcheck", "test-scripts", "web-check", "test", "lint"]
     },
     "test-release-publication": {
       "recipe_in_order": ["bash ./scripts/test-release-publication.sh"]

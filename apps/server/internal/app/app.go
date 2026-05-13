@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	goruntime "runtime"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/release"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
+	"github.com/gethasp/hasp/apps/server/internal/telemetry"
 )
 
 type starter interface {
@@ -121,7 +123,14 @@ func runWithStarter(ctx context.Context, args []string, stdin io.Reader, stdout 
 	// globalFlagsFromContext. We no longer inject them into subcommand args to
 	// avoid "flag provided but not defined" errors for commands that don't
 	// declare a local copy of the flag (e.g. run, inject for --json).
-	return dispatchRootCommand(ctx, spec, rest[1:], stdin, stdout, stderr, s)
+	err = dispatchRootCommand(ctx, spec, rest[1:], stdin, stdout, stderr, s)
+	if err == nil {
+		_ = telemetry.DefaultStore().RecordRootCommand(spec.name, time.Now().UTC())
+		if spec.name != "telemetry" {
+			_ = (telemetry.Client{}).TrySendPing(ctx, telemetry.DefaultStore(), runtime.VersionString())
+		}
+	}
+	return err
 }
 
 func versionCommand(ctx context.Context, args []string, stdout io.Writer) error {

@@ -635,6 +635,7 @@ func TestSetupSetEnvAndInteractiveSetup(t *testing.T) {
 		"n",
 		"n",
 		"n",
+		"n",
 		"y",
 		"correct horse battery staple",
 		"correct horse battery staple",

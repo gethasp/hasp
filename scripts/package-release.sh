@@ -34,6 +34,7 @@ case "$unsigned" in
     ;;
 esac
 export HASP_BUILD_DATE="$release_build_date"
+export HASP_TELEMETRY_ENDPOINT="${HASP_TELEMETRY_ENDPOINT:-https://telemetry.gethasp.com/v1/cli/ping}"
 
 verify_upgrade_trust_roots() {
   if [[ "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" == "1" ]]; then

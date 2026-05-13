@@ -14,6 +14,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
+	"github.com/gethasp/hasp/apps/server/internal/telemetry"
 )
 
 func setupCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -63,6 +64,7 @@ func parseSetupOptions(args []string) (setupOptions, bool, error) {
 	var convenienceUnlock setupOptionalBool
 	var overwriteExistingConfig setupOptionalBool
 	var autoProtectRepos setupOptionalBool
+	var telemetryOpt setupOptionalBool
 	fs.Var(&agents, "agent", "agent id")
 	fs.Var(&bindItems, "bind-item", "item name")
 	fs.Var(&aliases, "alias", "alias=item")
@@ -70,6 +72,7 @@ func parseSetupOptions(args []string) (setupOptions, bool, error) {
 	fs.Var(&installHooks, "install-hooks", "always|never|ask")
 	fs.Var(&convenienceUnlock, "enable-convenience-unlock", "always|never|ask")
 	fs.Var(&overwriteExistingConfig, "overwrite-existing-config", "always|never|ask")
+	fs.Var(&telemetryOpt, "telemetry", "always|never|ask")
 	if err := fs.Parse(args); err != nil {
 		return setupOptions{}, false, err
 	}
@@ -132,6 +135,7 @@ func parseSetupOptions(args []string) (setupOptions, bool, error) {
 		InstallHooks:            installHooks,
 		EnableConvenienceUnlock: convenienceUnlock,
 		OverwriteExistingConfig: overwriteExistingConfig,
+		Telemetry:               telemetryOpt,
 		SkipPasswordPolicy:      *skipPasswordPolicy,
 	}, repoFlagUsed, nil
 }
@@ -175,6 +179,9 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err := setupResolveBoolOptions(&opts, prompt, selectedAgents); err != nil {
 		return setupSummary{}, err
 	}
+	if err := setupResolveTelemetryOption(&opts, prompt); err != nil {
+		return setupSummary{}, err
+	}
 	if err := validateProjectScopedSetupOptions(opts); err != nil {
 		return setupSummary{}, err
 	}
@@ -196,6 +203,7 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			BindImports:             opts.BindImports,
 			InstallHooks:            opts.InstallHooks.value,
 			EnableConvenienceUnlock: opts.EnableConvenienceUnlock.value,
+			Telemetry:               opts.Telemetry.value,
 			ConfigExists:            configExists,
 		}); err != nil {
 			return setupSummary{}, err
@@ -325,6 +333,16 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		}
 	}
 	verification["brokered_proof"] = brokeredProof
+	telemetryState := "disabled"
+	if opts.Telemetry.value {
+		if telemetry.DisabledByEnv() {
+			telemetryState = "blocked_by_env"
+		} else if _, err := telemetry.DefaultStore().Enable(setupNowFn().UTC()); err != nil {
+			return setupSummary{}, err
+		} else {
+			telemetryState = "enabled"
+		}
+	}
 
 	summary := setupSummary{
 		HaspHome:          resolvedHome,
@@ -342,6 +360,7 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 		Agents:            agentOutcomes,
 		ConvenienceUnlock: convenienceState,
 		ConvenienceDetail: convenienceDetail,
+		Telemetry:         telemetryState,
 		Verification:      verification,
 		Notes:             setupNotes(selectedAgents, configExists, opts, convenienceState, convenienceDetail),
 		NextSteps:         setupNextSteps(projectRoot, binding, resolvedHome, convenienceState, convenienceDetail, opts.AutoProtectRepos.value, opts.InstallHooks.value),

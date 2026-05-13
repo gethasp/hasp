@@ -56,6 +56,18 @@ copy_public_docs_tree() {
   /bin/cp -R "$source/." "$dest"
 }
 
+seed_release_tag() {
+  local dest="$1"
+  local version
+  version="$(tr -d '[:space:]' < "$dest/VERSION")"
+  git -C "$dest" init -q
+  git -C "$dest" config user.email test@example.invalid
+  git -C "$dest" config user.name "Docs Versioning Test"
+  git -C "$dest" add .
+  git -C "$dest" commit -qm "fixture"
+  git -C "$dest" tag -a "v$version" -m "fixture v$version"
+}
+
 copy_private_shape() {
   local dest="$1"
   /bin/mkdir -p "$dest/public" "$dest/docs"
@@ -67,6 +79,7 @@ copy_private_shape() {
   /bin/cp -f "$(source_file public/CHANGELOG.md CHANGELOG.md)" "$dest/public/CHANGELOG.md"
   copy_public_docs_tree "$dest/public/docs"
   /bin/cp -R "$(source_dir docs/agent-profiles docs/agent-profiles)" "$dest/docs/agent-profiles"
+  seed_release_tag "$dest"
 }
 
 copy_exported_shape() {
@@ -81,6 +94,7 @@ copy_exported_shape() {
   copy_public_docs_tree "$dest/docs"
   /bin/mkdir -p "$dest/docs/agent-profiles"
   /bin/cp -R "$(source_dir docs/agent-profiles docs/agent-profiles)/." "$dest/docs/agent-profiles"
+  seed_release_tag "$dest"
 }
 
 assert_ok() {
@@ -202,7 +216,7 @@ printf '%s\n' "${pre_version#v}" >"$pre_root/VERSION"
 mutate_json "$pre_root/public/docs-versions/versions.json" "data['latest'] = '$pre_version'; data['versions'][0]['id'] = '$pre_version'; data['versions'][0]['label'] = '$pre_version'; data['versions'][0]['version'] = '${pre_version#v}'; data['versions'][0]['path'] = '/docs/$pre_version/'; data['versions'][0]['snapshot'] = '$pre_version/manifest.json'"
 mutate_json "$pre_root/public/docs-versions/$pre_version/manifest.json" "data['version'] = '$pre_version'; data['versionNumber'] = '${pre_version#v}'"
 mutate_json "$pre_root/public/docs-metadata.json" "data['latest'] = '$pre_version'"
-assert_ok "$pre_root"
+assert_fails "unreleased app docs version" "$pre_root"
 
 metadata_latest_root="$tmp_dir/metadata-latest"
 copy_private_shape "$metadata_latest_root"

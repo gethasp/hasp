@@ -70,7 +70,8 @@ type InitVaultResponse struct {
 }
 
 type UnlockVaultRequest struct {
-	Method string `json:"method,omitempty"`
+	Method         string `json:"method,omitempty"`
+	MasterPassword string `json:"master_password,omitempty"`
 }
 
 type UnlockVaultResponse struct {

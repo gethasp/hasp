@@ -29,6 +29,14 @@ func ConfigPath() (string, error) {
 	return filepath.Join(base, "hasp-cli.json"), nil
 }
 
+func TelemetryStatePath() (string, error) {
+	base, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "hasp-telemetry.json"), nil
+}
+
 func LoadConfig() (CLIConfig, error) {
 	path, err := ConfigPath()
 	if err != nil {

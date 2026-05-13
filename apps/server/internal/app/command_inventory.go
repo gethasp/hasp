@@ -122,6 +122,9 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "config", summary: "show, get, or set daemon settings", group: commandGroupUtility, helpTopic: []string{"config"}, subcommands: []string{"get", "set", "show"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return configCommand(ctx, args, stdout, s)
 		}},
+		{name: "telemetry", summary: "inspect or change optional CLI telemetry", group: commandGroupUtility, helpTopic: []string{"telemetry"}, subcommands: []string{"disable", "enable", "forget", "preview", "status"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+			return telemetryCommand(ctx, args, stdin, stdout, stderr)
+		}},
 		{name: "audit", summary: "print the local audit log", group: commandGroupUtility, helpTopic: []string{"audit"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
 			return auditCommandWithArgs(ctx, args, stdout)
 		}},
