@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -185,8 +186,8 @@ func TestAgentHandlersErrorBranches(t *testing.T) {
 	deps.AgentBuildExecutionEnv = func(context.Context, *store.Handle, store.AgentConsumer, Starter, string) ([]string, error) {
 		return nil, errors.New("env")
 	}
-	if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
-		t.Fatal("expected env error")
+	if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatalf("mcp should tolerate pre-handshake env error: %v", err)
 	}
 	deps = fullAgentDeps(t)
 	deps.AgentRegisterProcess = func(context.Context, Starter, string, int) error { return errors.New("register") }
@@ -439,7 +440,44 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			}
 		})
 
-		cases := []struct {
+		t.Run("unlock unavailable still serves pre-handshake MCP", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.OpenVault = func(context.Context) (*store.Handle, error) {
+				return nil, errors.New("HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable")
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex-cli"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp should serve without pre-handshake vault unlock: %v", err)
+			}
+			if out.String() != "ok" {
+				t.Fatalf("expected MCP server to run after unlock fallback, got %q", out.String())
+			}
+		})
+
+		t.Run("minimal consumer env is restored after fallback", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.SetEnv = nil
+			deps.OpenVault = func(context.Context) (*store.Handle, error) {
+				return nil, errors.New("open")
+			}
+			t.Setenv(secrettypes.EnvAgentConsumer, "before")
+			deps.AgentServeMCP = func(_ context.Context, _ io.Reader, stdout io.Writer) error {
+				_, err := stdout.Write([]byte("consumer=" + strings.TrimSpace(os.Getenv(secrettypes.EnvAgentConsumer))))
+				return err
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex-cli"}, strings.NewReader(""), &out, io.Discard); err != nil {
+				t.Fatalf("mcp fallback: %v", err)
+			}
+			if out.String() != "consumer=codex-cli" {
+				t.Fatalf("expected minimal consumer env during serve, got %q", out.String())
+			}
+			if got := strings.TrimSpace(os.Getenv(secrettypes.EnvAgentConsumer)); got != "before" {
+				t.Fatalf("expected consumer env restored, got %q", got)
+			}
+		})
+
+		preflightCases := []struct {
 			name   string
 			mutate func(*Deps)
 		}{
@@ -460,18 +498,27 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			{"set env", func(d *Deps) {
 				d.SetEnv = func(string, string) (func(), error) { return nil, errors.New("setenv") }
 			}},
-			{"serve", func(d *Deps) {
-				d.AgentServeMCP = func(context.Context, io.Reader, io.Writer) error { return errors.New("serve") }
-			}},
 		}
-		for _, tc := range cases {
+		for _, tc := range preflightCases {
 			t.Run(tc.name, func(t *testing.T) {
 				deps := fullAgentDeps(t)
 				tc.mutate(&deps)
-				if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
-					t.Fatal("expected error")
+				var out bytes.Buffer
+				if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+					t.Fatalf("mcp should tolerate pre-handshake %s failure: %v", tc.name, err)
+				}
+				if out.String() != "ok" {
+					t.Fatalf("expected MCP server to run after %s failure, got %q", tc.name, out.String())
 				}
 			})
 		}
+
+		t.Run("serve", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.AgentServeMCP = func(context.Context, io.Reader, io.Writer) error { return errors.New("serve") }
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+				t.Fatal("expected serve error")
+			}
+		})
 	})
 }

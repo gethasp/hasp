@@ -331,7 +331,7 @@ func revokeRuntimeSession(t *testing.T, e evalEnv, token string) {
 func packageArtifact(t *testing.T) string {
 	t.Helper()
 	root := repoRoot(t)
-	stdout, _ := runCmd(t, root, nil, "bash", "./scripts/package-release.sh")
+	stdout, _ := runCmd(t, root, append(os.Environ(), "HASP_TEAM_ID=TEAMID1234"), "bash", "./scripts/package-release.sh")
 	return strings.TrimSpace(stdout)
 }
 

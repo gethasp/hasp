@@ -11,7 +11,7 @@ import (
 
 func TestPackagedArtifactOperatorEval(t *testing.T) {
 	root := repoRoot(t)
-	releaseEnv := os.Environ()
+	releaseEnv := append(os.Environ(), "HASP_TEAM_ID=TEAMID1234")
 	tarball, _ := runCmd(t, root, releaseEnv, "bash", "-lc", `
 export GNUPGHOME="$(mktemp -d)"
 trap 'rm -rf "$GNUPGHOME"' EXIT

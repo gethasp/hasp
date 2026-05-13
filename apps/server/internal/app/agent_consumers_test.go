@@ -222,6 +222,64 @@ func TestAgentMCPCommandServesToolsAndRegistersParent(t *testing.T) {
 	}
 }
 
+func TestAgentMCPCommandContainsVaultUnlockFailureToToolCall(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HOME", homeDir)
+	t.Setenv("HASP_HOME", filepath.Join(homeDir, ".hasp"))
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	t.Setenv("HASP_MASTER_PASSWORD", "")
+
+	var input bytes.Buffer
+	enc := json.NewEncoder(&input)
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-06-18",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0"},
+		},
+	}); err != nil {
+		t.Fatalf("encode initialize: %v", err)
+	}
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
+		t.Fatalf("encode initialized notification: %v", err)
+	}
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "hasp_list",
+			"arguments": map[string]any{"project_root": projectRoot},
+		},
+	}); err != nil {
+		t.Fatalf("encode tool call: %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := agentMCPCommand(context.Background(), []string{"codex-cli"}, &input, &output); err != nil {
+		t.Fatalf("agent mcp should keep stdio alive through vault unlock failure: %v", err)
+	}
+	if !strings.Contains(output.String(), `"id":1`) || !strings.Contains(output.String(), `"id":2`) {
+		t.Fatalf("expected initialize and tool-call responses, got %q", output.String())
+	}
+	if !strings.Contains(output.String(), `"error"`) || !strings.Contains(output.String(), "keyring convenience unlock unavailable") {
+		t.Fatalf("expected tool-call JSON error for vault unlock failure, got %q", output.String())
+	}
+}
+
 func TestAgentCommandHelperBranches(t *testing.T) {
 	lockAppSeams(t)
 
@@ -408,8 +466,8 @@ func TestAgentCommandAndEnvBuilderBranches(t *testing.T) {
 	storeGetAgentFn = func(*store.Handle, string) (store.AgentConsumer, error) {
 		return store.AgentConsumer{}, errors.New("get fail")
 	}
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "get fail" {
-		t.Fatalf("expected agentMCPCommand get failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake get failure: %v", err)
 	}
 
 	agentBuildExecutionEnvFn = func(context.Context, *store.Handle, store.AgentConsumer, starter, string) ([]string, error) {
@@ -419,8 +477,8 @@ func TestAgentCommandAndEnvBuilderBranches(t *testing.T) {
 	if err := agentLaunchCommand(context.Background(), []string{"claude-code", "--", "true"}, bytes.NewBuffer(nil), io.Discard, io.Discard, false); err == nil || err.Error() != "env fail" {
 		t.Fatalf("expected launch env failure, got %v", err)
 	}
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "env fail" {
-		t.Fatalf("expected mcp env failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake env failure: %v", err)
 	}
 
 	origSetEnv := setupSetEnvFn
@@ -429,8 +487,8 @@ func TestAgentCommandAndEnvBuilderBranches(t *testing.T) {
 		return []string{envAgentSafeMode + "=1", envAgentConsumer + "=claude-code"}, nil
 	}
 	setupSetEnvFn = func(string, string) (func(), error) { return nil, errors.New("setenv fail") }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "setenv fail" {
-		t.Fatalf("expected mcp setenv failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake setenv failure: %v", err)
 	}
 	setupSetEnvFn = origSetEnv
 
@@ -438,8 +496,8 @@ func TestAgentCommandAndEnvBuilderBranches(t *testing.T) {
 		return []string{envAgentSafeMode + "=1", envAgentConsumer + "=claude-code", envSessionToken + "=token"}, nil
 	}
 	agentRegisterProcessFn = func(context.Context, starter, string, int) error { return errors.New("register fail") }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "register fail" {
-		t.Fatalf("expected mcp register failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake register failure: %v", err)
 	}
 	agentRegisterProcessFn = origRegister
 	agentBuildExecutionEnvFn = func(context.Context, *store.Handle, store.AgentConsumer, starter, string) ([]string, error) {
@@ -511,8 +569,8 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	origOpen := openVaultHandleFn
 	defer func() { openVaultHandleFn = origOpen }()
 	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault fail") }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "vault fail" {
-		t.Fatalf("expected agentMCPCommand open failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake open failure: %v", err)
 	}
 	openVaultHandleFn = origOpen
 
@@ -522,10 +580,12 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	if err := agentMCPCommand(context.Background(), []string{"claude-code", "--bad"}, bytes.NewBuffer(nil), io.Discard); err == nil {
 		t.Fatal("expected agentMCPCommand parse failure")
 	}
+	savedStarter := agentNewStarterFn
 	agentNewStarterFn = func() (starter, error) { return nil, errors.New("starter build fail") }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "starter build fail" {
-		t.Fatalf("expected agentMCPCommand starter construction failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake starter construction failure: %v", err)
 	}
+	agentNewStarterFn = savedStarter
 
 	origStarter := agentNewStarterFn
 	origPaths := appResolvePathsFn
@@ -547,14 +607,14 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	}()
 
 	agentNewStarterFn = func() (starter, error) { return &fakeStarter{err: io.EOF}, nil }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil {
-		t.Fatal("expected agentMCPCommand starter failure")
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake starter failure: %v", err)
 	}
 
 	agentNewStarterFn = func() (starter, error) { return newDaemonTestStarter(t), nil }
 	appResolvePathsFn = func() (paths.Paths, error) { return paths.Paths{}, errors.New("paths fail") }
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "paths fail" {
-		t.Fatalf("expected agentMCPCommand env build failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake env build failure: %v", err)
 	}
 	appResolvePathsFn = origPaths
 
@@ -562,8 +622,8 @@ func TestAgentMCPAndWrapperInstallBranches(t *testing.T) {
 	agentBuildExecutionEnvFn = func(context.Context, *store.Handle, store.AgentConsumer, starter, string) ([]string, error) {
 		return []string{envAgentSafeMode + "=1", envAgentConsumer + "=claude-code"}, nil
 	}
-	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err == nil || err.Error() != "setenv fail" {
-		t.Fatalf("expected agentMCPCommand setenv failure, got %v", err)
+	if err := agentMCPCommand(context.Background(), []string{"claude-code"}, bytes.NewBufferString(""), io.Discard); err != nil {
+		t.Fatalf("agentMCPCommand should tolerate pre-handshake setenv failure: %v", err)
 	}
 	setupSetEnvFn = origSetEnv
 	agentBuildExecutionEnvFn = origBuildEnv

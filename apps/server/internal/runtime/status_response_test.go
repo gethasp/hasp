@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -2130,9 +2129,6 @@ func TestHTTPVaultUnlockAcceptsMasterPasswordFallback(t *testing.T) {
 }
 
 func TestHTTPVaultInitCreatesVaultUnlocksAndRejectsRepeat(t *testing.T) {
-	if goruntime.GOOS != "darwin" {
-		t.Skip("vault init convenience unlock path requires macOS keyring")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -2150,6 +2146,7 @@ func TestHTTPVaultInitCreatesVaultUnlocksAndRejectsRepeat(t *testing.T) {
 		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
 		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
 	})
+	rpcSrv.keyring = newHTTPTestKeyring()
 	errCh := make(chan error, 1)
 	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
 	if err != nil {

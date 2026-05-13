@@ -676,15 +676,21 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	}
 	*projectRoot = expandedRoot
 	handle, err := openVaultHandleFn(ctx)
+	vaultWarning := ""
+	var items []store.Item
 	if err != nil {
-		return err
+		if !errors.Is(err, store.ErrKeyringUnavailable) && !errors.Is(err, store.ErrVaultNotInitialized) {
+			return err
+		}
+		vaultWarning = "vault unavailable; managed-value matching was skipped"
+	} else {
+		items = handle.ListItems()
 	}
 	root, err := appCanonicalProjectRootFn(ctx, *projectRoot)
 	if err != nil {
 		return err
 	}
 	noteResolvedProjectRootIfImplicit(fs, *jsonOutput, root, stderr)
-	items := handle.ListItems()
 	scanResult, err := reposcan.Scan(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
 	if err != nil {
 		return err
@@ -696,10 +702,16 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 		"skipped":  scanResult.Skipped,
 		"walker":   scanResult.Walker,
 	}
+	if vaultWarning != "" {
+		payload["warning"] = vaultWarning
+		if !*jsonOutput {
+			_, _ = fmt.Fprintln(stderr, "warning: "+vaultWarning)
+		}
+	}
 	if len(matches) > 0 {
 		appendAudit(audit.EventRepoBlock, "user", map[string]any{"project_root": root, "matches": len(matches), "override": *allowManagedSecrets})
 		_ = renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets)
+			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
 		})
 		if *allowManagedSecrets {
 			return nil
@@ -708,7 +720,7 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 			withHint("re-run with --allow-managed-secrets if the override is intentional")
 	}
 	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderRepoCheckResult(w, root, matches, *allowManagedSecrets)
+		return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
 	})
 }
 

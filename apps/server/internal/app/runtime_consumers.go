@@ -146,7 +146,7 @@ func openVaultHandle(ctx context.Context) (*store.Handle, error) {
 	}
 	handle, unlockErr := vaultStore.OpenWithConvenienceUnlock(ctx)
 	if unlockErr != nil && errors.Is(unlockErr, store.ErrKeyringUnavailable) {
-		return nil, fmt.Errorf("HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable")
+		return nil, fmt.Errorf("HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable: %w", unlockErr)
 	}
 	if unlockErr == nil && handle != nil {
 		setAuditHMACKey(handle.AuditHMACKey())

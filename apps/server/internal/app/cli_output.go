@@ -640,8 +640,15 @@ func renderWriteEnvResult(out io.Writer, outputPath string, entries int, warning
 	)
 }
 
-func renderRepoCheckResult(out io.Writer, projectRoot string, matches []map[string]string, override bool) error {
+func renderRepoCheckResult(out io.Writer, projectRoot string, matches []map[string]string, override bool, warning ...string) error {
+	warningText := ""
+	if len(warning) > 0 {
+		warningText = warning[0]
+	}
 	lead := "No managed values were detected in repository files."
+	if warningText != "" {
+		lead = "Repo files were scanned, but managed-value matching was skipped."
+	}
 	if len(matches) > 0 {
 		lead = fmt.Sprintf("Detected %d managed %s in repository files.", len(matches), cliPlural(len(matches), "value", "values"))
 	}
@@ -651,6 +658,7 @@ func renderRepoCheckResult(out io.Writer, projectRoot string, matches []map[stri
 	if err := cliWriteKeyValues(out, "Details",
 		cliPair("Project root", cliDisplayPath(projectRoot)),
 		cliPair("Override", setupYesNo(override)),
+		cliPair("Warning", warningText),
 	); err != nil {
 		return err
 	}

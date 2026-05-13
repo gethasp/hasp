@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 // TestCheckRepoRespectsGitignoreViaLsFiles locks in that check-repo uses
@@ -61,6 +64,56 @@ func TestCheckRepoRespectsGitignoreViaLsFiles(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "\"matches\":null") {
 		t.Fatalf("check-repo must respect .gitignore; unexpected matches: %s", out.String())
+	}
+}
+
+// TestCheckRepoDegradesWhenVaultCannotUnlock keeps managed repo hooks usable on
+// machines where the keyring or vault is not currently available. The hook can
+// still exercise the bounded file walker and reports that secret matching was
+// skipped instead of blocking every commit/push before Git can proceed.
+func TestCheckRepoDegradesWhenVaultCannotUnlock(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("clean\n"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "keyring unavailable", err: store.ErrKeyringUnavailable},
+		{name: "vault not initialized", err: store.ErrVaultNotInitialized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origOpen := openVaultHandleFn
+			t.Cleanup(func() { openVaultHandleFn = origOpen })
+			openVaultHandleFn = func(context.Context) (*store.Handle, error) {
+				return nil, fmt.Errorf("open vault: %w", tt.err)
+			}
+
+			var out bytes.Buffer
+			if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out, io.Discard); err != nil {
+				t.Fatalf("check-repo should degrade when vault is unavailable, got %v; body=%s", err, out.String())
+			}
+			body := out.String()
+			if !strings.Contains(body, `"matches":null`) || !strings.Contains(body, `"warning":"vault unavailable; managed-value matching was skipped"`) {
+				t.Fatalf("expected degraded clean JSON response, got %s", body)
+			}
+		})
+	}
+
+	origOpen := openVaultHandleFn
+	t.Cleanup(func() { openVaultHandleFn = origOpen })
+	openVaultHandleFn = func(context.Context) (*store.Handle, error) {
+		return nil, errors.New("vault storage corrupt")
+	}
+	if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard, io.Discard); err == nil {
+		t.Fatal("expected unrelated vault errors to remain fatal")
 	}
 }
 
