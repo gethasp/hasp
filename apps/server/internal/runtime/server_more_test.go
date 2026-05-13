@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
+	"github.com/gethasp/hasp/apps/server/internal/httpapi"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
@@ -43,6 +45,23 @@ func (statusErrorService) Ping(_ PingRequest, reply *PingResponse) error {
 
 func (statusErrorService) Status(StatusRequest, *StatusResponse) error {
 	return errors.New("status failed")
+}
+
+func TestNewHASPAppAttestorDoesNotRequireTeamIDWhenPlatformAttestationUnavailable(t *testing.T) {
+	if goruntime.GOOS == "darwin" {
+		t.Skip("Darwin requires a build-time Team ID for designated-requirement attestation")
+	}
+	oldTeamID := httpapi.HMACTeamID
+	httpapi.HMACTeamID = ""
+	t.Cleanup(func() { httpapi.HMACTeamID = oldTeamID })
+
+	attestor, err := newHASPAppAttestor()
+	if err != nil {
+		t.Fatalf("newHASPAppAttestor without team id on %s: %v", goruntime.GOOS, err)
+	}
+	if err := attestor.VerifyPID(os.Getpid()); !errors.Is(err, httpapi.ErrAttestationUnavailable) {
+		t.Fatalf("VerifyPID error = %v, want attestation unavailable", err)
+	}
 }
 
 type acceptErrorListener struct {

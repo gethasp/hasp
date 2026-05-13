@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -2206,7 +2207,7 @@ func accessMatrixInputFromHandle(handle *store.Handle, sessions *SessionStore) a
 
 func newHASPAppAttestor() (httpapi.Attestor, error) {
 	teamID := strings.TrimSpace(httpapi.HMACTeamID)
-	if teamID == "" && isGoTestBinary() {
+	if teamID == "" && (isGoTestBinary() || goruntime.GOOS != "darwin") {
 		teamID = "TEAMID1234"
 	}
 	requirement, err := httpapi.HASPAppDesignatedRequirement(teamID)

@@ -173,11 +173,11 @@ cleanup_release_smoke() {
   if [[ "$status" != "0" ]]; then
     for log_home in "$temp_home" "$restore_home"; do
       if [[ -s "$log_home/runtime/daemon.stderr.log" ]]; then
-        printf '--- daemon stderr (%s) ---\n' "$log_home" >&2
+        printf -- '--- daemon stderr (%s) ---\n' "$log_home" >&2
         cat "$log_home/runtime/daemon.stderr.log" >&2
       fi
       if [[ -s "$log_home/runtime/daemon.stdout.log" ]]; then
-        printf '--- daemon stdout (%s) ---\n' "$log_home" >&2
+        printf -- '--- daemon stdout (%s) ---\n' "$log_home" >&2
         cat "$log_home/runtime/daemon.stdout.log" >&2
       fi
     done
