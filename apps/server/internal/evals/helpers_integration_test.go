@@ -128,6 +128,7 @@ func (e evalEnv) commandEnv(extra map[string]string) []string {
 		"HASP_HOME="+e.home,
 		"HASP_TEST=1",
 		"HASP_SOCKET="+e.socket,
+		"HASP_TELEMETRY_TEST_STATE="+filepath.Join(e.home, "telemetry-state.json"),
 		"HASP_TEST_DAEMON_PARENT_PID="+strconv.Itoa(os.Getpid()),
 		"HASP_MASTER_PASSWORD="+e.masterPassword,
 		"HASP_BACKUP_PASSPHRASE="+e.backupPass,

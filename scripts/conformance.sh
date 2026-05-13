@@ -49,7 +49,7 @@ pid_matches_scoped_daemon() {
   lsof -a -p "$pid" -U -Fn 2>/dev/null | grep -F "n$socket_path" >/dev/null 2>&1
 }
 
-make verify-ci
+HASP_CHECK_PUBLIC_EXPORT_GATE_TARGET=verify-ci make verify-ci
 bash ./scripts/release-smoke.sh
 make evals
 make benchmark-smoke

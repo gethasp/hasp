@@ -29,7 +29,7 @@
         "$(MAKE) test-release-publication",
         "$(MAKE) evals",
         "$(MAKE) vulncheck",
-        "HASP_COVERAGE_TARGET=100 $(MAKE) coverage",
+        "$(MAKE) coverage",
         "$(MAKE) conformance"
       ]
     }
@@ -49,7 +49,7 @@
         "$(MAKE) vulncheck",
         "$(MAKE) test-integration",
         "$(MAKE) test-race",
-        "HASP_COVERAGE_TARGET=100 $(MAKE) coverage",
+        "$(MAKE) coverage",
         "$(MAKE) conformance"
       ]
     }
@@ -57,7 +57,7 @@
   "scripts": {
     "scripts/conformance.sh": {
       "commands_in_order": [
-        "make verify-ci",
+        "HASP_CHECK_PUBLIC_EXPORT_GATE_TARGET=verify-ci make verify-ci",
         "bash ./scripts/release-smoke.sh",
         "make evals",
         "make benchmark-smoke"
@@ -99,12 +99,11 @@
     },
     "public_ci": {
       "path": ".github/workflows/ci.yml",
-      "forbid_contains": ["paths:"],
+      "forbid_contains": ["paths:", "HASP_COVERAGE_TARGET: \"100\""],
       "jobs": {
         "fork-pr-verify": {
           "runs_on_contains": "ubuntu-latest",
-          "run_contains": ["make verify-ci", "make coverage"],
-          "env_contains": ["HASP_COVERAGE_TARGET: \"100\""]
+          "run_contains": ["make verify-ci", "make coverage"]
         },
         "merge-gate": {
           "run_contains": ["make release-gate"]

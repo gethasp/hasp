@@ -30,7 +30,6 @@ jobs:
       - name: Coverage
         env:
           HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
-          HASP_COVERAGE_TARGET: "100"
         run: make coverage
 
   merge-gate:

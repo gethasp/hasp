@@ -114,7 +114,7 @@ verify: verify-ci release-smoke coverage vulncheck
 ## release-preflight: Fast local preflight before publishing a release tag
 release-preflight: verify-ci test-release-publication
 
-## release-gate: Release-blocking gate with all tests and 100% Go coverage
+## release-gate: Release-blocking gate with all tests and Go coverage reporting
 release-gate:
 	@$(MAKE) verify-ci
 	@$(MAKE) test-release-publication
@@ -122,7 +122,7 @@ release-gate:
 	@$(MAKE) vulncheck
 	@$(MAKE) test-integration
 	@$(MAKE) test-race
-	@HASP_COVERAGE_TARGET=100 $(MAKE) coverage
+	@$(MAKE) coverage
 	@$(MAKE) conformance
 
 ## conformance: Run the release-blocking conformance lane

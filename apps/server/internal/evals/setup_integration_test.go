@@ -277,7 +277,7 @@ func TestSetupExistingVaultPasswordRetryEval(t *testing.T) {
 		t.Fatalf("initial setup failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 
-	input := "n\ny\nwrong-password\n" + env.masterPassword + "\n"
+	input := "n\nn\ny\nwrong-password\n" + env.masterPassword + "\n"
 	retryEnv := env.commandEnv(map[string]string{
 		"HOME":            userHome,
 		"HASP_HOME":       haspHome,
