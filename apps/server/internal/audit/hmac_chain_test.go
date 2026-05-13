@@ -49,6 +49,24 @@ func TestAppendWithHMACKeyEmitsKeyedSchemeAndVerifies(t *testing.T) {
 	}
 }
 
+func TestHMACKeyReturnsDefensiveCopy(t *testing.T) {
+	var nilLog *Log
+	if key := nilLog.HMACKey(); key != nil {
+		t.Fatalf("nil log HMACKey = %x, want nil", key)
+	}
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	log := (&Log{}).WithKey(key)
+	got := log.HMACKey()
+	if string(got) != string(key) {
+		t.Fatalf("HMACKey = %x, want %x", got, key)
+	}
+	got[0] = 'x'
+	if string(log.HMACKey()) != string(key) {
+		t.Fatal("HMACKey returned mutable internal key storage")
+	}
+}
+
 // TestVerifyFailsWhenHMACKeyMissingForKeyedScheme covers the keyForScheme
 // fail-closed branch: if a chain contains an HMAC-stamped event but the
 // caller didn't install the key (or used the wrong key), Verify must

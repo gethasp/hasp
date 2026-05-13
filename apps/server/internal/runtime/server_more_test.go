@@ -182,6 +182,7 @@ func TestEnsureDaemonUsesBackgroundWhenContextIsNil(t *testing.T) {
 
 func TestEnsureDaemonTimesOutWhenDaemonNeverAppears(t *testing.T) {
 	lockRuntimeSeams(t)
+	t.Setenv("HASP_DAEMON_STARTUP_TIMEOUT", "50ms")
 	origSpawn := spawnDaemonProcess
 	origMkdir := runtimeMkdirAll
 	origRemove := runtimeRemove
@@ -204,7 +205,7 @@ func TestEnsureDaemonTimesOutWhenDaemonNeverAppears(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "timed out waiting for hasp daemon") {
 		t.Fatalf("expected timeout error, got %v", err)
 	}
-	if time.Since(start) < 5*time.Second {
+	if time.Since(start) < 50*time.Millisecond {
 		t.Fatal("expected real timeout wait")
 	}
 }

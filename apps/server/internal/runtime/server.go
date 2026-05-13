@@ -46,14 +46,26 @@ type Manager struct {
 
 var spawnDaemonProcess = startDetachedProcess
 
-// daemonStartupTimeout caps how long EnsureDaemon waits for a freshly-spawned
+// defaultDaemonStartupTimeout caps how long EnsureDaemon waits for a freshly-spawned
 // daemon to bind its socket and pass verifyDaemon. The previous 5-second
 // budget was tight on cold launchd start with a Keychain unlock prompt
 // (the user has to physically click "Allow"), and on first run after a
 // reboot when argon2id KDF parameters are sized aggressively. 15s gives
 // the daemon room for both without silently turning a slow start into a
 // hard failure that requires a retry.
-const daemonStartupTimeout = 15 * time.Second
+const defaultDaemonStartupTimeout = 15 * time.Second
+
+func daemonStartupTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("HASP_DAEMON_STARTUP_TIMEOUT"))
+	if raw == "" {
+		return defaultDaemonStartupTimeout
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return defaultDaemonStartupTimeout
+	}
+	return parsed
+}
 
 var (
 	resolveRuntimePaths  = paths.Resolve
@@ -149,7 +161,7 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 	if err := spawnDaemonProcess(ctx); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(daemonStartupTimeout)
+	deadline := time.Now().Add(daemonStartupTimeout())
 	for time.Now().Before(deadline) {
 		client, err := Dial(ctx, m.paths.SocketPath)
 		if err == nil {

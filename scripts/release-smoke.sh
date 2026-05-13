@@ -66,6 +66,7 @@ fi
 
 export GOOS="$target_goos"
 export GOARCH="$target_goarch"
+export HASP_DAEMON_STARTUP_TIMEOUT="${HASP_DAEMON_STARTUP_TIMEOUT:-60s}"
 
 stop_scoped_daemon() {
   local bin_path="$1"
@@ -168,12 +169,25 @@ installed_bin=""
 chmod 700 "$protected_gpg_home"
 chmod 700 "$attacker_gpg_home"
 cleanup_release_smoke() {
+  local status="${1:-$?}"
+  if [[ "$status" != "0" ]]; then
+    for log_home in "$temp_home" "$restore_home"; do
+      if [[ -s "$log_home/runtime/daemon.stderr.log" ]]; then
+        printf '--- daemon stderr (%s) ---\n' "$log_home" >&2
+        cat "$log_home/runtime/daemon.stderr.log" >&2
+      fi
+      if [[ -s "$log_home/runtime/daemon.stdout.log" ]]; then
+        printf '--- daemon stdout (%s) ---\n' "$log_home" >&2
+        cat "$log_home/runtime/daemon.stdout.log" >&2
+      fi
+    done
+  fi
   stop_scoped_daemon "${installed_bin:-}" "$temp_home"
   stop_scoped_daemon "${installed_bin:-}" "$restore_home"
   /bin/rm -rf "$smoke_gpg_home" "$metadata_probe" "$temp_home" "$restore_home" "$install_root" "$upgrade_root" "$hook_repo" "$protected_gpg_home" "$protected_release_dir" "$protected_public_dir" "$protected_extract" "$attacker_gpg_home" "$attacker_release_dir" "$installer_symlink_probe" "$installer_staging_probe"
   /bin/rm -f "$protected_passphrase_file" "$upgrade_signing_key" "$trusted_key_file"
 }
-trap cleanup_release_smoke EXIT
+trap 'status=$?; cleanup_release_smoke "$status"; exit "$status"' EXIT
 
 export HASP_RELEASE_METADATA_PWNED="$metadata_probe/pwned"
 cat >"$metadata_probe/RELEASE_MANIFEST" <<'EOF'
@@ -298,6 +312,10 @@ installed_bin="$install_root/bin/hasp"
 export HASP_HOME="$temp_home"
 export HASP_MASTER_PASSWORD="release-smoke-password"
 export HASP_BACKUP_PASSPHRASE="release-smoke-backup"
+# Release smoke runs unsigned throwaway artifacts on hosted CI. Use the
+# temp-scoped debug HTTP HMAC key path so daemon smoke does not require a
+# native keychain prompt or signed app designated requirements.
+export HASP_TEST=1
 
 test -f "$release_dir/SHA256SUMS"
 test -f "$release_dir/SHA256SUMS.asc"
@@ -339,6 +357,7 @@ git -C "$project_root" init >/dev/null 2>&1
   --project-root "$project_root" \
   --env API_TOKEN=@API_TOKEN \
   --grant-project window \
+  --grant-secret session \
   --grant-window 15m \
   -- sh -c 'test "$API_TOKEN" = "abc123"' >/dev/null
 env_output="$temp_home/.env.local"
