@@ -96,8 +96,26 @@ jobs:
         run: make workflow-lint
       - name: Shellcheck scripts
         run: make shellcheck
-      - name: Test scripts
-        run: make test-scripts
+      - name: Test go mod tidy script
+        run: bash scripts/test-check-go-mod-tidy.sh
+      - name: Test public installer
+        run: bash scripts/test-public-installer.sh
+      - name: Test public docs versioning
+        run: bash scripts/test-public-docs-versioning.sh
+      - name: Test release metadata parser
+        run: bash scripts/test-release-metadata-parser.sh
+      - name: Test release targets
+        run: bash scripts/test-release-targets.sh
+      - name: Test macOS DMG signing scripts
+        run: bash scripts/test-macos-dmg-signing.sh
+      - name: Test Sparkle appcast scripts
+        run: bash scripts/test-sparkle-appcast.sh
+      - name: Check public release contract
+        run: python3 scripts/check-public-release-contract.py
+      - name: Test docs versioning run gate
+        run: bash scripts/test-run-docs-versioning-if-needed.sh
+      - name: Test public release package
+        run: bash scripts/test-package-public-release.sh
       - name: Check web
         run: make web-check
       - name: Test server

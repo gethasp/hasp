@@ -7,21 +7,25 @@ import (
 )
 
 func TestParseSemVerAccepts(t *testing.T) {
-	cases := map[string]SemVer{
-		"1.2.3":         {1, 2, 3, ""},
-		"v1.2.3":        {1, 2, 3, ""},
-		"v1.0.0":        {1, 0, 0, ""},
-		"1.2.3-rc.1":    {1, 2, 3, "rc.1"},
-		"1.2.3+meta":    {1, 2, 3, ""},
-		"1.2.3-beta+go": {1, 2, 3, "beta"},
+	cases := []struct {
+		in   string
+		want SemVer
+	}{
+		{"1.2.3", SemVer{1, 2, 3, ""}},
+		{"v1.2.3", SemVer{1, 2, 3, ""}},
+		{"v1.0.0", SemVer{1, 0, 0, ""}},
+		{"1.2.3-rc.1", SemVer{1, 2, 3, "rc.1"}},
+		{"1.2.3+meta", SemVer{1, 2, 3, ""}},
+		{"1.2.3-beta+go", SemVer{1, 2, 3, "beta"}},
+		{" v1.0.10+build.7 ", SemVer{1, 0, 10, ""}},
 	}
-	for in, want := range cases {
-		got, err := ParseSemVer(in)
+	for _, c := range cases {
+		got, err := ParseSemVer(c.in)
 		if err != nil {
-			t.Fatalf("ParseSemVer(%q): %v", in, err)
+			t.Fatalf("ParseSemVer(%q): %v", c.in, err)
 		}
-		if got != want {
-			t.Errorf("ParseSemVer(%q) = %+v, want %+v", in, got, want)
+		if got != c.want {
+			t.Errorf("ParseSemVer(%q) = %+v, want %+v", c.in, got, c.want)
 		}
 	}
 }
