@@ -163,9 +163,20 @@ func versionCommand(ctx context.Context, args []string, stdout io.Writer) error 
 		payload["default_kdf_time"] = store.DefaultKDFTime()
 		payload["default_kdf_memory_kib"] = store.DefaultKDFMemoryKiB()
 		payload["default_kdf_parallelism"] = store.DefaultKDFParallelism()
+		if pathDiagnostics := detectHaspPathDiagnostics(version); pathDiagnostics.Warning != "" {
+			payload["path_diagnostics"] = pathDiagnostics
+		}
 	}
 	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		_, err := fmt.Fprintln(w, version)
-		return err
+		if _, err := fmt.Fprintln(w, version); err != nil {
+			return err
+		}
+		if globalFlagsFromContext(ctx).verbose {
+			if pathDiagnostics := detectHaspPathDiagnostics(version); pathDiagnostics.Warning != "" {
+				_, err := fmt.Fprintln(w, "warning: "+pathDiagnostics.Warning)
+				return err
+			}
+		}
+		return nil
 	})
 }

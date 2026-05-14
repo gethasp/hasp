@@ -38,6 +38,8 @@ render_formula() {
     printf '      Add #{bin} to PATH if it is not already there.\n'
     printf '      Set HASP_HOME and HASP_MASTER_PASSWORD before first use.\n'
     printf '      Package docs and helper scripts are installed under: #{pkgshare}\n'
+    printf '      If hasp version does not print #{version}, run: which -a hasp\n'
+    printf '      Remove or reorder earlier stale binaries such as ~/.local/bin/hasp, then run: hash -r\n'
     printf '    EOS\n'
     printf '  end\n\n'
     printf '  test do\n'

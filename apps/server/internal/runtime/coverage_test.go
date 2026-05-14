@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/approvals"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
@@ -82,5 +83,35 @@ func TestRuntimeCoverageDefaultGitTopLevelSuccess(t *testing.T) {
 	got := CanonicalProjectRoot(subdir)
 	if got != want {
 		t.Fatalf("CanonicalProjectRoot = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeCoverageApprovalDecisionAndLeaseSession(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	approvalStore := NewApprovalStore()
+	approvalStore.now = func() time.Time { return now }
+	approval, err := approvalStore.Queue(QueueApprovalInput{SecretID: "prod/db", RequesterConsumerID: "agent", RequestedScope: "read", TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("queue approval: %v", err)
+	}
+	decided, changed, err := approvalStore.Decide(approval.ID, approvals.Decision{Scope: "read", GrantedTTLS: 60}, "", true)
+	if err != nil {
+		t.Fatalf("decide approval: %v", err)
+	}
+	if !changed || decided.Status != "granted" || decided.DecidedByActor != "cli" {
+		t.Fatalf("decision = %+v changed=%t", decided, changed)
+	}
+
+	sessionStore := NewSessionStore()
+	sessionStore.now = func() time.Time { return now }
+	session, err := sessionStore.OpenLease("host", "prod/db", "", time.Minute, "agent")
+	if err != nil {
+		t.Fatalf("open lease: %v", err)
+	}
+	if session.LeaseSecretID != "prod/db" || session.LeaseScope != "session" || session.ConsumerName != "agent" {
+		t.Fatalf("lease session = %+v", session)
+	}
+	if _, ok := sessionStore.Resolve(session.Token); !ok {
+		t.Fatal("lease session should resolve")
 	}
 }

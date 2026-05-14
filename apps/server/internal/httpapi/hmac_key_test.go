@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -419,6 +420,253 @@ func TestHMACKeyDesignatedRequirementsRequiresTeamIDOutsideTests(t *testing.T) {
 	if _, err := HMACKeyDesignatedRequirements(); err == nil {
 		t.Fatal("expected missing team id error")
 	}
+}
+
+func TestHMACKeyAdditionalEdgeBranches(t *testing.T) {
+	oldCurrentUsername := currentUsername
+	currentUsername = func() string { return "" }
+	if _, err := HMACKeyAccount(); err == nil {
+		t.Fatal("blank current username should fail account lookup")
+	}
+	currentUsername = oldCurrentUsername
+
+	if _, err := designatedRequirement("", "TEAM"); err == nil {
+		t.Fatal("blank bundle id should fail designated requirement")
+	}
+	if got, err := designatedRequirement("com.example.App", "TEAM123456"); err != nil || got != `identifier "com.example.App"` {
+		t.Fatalf("debug designated requirement = %q err=%v", got, err)
+	}
+	if _, err := decodeHMACKey("not-base64"); err == nil {
+		t.Fatal("malformed HMAC key should fail decoding")
+	}
+	if isMissingKeyringItem(nil) || !isMissingKeyringItem(errors.New("No Such item")) || !isRecoverableMissingHMACKey(store.KeyringItemNotFoundError{Err: errors.New("missing")}) {
+		t.Fatal("missing keyring item detection failed")
+	}
+	if isRecoverableMissingHMACKey(store.ErrKeyringUnavailable) {
+		t.Fatal("keyring unavailable must not be recoverable")
+	}
+
+	if goruntime.GOOS == "darwin" {
+		restoreTeamID := setHMACTeamIDForTest("TEAM123456")
+		defer restoreTeamID()
+		home := t.TempDir()
+		t.Setenv("HASP_HOME", home)
+		path := filepath.Join(home, localDebugHMACKeyFile)
+		if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
+			t.Fatalf("write short debug key: %v", err)
+		}
+		key, err := loadOrCreateLocalDebugHMACKey()
+		if err != nil {
+			t.Fatalf("load or recreate invalid debug key: %v", err)
+		}
+		if len(key) != sha256.Size {
+			t.Fatalf("recreated debug key length = %d", len(key))
+		}
+		if loaded, err := loadLocalDebugHMACKey(); err != nil || string(loaded) != string(key) {
+			t.Fatalf("loaded debug key = %x err=%v", loaded, err)
+		}
+		if reinit, err := ReinitializeHMACKey(context.TODO(), &memoryHMACKeyring{}); err != nil || len(reinit) != sha256.Size {
+			t.Fatalf("reinitialize local debug key len=%d err=%v", len(reinit), err)
+		}
+		restoreTeamID()
+		restoreTeamIDAgain := setHMACTeamIDForTest("TEAM123456")
+		defer restoreTeamIDAgain()
+		blockingHome := filepath.Join(t.TempDir(), "file-home")
+		if err := os.WriteFile(blockingHome, []byte("not a directory"), 0o600); err != nil {
+			t.Fatalf("write blocking home: %v", err)
+		}
+		t.Setenv("HASP_HOME", blockingHome)
+		if _, err := createLocalDebugHMACKey(); err == nil {
+			t.Fatal("local debug key creation should fail when HASP_HOME is a file")
+		}
+	}
+}
+
+func TestHMACKeyResidualErrorBranches(t *testing.T) {
+	oldCurrentUsername := currentUsername
+	t.Cleanup(func() { currentUsername = oldCurrentUsername })
+	currentUsername = func() string { return "" }
+	if _, err := LoadOrCreateHMACKey(context.Background(), &memoryHMACKeyring{}); err == nil {
+		t.Fatal("load or create HMAC key should fail without account")
+	}
+	if _, err := LoadHMACKey(&memoryHMACKeyring{}); err == nil {
+		t.Fatal("load HMAC key should fail without account")
+	}
+	if _, err := ReinitializeHMACKey(context.TODO(), &memoryHMACKeyring{}); err == nil {
+		t.Fatal("reinitialize HMAC key should fail without account")
+	}
+	currentUsername = oldCurrentUsername
+
+	if _, err := LoadProvisionedHMACKey(&memoryHMACKeyring{getErr: store.ErrKeyringUnavailable}); !errors.Is(err, store.ErrKeyringUnavailable) {
+		t.Fatalf("non-missing provisioned error = %v", err)
+	}
+	if _, err := HMACKeyFingerprint(context.Background(), &memoryHMACKeyring{getErr: store.ErrKeyringUnavailable}); !errors.Is(err, store.ErrKeyringUnavailable) {
+		t.Fatalf("fingerprint load error = %v", err)
+	}
+	calls := 0
+	currentUsername = func() string {
+		calls++
+		if calls == 1 {
+			return "tester"
+		}
+		return ""
+	}
+	if _, err := LoadOrCreateHMACKey(context.Background(), &memoryHMACKeyring{}); err == nil || !strings.Contains(err.Error(), "current user") {
+		t.Fatalf("second account lookup error = %v", err)
+	}
+	currentUsername = func() string { return "tester" }
+	if _, err := ReinitializeHMACKey(context.Background(), &memoryHMACKeyring{setErr: store.ErrKeyringUnavailable}); !errors.Is(err, store.ErrKeyringUnavailable) {
+		t.Fatalf("reinitialize write error = %v", err)
+	}
+	if got, err := localDebugHMACKeyPath(); err != nil || got == "" {
+		t.Fatalf("local debug key path = %q err=%v", got, err)
+	}
+}
+
+func TestHMACKeyOSAndRandomFailureBranches(t *testing.T) {
+	oldCurrentUserFn := currentUserFn
+	oldHMACRandomFn := hmacRandomFn
+	oldUserHomeDirFn := userHomeDirFn
+	oldHMACRuntimeOS := hmacRuntimeOS
+	oldCurrentUsername := currentUsername
+	t.Cleanup(func() {
+		currentUserFn = oldCurrentUserFn
+		hmacRandomFn = oldHMACRandomFn
+		userHomeDirFn = oldUserHomeDirFn
+		hmacRuntimeOS = oldHMACRuntimeOS
+		currentUsername = oldCurrentUsername
+	})
+
+	currentUserFn = func() (*user.User, error) {
+		return nil, errors.New("user lookup failed")
+	}
+	t.Setenv("USER", "fallback-user")
+	if account, err := HMACKeyAccount(); err != nil || account != "fallback-user" {
+		t.Fatalf("fallback account = %q err=%v", account, err)
+	}
+	t.Setenv("USER", "")
+	if _, err := HMACKeyAccount(); err == nil {
+		t.Fatal("missing OS and env user should fail")
+	}
+
+	currentUsername = func() string { return "tester" }
+	hmacRandomFn = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	if _, err := LoadOrCreateHMACKey(context.Background(), &memoryHMACKeyring{}); err == nil || !strings.Contains(err.Error(), "generate HTTP HMAC key") {
+		t.Fatalf("create random failure = %v", err)
+	}
+	if _, err := ReinitializeHMACKey(context.Background(), &memoryHMACKeyring{}); err == nil || !strings.Contains(err.Error(), "generate HTTP HMAC key") {
+		t.Fatalf("reinitialize random failure = %v", err)
+	}
+
+	hmacRuntimeOS = "darwin"
+	restoreTeamID := setHMACTeamIDForTest("TEAM123456")
+	defer restoreTeamID()
+	t.Setenv("HASP_HOME", "")
+	userHomeDirFn = func() (string, error) { return "", errors.New("home unavailable") }
+	if _, err := localDebugHMACKeyPath(); err == nil {
+		t.Fatal("missing user home should fail local debug key path")
+	}
+}
+
+func TestHMACKeyLocalDebugSeamsCoverResidualBranches(t *testing.T) {
+	oldRuntimeOS := hmacRuntimeOS
+	oldReadFile := hmacReadFile
+	oldMkdirAll := hmacMkdirAll
+	oldWriteFile := hmacWriteFile
+	oldRandomFn := hmacRandomFn
+	oldHomeDirFn := userHomeDirFn
+	t.Cleanup(func() {
+		hmacRuntimeOS = oldRuntimeOS
+		hmacReadFile = oldReadFile
+		hmacMkdirAll = oldMkdirAll
+		hmacWriteFile = oldWriteFile
+		hmacRandomFn = oldRandomFn
+		userHomeDirFn = oldHomeDirFn
+	})
+
+	hmacRuntimeOS = "darwin"
+	restoreTeamID := setHMACTeamIDForTest("TEAM123456")
+	defer restoreTeamID()
+	home := t.TempDir()
+	t.Setenv("HASP_HOME", home)
+
+	key, err := LoadOrCreateHMACKey(context.TODO(), nil)
+	if err != nil {
+		t.Fatalf("load or create local debug key with defaults: %v", err)
+	}
+	if len(key) != sha256.Size {
+		t.Fatalf("local debug key length = %d", len(key))
+	}
+	if loaded, err := LoadHMACKey(nil); err != nil || string(loaded) != string(key) {
+		t.Fatalf("load local debug key = %x err=%v", loaded, err)
+	}
+	if fingerprint, err := HMACKeyFingerprint(context.Background(), nil); err != nil || len(fingerprint) != HMACKeyFingerprintLength {
+		t.Fatalf("fingerprint local debug key = %q err=%v", fingerprint, err)
+	}
+	if loadedAgain, err := LoadOrCreateHMACKey(context.Background(), nil); err != nil || string(loadedAgain) != string(key) {
+		t.Fatalf("load existing local debug key = %x err=%v", loadedAgain, err)
+	}
+
+	hmacReadFile = func(string) ([]byte, error) { return nil, errors.New("permission denied") }
+	if _, err := LoadHMACKey(nil); err == nil || !strings.Contains(err.Error(), "read HTTP HMAC key") {
+		t.Fatalf("local debug load failure = %v", err)
+	}
+	if _, err := loadOrCreateLocalDebugHMACKey(); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("unexpected non-recoverable local debug load error: %v", err)
+	}
+
+	hmacReadFile = oldReadFile
+	t.Setenv("HASP_HOME", "")
+	userHomeDirFn = func() (string, error) { return "", errors.New("home unavailable") }
+	if _, err := LoadHMACKey(nil); err == nil || !strings.Contains(err.Error(), "user home") {
+		t.Fatalf("local debug path load error = %v", err)
+	}
+	if _, err := ReinitializeHMACKey(context.TODO(), nil); err == nil || !strings.Contains(err.Error(), "user home") {
+		t.Fatalf("local debug path create error = %v", err)
+	}
+	userHomeDirFn = func() (string, error) { return home, nil }
+	t.Setenv("HASP_HOME", home)
+
+	hmacRandomFn = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	if _, err := createLocalDebugHMACKey(); err == nil || !strings.Contains(err.Error(), "generate HTTP HMAC key") {
+		t.Fatalf("local debug random failure = %v", err)
+	}
+	hmacRandomFn = oldRandomFn
+
+	hmacMkdirAll = func(string, os.FileMode) error { return errors.New("mkdir denied") }
+	if _, err := createLocalDebugHMACKey(); err == nil || !strings.Contains(err.Error(), "mkdir denied") {
+		t.Fatalf("local debug mkdir failure = %v", err)
+	}
+	hmacMkdirAll = oldMkdirAll
+
+	hmacWriteFile = func(string, []byte, os.FileMode) error { return errors.New("write denied") }
+	if _, err := createLocalDebugHMACKey(); err == nil || !strings.Contains(err.Error(), "write denied") {
+		t.Fatalf("local debug write failure = %v", err)
+	}
+	hmacWriteFile = oldWriteFile
+
+	t.Setenv("HASP_HOME", "")
+	userHomeDirFn = func() (string, error) { return home, nil }
+	if got, err := localDebugHMACKeyPath(); err != nil || !strings.Contains(got, "Application Support") {
+		t.Fatalf("default local debug path = %q err=%v", got, err)
+	}
+
+	restoreTeamID()
+	restoreTeamIDAgain := setHMACTeamIDForTest("")
+	defer restoreTeamIDAgain()
+	requirements, err := HMACKeyDesignatedRequirements()
+	if err != nil {
+		t.Fatalf("test fallback team id should build requirements: %v", err)
+	}
+	if len(requirements) != 2 || !strings.Contains(requirements[0], "TEAMID1234") {
+		t.Fatalf("fallback requirements = %#v", requirements)
+	}
+
+	restoreArgs0 := osArgs0ForTest(t, "/usr/local/bin/hasp")
+	if err := storeHMACKey(context.Background(), &protectedMemoryHMACKeyring{}, "tester", base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))); err == nil || !strings.Contains(err.Error(), "HMACTeamID") {
+		t.Fatalf("protected store missing team id error = %v", err)
+	}
+	restoreArgs0()
 }
 
 func setHMACTeamIDForTest(value string) func() {

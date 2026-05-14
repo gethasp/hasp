@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,7 +92,7 @@ func TestSetupHelpersDirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setupInstallAgentWrapper install: %v", err)
 	}
-	if data, err := os.ReadFile(installed); err != nil || !bytes.Contains(data, []byte("agent mcp")) {
+	if data, err := os.ReadFile(installed); err != nil || !bytes.Contains(data, []byte("agent mcp")) || !bytes.Contains(data, []byte("find_hasp()")) || !bytes.Contains(data, []byte("HASP_AGENT_HASP")) {
 		t.Fatalf("unexpected wrapper contents %q err=%v", string(data), err)
 	}
 	if second, err := setupInstallAgentWrapper(filepath.Join(homeDir, ".hasp"), "/usr/local/bin/hasp", "claude-code"); err != nil || second != installed {
@@ -208,5 +209,46 @@ func TestSetupHelpersDirect(t *testing.T) {
 	}
 	if withinPath(filepath.Join(homeDir, "other"), filepath.Join(homeDir, "repo")) {
 		t.Fatal("expected withinPath false")
+	}
+}
+
+func TestSetupAgentWrapperFallsBackWhenConfiguredHaspMoved(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	haspHome := filepath.Join(homeDir, ".hasp")
+	origRead := setupReadFileFn
+	origWrite := setupWriteFileFn
+	origMkdir := setupMkdirAllFn
+	defer func() {
+		setupReadFileFn = origRead
+		setupWriteFileFn = origWrite
+		setupMkdirAllFn = origMkdir
+	}()
+	setupReadFileFn = os.ReadFile
+	setupWriteFileFn = os.WriteFile
+	setupMkdirAllFn = os.MkdirAll
+
+	wrapper, err := setupInstallAgentWrapper(haspHome, filepath.Join(homeDir, "missing", "hasp"), "codex-cli")
+	if err != nil {
+		t.Fatalf("install wrapper: %v", err)
+	}
+	fakeBin := filepath.Join(homeDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	fakeHasp := filepath.Join(fakeBin, "hasp")
+	if err := os.WriteFile(fakeHasp, []byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"), 0o700); err != nil {
+		t.Fatalf("write fake hasp: %v", err)
+	}
+
+	cmd := exec.Command(wrapper, "--probe")
+	cmd.Env = append(os.Environ(), "PATH="+strings.Join([]string{fakeBin, "/bin", "/usr/bin"}, string(os.PathListSeparator)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run wrapper: %v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "agent mcp codex-cli --probe" {
+		t.Fatalf("wrapper did not fall back through PATH, got %q", got)
 	}
 }

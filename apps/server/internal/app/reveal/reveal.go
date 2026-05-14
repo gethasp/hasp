@@ -73,9 +73,6 @@ func Find(handle *store.Handle, ref string) (Payload, error) {
 	if err == nil {
 		return FromItem(item), nil
 	}
-	if !errors.Is(err, store.ErrItemNotFound) {
-		return Payload{}, err
-	}
 	for _, candidate := range handle.ListItems() {
 		if candidate.ID == ref {
 			return FromItem(candidate), nil

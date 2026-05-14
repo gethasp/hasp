@@ -52,6 +52,35 @@ run_setup_if_requested() {
   echo "next: hasp setup"
 }
 
+warn_path_resolution() {
+  installed_path="$1"
+  resolved_path="$(command -v hasp 2>/dev/null || true)"
+  if [ -z "$resolved_path" ]; then
+    printf 'warning: %s is not on PATH; add it or run %s directly\n' "$(dirname "$installed_path")" "$installed_path" >&2
+    return 0
+  fi
+
+  path_status="$(
+    python3 - "$installed_path" "$resolved_path" <<'PY'
+import os
+import sys
+
+installed, resolved = sys.argv[1:3]
+try:
+    same = os.path.samefile(installed, resolved)
+except OSError:
+    same = os.path.abspath(installed) == os.path.abspath(resolved)
+print("same" if same else "different")
+PY
+  )"
+  if [ "$path_status" = "same" ]; then
+    return 0
+  fi
+
+  printf 'warning: hasp on PATH resolves to %s, not the newly installed %s\n' "$resolved_path" "$installed_path" >&2
+  printf 'warning: move %s earlier in PATH, remove the stale binary, then run hash -r in open shells\n' "$(dirname "$installed_path")" >&2
+}
+
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "$1 is required to install HASP" >&2
@@ -554,4 +583,5 @@ if [ -n "$installed_version" ]; then
 else
   printf 'version: %s\n' "$version"
 fi
+warn_path_resolution "$bin_dir/hasp"
 run_setup_if_requested

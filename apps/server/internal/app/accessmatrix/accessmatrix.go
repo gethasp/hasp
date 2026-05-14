@@ -201,9 +201,6 @@ func Build(input Input, opts Options) (Response, error) {
 		return Response{}, err
 	}
 	total := len(out)
-	if start > total {
-		start = total
-	}
 	end := start + limit
 	hasMore := end < total
 	if end > total {
@@ -291,9 +288,6 @@ func collectConsumers(input Input, filter string) []Consumer {
 		out = append(out, consumer)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].ID == out[j].ID {
-			return out[i].Kind < out[j].Kind
-		}
 		return out[i].ID < out[j].ID
 	})
 	return out

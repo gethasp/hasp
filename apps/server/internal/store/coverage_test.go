@@ -79,6 +79,56 @@ func TestCoverageRandomIDAndSmallHelperBranches(t *testing.T) {
 	}
 }
 
+func TestCoverageSnapshotAndMetadataLists(t *testing.T) {
+	_, h := openedCoverageStore(t)
+	deletedAt := h.store.now()
+	h.state.ProjectLeases["b"] = ProjectLease{ID: "b"}
+	h.state.ProjectLeases["a"] = ProjectLease{ID: "a"}
+	h.state.SecretGrants["b"] = SecretGrant{ID: "b"}
+	h.state.SecretGrants["a"] = SecretGrant{ID: "a"}
+	h.state.PlaintextGrants["b"] = PlaintextGrant{ID: "b"}
+	h.state.PlaintextGrants["a"] = PlaintextGrant{ID: "a"}
+	h.state.MutationGrants["b"] = MutationGrant{ID: "b"}
+	h.state.MutationGrants["a"] = MutationGrant{ID: "a"}
+	h.state.Items["b"] = Item{ID: "b", Name: "z", Value: []byte("secret"), Metadata: ItemMetadata{HumanLabel: "Z"}}
+	h.state.Items["a"] = Item{ID: "a", Name: "a", Value: []byte("hidden"), Metadata: ItemMetadata{HumanLabel: "A"}}
+	h.state.Items["deleted"] = Item{ID: "deleted", Name: "deleted", Value: []byte("hidden"), DeletedAt: &deletedAt}
+
+	if got := h.ListProjectLeases(); len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("project leases = %+v", got)
+	}
+	if got := h.ListSecretGrants(); len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("secret grants = %+v", got)
+	}
+	if got := h.ListPlaintextGrants(); len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("plaintext grants = %+v", got)
+	}
+	if got := h.ListMutationGrants(); len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("mutation grants = %+v", got)
+	}
+	items := h.ListItemMetadata()
+	if len(items) != 2 || items[0].Name != "a" || len(items[0].Value) != 0 || items[1].Name != "z" || len(items[1].Value) != 0 {
+		t.Fatalf("item metadata = %+v", items)
+	}
+}
+
+func TestCoverageKeyringItemNotFoundWrapper(t *testing.T) {
+	base := errors.New("missing")
+	wrapped := KeyringItemNotFoundError{Err: base}
+	if wrapped.Error() != "missing" {
+		t.Fatalf("wrapped error string = %q", wrapped.Error())
+	}
+	if !errors.Is(wrapped.Unwrap(), base) {
+		t.Fatalf("wrapped unwrap = %v", wrapped.Unwrap())
+	}
+	if !IsKeyringItemNotFound(wrapped) {
+		t.Fatal("expected keyring item not found")
+	}
+	if (KeyringItemNotFoundError{}).Error() != "keyring item not found" {
+		t.Fatal("empty keyring item error did not use default message")
+	}
+}
+
 func TestCoverageEnvelopeErrorBranches(t *testing.T) {
 	lockStoreSeams(t)
 	origMkdir := mkdirEnvelopeDirFn

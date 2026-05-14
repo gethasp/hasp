@@ -76,9 +76,6 @@ func List(input []Lease, opts ListOptions) Response {
 	})
 	start := cursorStart(filtered, opts.Cursor)
 	total := len(filtered)
-	if start > total {
-		start = total
-	}
 	end := start + limit
 	hasMore := end < total
 	if end > total {

@@ -90,6 +90,20 @@ reject_symlinked_path_parent() {
   done
 }
 
+warn_path_resolution() {
+  local installed_path="$1"
+  local resolved_path=""
+  if ! resolved_path="$(command -v hasp 2>/dev/null)"; then
+    printf 'warning: %s is not on PATH; add it or run %s directly\n' "$(dirname "$installed_path")" "$installed_path" >&2
+    return 0
+  fi
+  if [[ -e "$resolved_path" && "$installed_path" -ef "$resolved_path" ]]; then
+    return 0
+  fi
+  printf 'warning: hasp on PATH resolves to %s, not the newly installed %s\n' "$resolved_path" "$installed_path" >&2
+  printf 'warning: move %s earlier in PATH, remove the stale binary, then run hash -r in open shells\n' "$(dirname "$installed_path")" >&2
+}
+
 release_is_allowed_system_symlink_parent() {
   local current="$1"
   [[ "$(uname -s)" == "Darwin" ]] || return 1
@@ -192,4 +206,5 @@ if [[ -d "$backup_dir" ]]; then
 fi
 
 "$install_dir/bin/hasp" version >/dev/null
+warn_path_resolution "$install_dir/bin/hasp"
 printf '%s\n' "$install_dir"

@@ -208,6 +208,181 @@ func configureBackupSigningForTest(t *testing.T) ed25519.PublicKey {
 	return publicKey
 }
 
+func TestBackupSignatureStatusReportsTrustAndFileErrors(t *testing.T) {
+	unsigned, err := BackupSignatureStatusForBackupFile(BackupFile{})
+	if err != nil {
+		t.Fatalf("unsigned status: %v", err)
+	}
+	if unsigned.Signed || unsigned.Required || unsigned.Error != "" {
+		t.Fatalf("unexpected unsigned status without trust roots: %+v", unsigned)
+	}
+
+	publicKey := configureBackupSigningForTest(t)
+	requiredUnsigned, err := BackupSignatureStatusForBackupFile(BackupFile{})
+	if err != nil {
+		t.Fatalf("required unsigned status: %v", err)
+	}
+	if !requiredUnsigned.Required || requiredUnsigned.Error != "backup signature is required" {
+		t.Fatalf("required unsigned status = %+v", requiredUnsigned)
+	}
+
+	invalidAlgorithm, err := BackupSignatureStatusForBackupFile(BackupFile{Signature: BackupSignature{
+		Algorithm: "RSA",
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+		Value:     "signature",
+	}})
+	if err != nil {
+		t.Fatalf("invalid algorithm status: %v", err)
+	}
+	if !invalidAlgorithm.Signed || invalidAlgorithm.Error != "backup signature algorithm is unsupported" {
+		t.Fatalf("invalid algorithm status = %+v", invalidAlgorithm)
+	}
+
+	invalidKey, err := BackupSignatureStatusForBackupFile(BackupFile{Signature: BackupSignature{
+		Algorithm: "Ed25519",
+		PublicKey: "not-base64",
+		Value:     "signature",
+	}})
+	if err != nil {
+		t.Fatalf("invalid key status: %v", err)
+	}
+	if invalidKey.Error != "backup signature public key is invalid" {
+		t.Fatalf("invalid key status = %+v", invalidKey)
+	}
+
+	trusted, err := BackupSignatureStatusForBackupFile(BackupFile{Signature: BackupSignature{
+		Algorithm: "ed25519",
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+		Value:     "signature",
+	}})
+	if err != nil {
+		t.Fatalf("trusted status: %v", err)
+	}
+	if !trusted.Signed || !trusted.Trusted || trusted.SignerFingerprint == "" || trusted.Error != "" {
+		t.Fatalf("trusted status = %+v", trusted)
+	}
+
+	path := filepath.Join(t.TempDir(), "backup.json")
+	if _, err := BackupSignatureStatusForFile(path); err == nil {
+		t.Fatal("expected read error for missing backup")
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write invalid backup: %v", err)
+	}
+	if _, err := BackupSignatureStatusForFile(path); err == nil {
+		t.Fatal("expected decode error for malformed backup")
+	}
+	data, err := json.Marshal(BackupFile{Signature: BackupSignature{
+		Algorithm: "Ed25519",
+		PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+		Value:     "signature",
+	}})
+	if err != nil {
+		t.Fatalf("marshal backup: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+	if _, err := BackupSignatureStatusForFile(path); err != nil {
+		t.Fatalf("status for file: %v", err)
+	}
+}
+
+func TestBackupSigningAndPruneEdgeBranches(t *testing.T) {
+	if err := signBackupFile(nil); err == nil {
+		t.Fatal("nil backup file should fail signing")
+	}
+	var unsigned BackupFile
+	if err := signBackupFile(&unsigned); err != nil {
+		t.Fatalf("sign without configured key should be a no-op: %v", err)
+	}
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_B64", "not-base64")
+	if _, _, err := backupSigningPrivateKey(); err == nil {
+		t.Fatal("invalid base64 signing key should fail")
+	}
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_B64", base64.StdEncoding.EncodeToString([]byte("short")))
+	if _, _, err := backupSigningPrivateKey(); err == nil {
+		t.Fatal("short base64 signing key should fail")
+	}
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_B64", "")
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_HEX", "not-hex")
+	if _, _, err := backupSigningPrivateKey(); err == nil {
+		t.Fatal("invalid hex signing key should fail")
+	}
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_HEX", hex.EncodeToString([]byte("short")))
+	if _, _, err := backupSigningPrivateKey(); err == nil {
+		t.Fatal("short hex signing key should fail")
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate signing key: %v", err)
+	}
+	otherPublicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate other signing key: %v", err)
+	}
+	t.Setenv("HASP_BACKUP_SIGNING_KEY_HEX", hex.EncodeToString(privateKey))
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", hex.EncodeToString(otherPublicKey))
+	if err := signBackupFile(&BackupFile{Version: backupFormatVersion}); err == nil || !strings.Contains(err.Error(), "not trusted") {
+		t.Fatalf("untrusted signing key err = %v", err)
+	}
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", "not-hex")
+	if _, _, err := backupTrustedPublicKeys(); err == nil {
+		t.Fatal("invalid trust root hex should fail")
+	}
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", hex.EncodeToString([]byte("short")))
+	if _, _, err := backupTrustedPublicKeys(); err == nil {
+		t.Fatal("short trust root should fail")
+	}
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", " , ")
+	if _, _, err := backupTrustedPublicKeys(); err == nil {
+		t.Fatal("empty trust root list should fail")
+	}
+
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", hex.EncodeToString(publicKey))
+	file := BackupFile{Version: backupFormatVersion, VaultID: "vault", ExportedAt: time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)}
+	if err := signBackupFile(&file); err != nil {
+		t.Fatalf("sign trusted backup: %v", err)
+	}
+	if err := verifyBackupFileSignature(file); err != nil {
+		t.Fatalf("verify signed backup: %v", err)
+	}
+	noRoots := file
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", "")
+	if err := verifyBackupFileSignature(noRoots); err == nil || !strings.Contains(err.Error(), "trust roots") {
+		t.Fatalf("signed backup without trust roots err = %v", err)
+	}
+	badSignature := file
+	t.Setenv("HASP_BACKUP_TRUST_ROOTS_HEX", hex.EncodeToString(publicKey))
+	badSignature.Signature.Value = base64.StdEncoding.EncodeToString([]byte("short"))
+	if err := verifyBackupFileSignature(badSignature); err == nil || !strings.Contains(err.Error(), "signature is invalid") {
+		t.Fatalf("short signature err = %v", err)
+	}
+	badPayload := file
+	badPayload.VaultID = "changed"
+	if err := verifyBackupFileSignature(badPayload); err == nil || !strings.Contains(err.Error(), "verification failed") {
+		t.Fatalf("bad payload signature err = %v", err)
+	}
+
+	if err := PruneBackupDirectory("", 0, ""); err != nil {
+		t.Fatalf("empty prune should no-op: %v", err)
+	}
+	if err := PruneBackupDirectory(filepath.Join(t.TempDir(), "missing"), 1, ""); err != nil {
+		t.Fatalf("missing prune dir should no-op: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.hasp-backup"), []byte("{"), 0o600); err != nil {
+		t.Fatalf("write bad backup: %v", err)
+	}
+	if err := PruneBackupDirectory(dir, 1, "vault"); err == nil {
+		t.Fatal("pruning with vault filter should fail on malformed backup identity")
+	}
+	if _, err := readBackupVaultID(filepath.Join(dir, "missing.hasp-backup")); err == nil {
+		t.Fatal("missing backup vault id read should fail")
+	}
+}
+
 func rewriteBackupPayload(t *testing.T, path string, passphrase string, edit func(*backupPayload)) {
 	t.Helper()
 	data, err := os.ReadFile(path)

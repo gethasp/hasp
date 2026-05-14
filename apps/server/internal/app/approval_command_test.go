@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
+	"strings"
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
@@ -75,6 +76,46 @@ func TestApprovalListAndDecideCommandsUseApprovalSchema(t *testing.T) {
 	}
 	if deny.Approval.Status != "denied" || deny.LeaseID != "" {
 		t.Fatalf("deny reply = %+v", deny)
+	}
+}
+
+func TestApprovalCommandEdges(t *testing.T) {
+	lockAppSeams(t)
+	service := newApprovalCommandTestRPC(t)
+	starter := service.starter
+	var out bytes.Buffer
+	if err := approvalCommand(context.Background(), nil, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("approval help: %v", err)
+	}
+	if !strings.Contains(out.String(), "usage: hasp approval") {
+		t.Fatalf("approval help output = %q", out.String())
+	}
+	if err := approvalCommand(context.Background(), []string{"unknown"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected unknown approval subcommand")
+	}
+	if err := approvalListCommand(context.Background(), []string{"extra"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected approval list usage error")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"id"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected approval decide missing grant/deny error")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"--grant", "--deny", "id"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected approval decide conflicting grant/deny error")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"--grant"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected approval decide missing id error")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"--grant", "--auth-method", "password", "--hold-proof", "1500ms", "id"}, &out, starter); err == nil {
+		t.Fatal("expected approval decide bad auth method")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"--grant", "--auth-method", "device-owner", "--hold-proof", "1s", "id"}, &out, starter); err == nil {
+		t.Fatal("expected approval decide short hold proof")
+	}
+	if err := approvalDecideCommand(context.Background(), []string{"--deny", "--auth-method", "device-owner", "id"}, &out, starter); err == nil {
+		t.Fatal("expected approval deny auth-method error")
+	}
+	if got := normalizeApprovalDecideArgs([]string{"id", "--reason", "no"}); strings.Join(got, ",") != "--reason,no,id" {
+		t.Fatalf("normalized approval args = %v", got)
 	}
 }
 

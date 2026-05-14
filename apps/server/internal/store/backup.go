@@ -19,6 +19,14 @@ import (
 
 const backupFormatVersion = 1
 
+var (
+	backupReadFile  = os.ReadFile
+	backupWriteFile = os.WriteFile
+	backupMkdirAll  = os.MkdirAll
+	backupRemove    = os.Remove
+	backupReadDir   = os.ReadDir
+)
+
 type BackupFile struct {
 	Version         int             `json:"version"`
 	VaultID         string          `json:"vault_id,omitempty"`
@@ -73,7 +81,7 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 		State:    h.state,
 		VaultKey: append([]byte(nil), h.vaultKey...),
 	}
-	if auditJSONL, err := os.ReadFile(h.store.paths.AuditPath); err == nil {
+	if auditJSONL, err := backupReadFile(h.store.paths.AuditPath); err == nil {
 		payload.AuditJSONL = auditJSONL
 	} else if !os.IsNotExist(err) {
 		return AuditCheckpoint{}, fmt.Errorf("read audit chain: %w", err)
@@ -106,10 +114,10 @@ func (h *Handle) ExportBackup(_ context.Context, outputPath string, recoveryPass
 	if err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("encode backup file: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+	if err := backupMkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("create backup dir: %w", err)
 	}
-	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
+	if err := backupWriteFile(outputPath, data, 0o600); err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("write backup file: %w", err)
 	}
 	h.store.appendAuditBestEffort(audit.EventOverride, "user", map[string]any{
@@ -137,7 +145,7 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 	if masterPassword == "" {
 		return AuditCheckpoint{}, fmt.Errorf("master password is required")
 	}
-	data, err := os.ReadFile(backupPath)
+	data, err := backupReadFile(backupPath)
 	if err != nil {
 		return AuditCheckpoint{}, fmt.Errorf("read backup file: %w", err)
 	}
@@ -200,10 +208,10 @@ func (s *Store) RestoreBackup(ctx context.Context, backupPath string, recoveryPa
 		return AuditCheckpoint{}, err
 	}
 	if len(payload.AuditJSONL) > 0 {
-		if err := os.MkdirAll(filepath.Dir(s.paths.AuditPath), 0o700); err != nil {
+		if err := backupMkdirAll(filepath.Dir(s.paths.AuditPath), 0o700); err != nil {
 			return AuditCheckpoint{}, fmt.Errorf("create audit dir: %w", err)
 		}
-		if err := os.WriteFile(s.paths.AuditPath, payload.AuditJSONL, 0o600); err != nil {
+		if err := backupWriteFile(s.paths.AuditPath, payload.AuditJSONL, 0o600); err != nil {
 			return AuditCheckpoint{}, fmt.Errorf("restore audit chain: %w", err)
 		}
 	}
@@ -245,10 +253,7 @@ func signBackupFile(file *BackupFile) error {
 	if !ok {
 		return nil
 	}
-	publicKey, ok := privateKey.Public().(ed25519.PublicKey)
-	if !ok {
-		return fmt.Errorf("backup signing key is invalid")
-	}
+	publicKey := privateKey.Public().(ed25519.PublicKey)
 	if trusted, _, err := backupTrustedPublicKeys(); err != nil {
 		return err
 	} else if len(trusted) > 0 && !slices.ContainsFunc(trusted, func(candidate ed25519.PublicKey) bool {
@@ -269,7 +274,7 @@ func signBackupFile(file *BackupFile) error {
 }
 
 func BackupSignatureStatusForFile(path string) (BackupSignatureStatus, error) {
-	data, err := os.ReadFile(path)
+	data, err := backupReadFile(path)
 	if err != nil {
 		return BackupSignatureStatus{}, fmt.Errorf("read backup file: %w", err)
 	}
@@ -362,7 +367,7 @@ func verifyBackupFileSignature(file BackupFile) error {
 
 func backupSigningPayload(file BackupFile) ([]byte, error) {
 	file.Signature = BackupSignature{}
-	data, err := json.Marshal(file)
+	data, err := jsonMarshalFn(file)
 	if err != nil {
 		return nil, fmt.Errorf("encode backup signature payload: %w", err)
 	}
@@ -375,7 +380,7 @@ type preRestoreSnapshot struct {
 
 func (s *Store) createPreRestoreSnapshot() (preRestoreSnapshot, error) {
 	dir := filepath.Join(s.paths.HomeDir, fmt.Sprintf(".pre-restore-%d", s.now().UnixNano()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := backupMkdirAll(dir, 0o700); err != nil {
 		return preRestoreSnapshot{}, fmt.Errorf("create pre-restore snapshot: %w", err)
 	}
 	for _, file := range []struct {
@@ -385,14 +390,14 @@ func (s *Store) createPreRestoreSnapshot() (preRestoreSnapshot, error) {
 		{source: s.paths.StatePath, name: "vault.json"},
 		{source: s.paths.AuditPath, name: "audit.jsonl"},
 	} {
-		data, err := os.ReadFile(file.source)
+		data, err := backupReadFile(file.source)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return preRestoreSnapshot{}, fmt.Errorf("snapshot %s: %w", file.name, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, file.name), data, 0o600); err != nil {
+		if err := backupWriteFile(filepath.Join(dir, file.name), data, 0o600); err != nil {
 			return preRestoreSnapshot{}, fmt.Errorf("write pre-restore %s: %w", file.name, err)
 		}
 	}
@@ -411,20 +416,20 @@ func (s *Store) restorePreRestoreSnapshot(snapshot preRestoreSnapshot) error {
 		{target: s.paths.AuditPath, name: "audit.jsonl"},
 	} {
 		snapshotPath := filepath.Join(snapshot.Dir, file.name)
-		data, err := os.ReadFile(snapshotPath)
+		data, err := backupReadFile(snapshotPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				if removeErr := os.Remove(file.target); removeErr != nil && !os.IsNotExist(removeErr) {
+				if removeErr := backupRemove(file.target); removeErr != nil && !os.IsNotExist(removeErr) {
 					return fmt.Errorf("remove restored %s: %w", file.name, removeErr)
 				}
 				continue
 			}
 			return fmt.Errorf("read pre-restore %s: %w", file.name, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(file.target), 0o700); err != nil {
+		if err := backupMkdirAll(filepath.Dir(file.target), 0o700); err != nil {
 			return fmt.Errorf("create restore dir for %s: %w", file.name, err)
 		}
-		if err := os.WriteFile(file.target, data, 0o600); err != nil {
+		if err := backupWriteFile(file.target, data, 0o600); err != nil {
 			return fmt.Errorf("restore %s: %w", file.name, err)
 		}
 	}
@@ -490,7 +495,7 @@ func PruneBackupDirectory(dir string, keep int, vaultID string) error {
 		return nil
 	}
 	vaultID = strings.TrimSpace(vaultID)
-	entries, err := os.ReadDir(dir)
+	entries, err := backupReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -536,7 +541,7 @@ func PruneBackupDirectory(dir string, keep int, vaultID string) error {
 		return nil
 	}
 	for _, stale := range candidates[keep:] {
-		if err := os.Remove(stale.path); err != nil && !os.IsNotExist(err) {
+		if err := backupRemove(stale.path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale backup: %w", err)
 		}
 	}
@@ -544,7 +549,7 @@ func PruneBackupDirectory(dir string, keep int, vaultID string) error {
 }
 
 func readBackupVaultID(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := backupReadFile(path)
 	if err != nil {
 		return "", err
 	}

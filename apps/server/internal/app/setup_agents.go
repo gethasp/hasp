@@ -234,13 +234,7 @@ func setupInstallAgentWrapper(haspHome string, commandPath string, agentID strin
 	if err != nil {
 		return "", err
 	}
-	content := []byte(
-		"#!/usr/bin/env bash\n" +
-			setupManagedAgentWrapperMarker + "\n" +
-			"set -euo pipefail\n" +
-			"export HASP_HOME=" + strconvQuote(haspHome) + "\n" +
-			"exec " + strconvQuote(commandPath) + " agent mcp " + strconvQuote(agentID) + " \"$@\"\n",
-	)
+	content := setupAgentWrapperContent(haspHome, commandPath, agentID)
 	existing, err := setupReadFileFn(wrapperPath)
 	if err == nil {
 		if !bytes.Contains(existing, []byte(setupManagedAgentWrapperMarker)) {
@@ -259,6 +253,44 @@ func setupInstallAgentWrapper(haspHome string, commandPath string, agentID strin
 		return "", err
 	}
 	return wrapperPath, nil
+}
+
+func setupAgentWrapperContent(haspHome string, commandPath string, agentID string) []byte {
+	return []byte(
+		"#!/usr/bin/env bash\n" +
+			setupManagedAgentWrapperMarker + "\n" +
+			"set -euo pipefail\n" +
+			"export HASP_HOME=" + strconvQuote(haspHome) + "\n" +
+			"configured_hasp=" + strconvQuote(commandPath) + "\n" +
+			"find_hasp() {\n" +
+			"  if [[ -n \"${HASP_AGENT_HASP:-}\" && -x \"${HASP_AGENT_HASP}\" ]]; then\n" +
+			"    printf '%s\\n' \"${HASP_AGENT_HASP}\"\n" +
+			"    return 0\n" +
+			"  fi\n" +
+			"  if [[ -x \"$configured_hasp\" ]]; then\n" +
+			"    printf '%s\\n' \"$configured_hasp\"\n" +
+			"    return 0\n" +
+			"  fi\n" +
+			"  local resolved=\"\"\n" +
+			"  if resolved=\"$(command -v hasp 2>/dev/null)\" && [[ -n \"$resolved\" && -x \"$resolved\" ]]; then\n" +
+			"    printf '%s\\n' \"$resolved\"\n" +
+			"    return 0\n" +
+			"  fi\n" +
+			"  local candidate=\"\"\n" +
+			"  for candidate in /opt/homebrew/bin/hasp /opt/homebrew/opt/hasp/bin/hasp /usr/local/bin/hasp /usr/local/opt/hasp/bin/hasp; do\n" +
+			"    if [[ -x \"$candidate\" ]]; then\n" +
+			"      printf '%s\\n' \"$candidate\"\n" +
+			"      return 0\n" +
+			"    fi\n" +
+			"  done\n" +
+			"  return 1\n" +
+			"}\n" +
+			"hasp_command=\"$(find_hasp)\" || {\n" +
+			"  printf 'HASP agent wrapper could not find a runnable hasp binary. Re-run hasp agent connect " + agentID + " or set HASP_AGENT_HASP.\\n' >&2\n" +
+			"  exit 127\n" +
+			"}\n" +
+			"exec \"$hasp_command\" agent mcp " + strconvQuote(agentID) + " \"$@\"\n",
+	)
 }
 
 func upsertCodexMCPServerConfig(existing []byte, haspHome string, commandPath string, agentID string) string {

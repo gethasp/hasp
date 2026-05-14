@@ -524,7 +524,6 @@ func (s *SessionStore) LeaseSnapshot() []leases.Lease {
 	s.PruneExpired()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	now := s.now().UTC()
 	out := make([]leases.Lease, 0, len(s.sessions))
 	for _, session := range s.sessions {
 		if session.Internal {
@@ -536,8 +535,6 @@ func (s *SessionStore) LeaseSnapshot() []leases.Lease {
 			if status == "" {
 				status = "revoked"
 			}
-		} else if s.sessionExpired(session, now) {
-			status = "expired"
 		}
 		out = append(out, leases.Lease{
 			ID:         session.ID,

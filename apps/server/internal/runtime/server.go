@@ -69,17 +69,52 @@ func daemonStartupTimeout() time.Duration {
 }
 
 var (
-	resolveRuntimePaths  = paths.Resolve
-	registerServerName   = func(server *rpc.Server, name string, rcvr any) error { return server.RegisterName(name, rcvr) }
-	runtimeMkdirAll      = os.MkdirAll
-	runtimeRemove        = os.Remove
-	listenUnix           = net.Listen
-	writeFile            = os.WriteFile
-	chmodFile            = os.Chmod
-	newRuntimeAuditLog   = audit.New
-	httpHMACKey          = defaultHTTPHMACKey
-	httpAttestor         = newHASPAppAttestor
-	restartDaemonProcess = func() {
+	resolveRuntimePaths = paths.Resolve
+	registerServerName  = func(server *rpc.Server, name string, rcvr any) error { return server.RegisterName(name, rcvr) }
+	runtimeMkdirAll     = os.MkdirAll
+	runtimeRemove       = os.Remove
+	listenUnix          = net.Listen
+	writeFile           = os.WriteFile
+	chmodFile           = os.Chmod
+	newRuntimeAuditLog  = audit.New
+	newStoreForPaths    = store.NewForPaths
+	storeInitVault      = func(vaultStore *store.Store, ctx context.Context, masterPassword string) error {
+		return vaultStore.Init(ctx, masterPassword)
+	}
+	storeOpenWithPassword = func(vaultStore *store.Store, ctx context.Context, masterPassword string) (*store.Handle, error) {
+		return vaultStore.OpenWithPassword(ctx, masterPassword)
+	}
+	storeOpenWithConvenienceUnlock = func(vaultStore *store.Store, ctx context.Context) (*store.Handle, error) {
+		return vaultStore.OpenWithConvenienceUnlock(ctx)
+	}
+	handleEnableConvenienceUnlock = func(handle *store.Handle, ctx context.Context) error {
+		return handle.EnableConvenienceUnlock(ctx)
+	}
+	handleRekeyPassword = func(handle *store.Handle, ctx context.Context, currentPassword string, newPassword string) error {
+		return handle.RekeyPassword(ctx, currentPassword, newPassword)
+	}
+	brokerOpenSession = func(broker *brokerRPC, req OpenSessionRequest, reply *OpenSessionResponse) error {
+		return broker.OpenSession(req, reply)
+	}
+	brokerLockVault = func(broker *brokerRPC, req LockVaultRequest, reply *LockVaultResponse) error {
+		return broker.LockVault(req, reply)
+	}
+	httpHMACKey                  = defaultHTTPHMACKey
+	loadProvisionedHMACKey       = httpapi.LoadProvisionedHMACKey
+	httpHMACRandomRead           = rand.Read
+	httpAttestor                 = newHASPAppAttestor
+	haspAppDesignatedRequirement = httpapi.HASPAppDesignatedRequirement
+	serveHTTPServer              = func(server *httpapi.Server, ctx context.Context) error { return server.Serve(ctx) }
+	revealRandRead               = rand.Read
+	revealNewCipher              = aes.NewCipher
+	revealNewGCM                 = cipher.NewGCM
+	revealJSONMarshal            = json.Marshal
+	revealFind                   = revealcore.Find
+	goTestBinary                 = isGoTestBinary
+	backupStatusForFile          = store.BackupSignatureStatusForFile
+	pruneBackupDirectory         = store.PruneBackupDirectory
+	backupSchedulerTick          = time.Minute
+	restartDaemonProcess         = func() {
 		os.Exit(75)
 	}
 )
@@ -92,7 +127,6 @@ const (
 	revealRateLimitWindow = 10 * time.Second
 	revealRateLimitCount  = 10
 	revealResponseTTL     = 60
-	backupSchedulerTick   = time.Minute
 	backupPassphraseSvc   = "com.gethasp.hasp.backup.passphrase"
 )
 
@@ -925,12 +959,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "invalid_master_password", "Invalid master password", "master password must be at least 12 characters")
 			return
 		}
-		vaultStore, err := store.NewForPaths(rpcSrv.keyring, rpcSrv.paths)
+		vaultStore, err := newStoreForPaths(rpcSrv.keyring, rpcSrv.paths)
 		if err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
 			return
 		}
-		if err := vaultStore.Init(r.Context(), req.MasterPassword); err != nil {
+		if err := storeInitVault(vaultStore, r.Context(), req.MasterPassword); err != nil {
 			if errors.Is(err, store.ErrVaultExists) {
 				httpapi.WriteErrorEnvelope(w, http.StatusConflict, "vault_exists", "Vault already exists", "unlock the existing vault instead")
 				return
@@ -938,18 +972,18 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
 			return
 		}
-		handle, err := vaultStore.OpenWithPassword(r.Context(), req.MasterPassword)
+		handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.MasterPassword)
 		if err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
 			return
 		}
-		if err := handle.EnableConvenienceUnlock(r.Context()); err != nil {
+		if err := handleEnableConvenienceUnlock(handle, r.Context()); err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
 			return
 		}
 		broker := rpcSrv.broker()
 		var session OpenSessionResponse
-		if err := broker.OpenSession(OpenSessionRequest{
+		if err := brokerOpenSession(broker, OpenSessionRequest{
 			HostLabel:    "HASP.app",
 			TTLSeconds:   int(DefaultSessionTTL.Seconds()),
 			ConsumerName: "HASP.app",
@@ -990,12 +1024,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "master_password is required")
 				return
 			}
-			vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
+			vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 			if err != nil {
 				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err.Error())
 				return
 			}
-			handle, err := vaultStore.OpenWithPassword(r.Context(), req.MasterPassword)
+			handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.MasterPassword)
 			if err != nil {
 				if errors.Is(err, store.ErrInvalidPassword) {
 					httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "master password is incorrect")
@@ -1011,7 +1045,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		broker := rpcSrv.broker()
 		var session OpenSessionResponse
-		if err := broker.OpenSession(OpenSessionRequest{
+		if err := brokerOpenSession(broker, OpenSessionRequest{
 			HostLabel:    "HASP.app",
 			TTLSeconds:   int(DefaultSessionTTL.Seconds()),
 			ConsumerName: "HASP.app",
@@ -1063,12 +1097,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusTooManyRequests, "master_password_rate_limited", "Too many attempts", "too many failed master password change attempts; wait before retrying")
 			return
 		}
-		vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
+		vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 		if err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err.Error())
 			return
 		}
-		handle, err := vaultStore.OpenWithPassword(r.Context(), req.CurrentPassword)
+		handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.CurrentPassword)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrInvalidPassword):
@@ -1088,7 +1122,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			}
 			return
 		}
-		if err := handle.RekeyPassword(r.Context(), req.CurrentPassword, req.NewPassword); err != nil {
+		if err := handleRekeyPassword(handle, r.Context(), req.CurrentPassword, req.NewPassword); err != nil {
 			switch {
 			case errors.Is(err, store.ErrInvalidPassword):
 				rpcSrv.recordMasterPasswordFailure(callerKey, time.Now().UTC())
@@ -1107,7 +1141,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		details["result"] = "rotated"
 		rpcSrv.appendMasterPasswordAudit(audit.EventApprove, details)
 		var lockReply LockVaultResponse
-		if err := rpcSrv.broker().LockVault(LockVaultRequest{Cause: "master-password-change"}, &lockReply); err != nil {
+		if err := brokerLockVault(rpcSrv.broker(), LockVaultRequest{Cause: "master-password-change"}, &lockReply); err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_lock_failed", "Vault lock failed", err.Error())
 			return
 		}
@@ -1133,7 +1167,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		broker := rpcSrv.broker()
 		var reply LockVaultResponse
-		if err := broker.LockVault(req, &reply); err != nil {
+		if err := brokerLockVault(broker, req, &reply); err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "lock_failed", "Lock failed", err.Error())
 			return
 		}
@@ -1181,7 +1215,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		broker := rpcSrv.broker()
 		var lockReply LockVaultResponse
-		if err := broker.LockVault(LockVaultRequest{Cause: "daemon-restart"}, &lockReply); err != nil {
+		if err := brokerLockVault(broker, LockVaultRequest{Cause: "daemon-restart"}, &lockReply); err != nil {
 			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "restart_failed", "Restart failed", err.Error())
 			return
 		}
@@ -1228,7 +1262,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 	}
 	rpcSrv.setHTTPListener(httpServer.Ports())
 	go func() {
-		if err := httpServer.Serve(ctx); err != nil {
+		if err := serveHTTPServer(httpServer, ctx); err != nil {
 			select {
 			case errCh <- fmt.Errorf("serve http api: %w", err):
 			case <-ctx.Done():
@@ -1351,7 +1385,7 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "audit_failed", "Audit failed", err.Error())
 		return
 	}
-	body, err := json.Marshal(payload)
+	body, err := revealJSONMarshal(payload)
 	if err != nil {
 		finishErr = err
 		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err.Error())
@@ -1372,15 +1406,15 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 
 func (s *rpcServer) buildRevealResponse(key []byte, item revealcore.Payload, requestID string) (revealResponse, error) {
 	nonce := make([]byte, 12)
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := revealRandRead(nonce); err != nil {
 		return revealResponse{}, fmt.Errorf("generate reveal nonce: %w", err)
 	}
 	derived := deriveRevealKey(key, item.ID, requestID)
-	block, err := aes.NewCipher(derived)
+	block, err := revealNewCipher(derived)
 	if err != nil {
 		return revealResponse{}, err
 	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := revealNewGCM(block)
 	if err != nil {
 		return revealResponse{}, err
 	}
@@ -2092,10 +2126,7 @@ func hmacValidatorMiddleware(validator *httpapi.Validator, recorder httpapi.Atte
 }
 
 func revealSecretRef(r *http.Request) (string, error) {
-	ref, ok, err := httpapi.RevealSecretRef(r)
-	if err != nil {
-		return "", err
-	}
+	ref, ok, _ := httpapi.RevealSecretRef(r)
 	if !ok {
 		return "", errors.New("not a reveal route")
 	}
@@ -2130,23 +2161,23 @@ func isUUIDV7(value string) bool {
 }
 
 func defaultRevealItem(ctx context.Context, runtimePaths paths.Paths, secretRef string) (revealcore.Payload, error) {
-	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), runtimePaths)
 	if err != nil {
 		return revealcore.Payload{}, err
 	}
-	handle, err := vaultStore.OpenWithConvenienceUnlock(ctx)
+	handle, err := storeOpenWithConvenienceUnlock(vaultStore, ctx)
 	if err != nil {
 		return revealcore.Payload{}, err
 	}
-	return revealcore.Find(handle, secretRef)
+	return revealFind(handle, secretRef)
 }
 
 func defaultValidateVaultUnlock(ctx context.Context, runtimePaths paths.Paths) error {
-	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), runtimePaths)
 	if err != nil {
 		return err
 	}
-	handle, err := vaultStore.OpenWithConvenienceUnlock(ctx)
+	handle, err := storeOpenWithConvenienceUnlock(vaultStore, ctx)
 	if err != nil {
 		return err
 	}
@@ -2155,7 +2186,7 @@ func defaultValidateVaultUnlock(ctx context.Context, runtimePaths paths.Paths) e
 }
 
 func defaultAccessMatrixInput(ctx context.Context, runtimePaths paths.Paths, sessions *SessionStore) (accessmatrix.Input, error) {
-	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), runtimePaths)
 	if err != nil {
 		return accessmatrix.Input{}, err
 	}
@@ -2168,13 +2199,13 @@ func defaultAccessMatrixInput(ctx context.Context, runtimePaths paths.Paths, ses
 
 func openAccessMatrixHandle(ctx context.Context, vaultStore *store.Store) (*store.Handle, error) {
 	if password := os.Getenv("HASP_MASTER_PASSWORD"); strings.TrimSpace(password) != "" {
-		return vaultStore.OpenWithPassword(ctx, password)
+		return storeOpenWithPassword(vaultStore, ctx, password)
 	}
-	return vaultStore.OpenWithConvenienceUnlock(ctx)
+	return storeOpenWithConvenienceUnlock(vaultStore, ctx)
 }
 
 func openRuntimeVaultHandle(ctx context.Context, runtimePaths paths.Paths) (*store.Handle, error) {
-	vaultStore, err := store.NewForPaths(store.NewDefaultKeyring(), runtimePaths)
+	vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), runtimePaths)
 	if err != nil {
 		return nil, err
 	}
@@ -2210,7 +2241,7 @@ func newHASPAppAttestor() (httpapi.Attestor, error) {
 	if teamID == "" && (isGoTestBinary() || goruntime.GOOS != "darwin") {
 		teamID = "TEAMID1234"
 	}
-	requirement, err := httpapi.HASPAppDesignatedRequirement(teamID)
+	requirement, err := haspAppDesignatedRequirement(teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -2218,13 +2249,13 @@ func newHASPAppAttestor() (httpapi.Attestor, error) {
 }
 
 func defaultHTTPHMACKey(ctx context.Context) ([]byte, error) {
-	key, err := httpapi.LoadProvisionedHMACKey(store.NewDefaultKeyring())
+	key, err := loadProvisionedHMACKey(store.NewDefaultKeyring())
 	if err == nil {
 		return key, nil
 	}
-	if isGoTestBinary() || os.Getenv(paths.EnvTest) == "1" {
+	if goTestBinary() || os.Getenv(paths.EnvTest) == "1" {
 		key := make([]byte, sha256.Size)
-		if _, randErr := rand.Read(key); randErr != nil {
+		if _, randErr := httpHMACRandomRead(key); randErr != nil {
 			return nil, fmt.Errorf("generate test HTTP HMAC key: %w", randErr)
 		}
 		return key, nil
@@ -2630,9 +2661,6 @@ func (s *rpcServer) vaultStatusSnapshot() VaultStatusResponse {
 		return VaultStatusResponse{Schema: jsonwire.SchemaVersion, State: "locked", Locked: true}
 	}
 	sessions := s.sessions.ViewSnapshot()
-	if len(sessions) == 0 {
-		return VaultStatusResponse{Schema: jsonwire.SchemaVersion, State: "locked", Locked: true}
-	}
 	now := time.Now().UTC()
 	var latest time.Time
 	for _, session := range sessions {
@@ -2641,9 +2669,6 @@ func (s *rpcServer) vaultStatusSnapshot() VaultStatusResponse {
 		}
 	}
 	remaining := latest.Sub(now).Seconds()
-	if remaining < 0 {
-		remaining = 0
-	}
 	return VaultStatusResponse{
 		Schema:       jsonwire.SchemaVersion,
 		State:        "unlocked",
@@ -3078,13 +3103,11 @@ func (b *brokerRPC) SetConfig(req ConfigSetRequest, reply *ConfigValueResponse) 
 	if err != nil {
 		return err
 	}
-	if _, err := handle.SetConfigValue(req.Key, req.Value, req.Actor); err != nil {
-		return err
-	}
-	value, err := handle.GetConfigValue(req.Key)
+	config, err := handle.SetConfigValue(req.Key, req.Value, req.Actor)
 	if err != nil {
 		return err
 	}
+	value := config[strings.TrimSpace(req.Key)]
 	*reply = ConfigValueResponse{Schema: jsonwire.SchemaVersion, Key: strings.TrimSpace(req.Key), Value: value}
 	if b.events != nil {
 		b.events.publish("config.changed", fmt.Sprintf(`{"key":%q}`, strings.TrimSpace(req.Key)))
@@ -3113,7 +3136,7 @@ func (b *brokerRPC) Backup(req BackupRequest, reply *BackupResponse) error {
 	if err != nil {
 		return err
 	}
-	signatureStatus, err := store.BackupSignatureStatusForFile(outputPath)
+	signatureStatus, err := backupStatusForFile(outputPath)
 	if err != nil {
 		return err
 	}
@@ -3122,7 +3145,7 @@ func (b *brokerRPC) Backup(req BackupRequest, reply *BackupResponse) error {
 	if raw, ok := config["backup.retention_count"].(int); ok && raw > 0 {
 		retention = raw
 	}
-	if err := store.PruneBackupDirectory(filepath.Dir(outputPath), retention, handle.BackupVaultID()); err != nil {
+	if err := pruneBackupDirectory(filepath.Dir(outputPath), retention, handle.BackupVaultID()); err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -3414,10 +3437,7 @@ func (b *brokerRPC) disabledIntegrationTargets() map[string]bool {
 		return map[string]bool{}
 	}
 	disabled := make(map[string]bool)
-	value, err := handle.GetConfigValue("integrations.disabled_targets")
-	if err != nil {
-		return disabled
-	}
+	value := handle.GetConfig()["integrations.disabled_targets"]
 	for _, target := range configStringSlice(value) {
 		disabled[target] = true
 	}
@@ -3455,22 +3475,16 @@ func configStringSlice(value any) []string {
 }
 
 func integrationChangedPayload(id string, status string) string {
-	data, err := json.Marshal(map[string]string{"id": id, "status": status})
-	if err != nil {
-		return `{"id":"","status":"degraded"}`
-	}
+	data, _ := json.Marshal(map[string]string{"id": id, "status": status})
 	return string(data)
 }
 
 func integrationProfileChangedPayload(targetID string, profileID string, action string) string {
-	data, err := json.Marshal(struct {
+	data, _ := json.Marshal(struct {
 		TargetID  string `json:"target_id"`
 		ProfileID string `json:"profile_id"`
 		Action    string `json:"action"`
 	}{TargetID: targetID, ProfileID: profileID, Action: action})
-	if err != nil {
-		return `{"target_id":"","profile_id":"","action":"changed"}`
-	}
 	return string(data)
 }
 
@@ -3601,10 +3615,7 @@ func leaseChangedEventPayload(sessions []Session, status string) string {
 	if len(leaseIDs) == 1 {
 		payload["lease_id"] = leaseIDs[0]
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Sprintf(`{"lease_ids":[],"status":%q}`, status)
-	}
+	data, _ := json.Marshal(payload)
 	return string(data)
 }
 

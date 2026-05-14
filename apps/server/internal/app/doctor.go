@@ -22,6 +22,9 @@ type doctorJSONReport struct {
 	VaultState              string `json:"vault_state"`
 	BindingState            string `json:"binding_state"`
 	HooksInstalled          bool   `json:"hooks_installed"`
+	PathShadowed            bool   `json:"path_shadowed"`
+	PathHasNewer            bool   `json:"path_has_newer"`
+	AgentMCPWrappersOK      bool   `json:"agent_mcp_wrappers_ok"`
 	AuditDegraded           bool   `json:"audit_degraded"`
 	ProcessIdentityDegraded bool   `json:"process_identity_degraded"`
 	VersionMajor            int    `json:"version_major"`
@@ -44,6 +47,8 @@ type doctorReport struct {
 	auditDetail           string
 	processIdentityDetail string
 	versionMismatchDetail string
+	pathDetail            string
+	agentMCPWrapperDetail string
 }
 
 func doctorCommand(ctx context.Context, args []string, stdout io.Writer, s starter) error {
@@ -196,14 +201,15 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 	major, minor, patch := parseVersionParts(runtime.VersionString())
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{
-			DaemonRunning:  false,
-			VaultState:     "missing",
-			BindingState:   "unknown",
-			HooksInstalled: false,
-			AuditDegraded:  false,
-			VersionMajor:   major,
-			VersionMinor:   minor,
-			VersionPatch:   patch,
+			DaemonRunning:      false,
+			VaultState:         "missing",
+			BindingState:       "unknown",
+			HooksInstalled:     false,
+			AgentMCPWrappersOK: true,
+			AuditDegraded:      false,
+			VersionMajor:       major,
+			VersionMinor:       minor,
+			VersionPatch:       patch,
 		},
 		RedactorMinLength:     redactor.MinRedactLen,
 		RedactorANSIAware:     redactor.ANSIAwareAvailable(),
@@ -212,6 +218,17 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 		bindingDetail:         "project binding was not checked",
 		auditDetail:           "audit subsystem reports healthy or unknown state",
 		processIdentityDetail: "process binding identity probe reports healthy or unknown state",
+		pathDetail:            "hasp executable PATH resolution looks consistent",
+		agentMCPWrapperDetail: "managed agent MCP wrappers look consistent",
+	}
+	if pathDiagnostics := detectHaspPathDiagnostics(runtime.VersionString()); pathDiagnostics.Warning != "" {
+		report.PathShadowed = pathDiagnostics.Shadowed
+		report.PathHasNewer = pathDiagnostics.HasNewer
+		report.pathDetail = pathDiagnostics.Warning
+	}
+	if wrapperDetail := detectManagedAgentMCPWrapperProblems(); wrapperDetail != "" {
+		report.AgentMCPWrappersOK = false
+		report.agentMCPWrapperDetail = wrapperDetail
 	}
 
 	if status, ok := doctorRuntimeStatusFn(ctx, s); ok {
@@ -300,6 +317,9 @@ func renderDoctorHumanWithColor(stdout io.Writer, report doctorReport, opts ui.C
 	fmt.Fprintf(tw, "vault\t%s\t%s\n", ui.Colorize(report.VaultState, vaultRole(report.VaultState), opts), report.vaultDetail)
 	fmt.Fprintf(tw, "binding\t%s\t%s\n", ui.Colorize(report.BindingState, bindingRole(report.BindingState), opts), report.bindingDetail)
 	fmt.Fprintf(tw, "hooks\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.HooksInstalled), boolRole(report.HooksInstalled), opts))
+	pathOK := !report.PathShadowed && !report.PathHasNewer
+	fmt.Fprintf(tw, "path_resolution\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", pathOK), boolRole(pathOK), opts), report.pathDetail)
+	fmt.Fprintf(tw, "agent_mcp_wrappers\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AgentMCPWrappersOK), boolRole(report.AgentMCPWrappersOK), opts), report.agentMCPWrapperDetail)
 	fmt.Fprintf(tw, "audit_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AuditDegraded), auditDegradedRole(report.AuditDegraded), opts), report.auditDetail)
 	fmt.Fprintf(tw, "process_identity_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.ProcessIdentityDegraded), auditDegradedRole(report.ProcessIdentityDegraded), opts), report.processIdentityDetail)
 	if report.VersionMismatch {

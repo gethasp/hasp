@@ -469,14 +469,37 @@ env \
   HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprint" \
   HASP_INSTALL_DIR="$bin_dir" \
   HASP_INSTALL_RUN_SETUP=0 \
-  sh "$INSTALLER" >"$install_log"
+  sh "$INSTALLER" >"$install_log" 2>&1
 test -x "$bin_dir/hasp"
 test "$("$bin_dir/hasp")" = "hasp-test"
 assert_log_contains "$install_log" '==> Checking installer prerequisites'
 assert_log_contains "$install_log" "==> Selected HASP $version for $os_name/$arch_name"
 assert_log_contains "$install_log" "installed hasp to $bin_dir/hasp"
 assert_log_contains "$install_log" 'version: hasp-test'
+assert_log_contains "$install_log" 'warning: hasp on PATH resolves to'
+assert_log_contains "$install_log" "not the newly installed $bin_dir/hasp"
 assert_log_contains "$install_log" 'next: hasp setup'
+
+shadow_bin_dir="$tmp_dir/shadow-bin"
+shadow_install_bin_dir="$tmp_dir/shadow-install-bin"
+/bin/mkdir -p "$shadow_bin_dir"
+cat >"$shadow_bin_dir/hasp" <<'SH'
+#!/usr/bin/env sh
+echo stale-hasp
+SH
+chmod +x "$shadow_bin_dir/hasp"
+shadow_install_log="$tmp_dir/install-shadow-warning.log"
+env \
+  PATH="$shadow_bin_dir:$PATH" \
+  HASP_ALLOW_LOCAL_INSTALL_TESTS=1 \
+  HASP_DOWNLOAD_HOST="$base_url" \
+  HASP_RELEASE_TRUSTED_GPG_FINGERPRINTS="$trusted_fingerprint" \
+  HASP_INSTALL_DIR="$shadow_install_bin_dir" \
+  HASP_INSTALL_RUN_SETUP=0 \
+  sh "$INSTALLER" >"$shadow_install_log" 2>&1
+test -x "$shadow_install_bin_dir/hasp"
+assert_log_contains "$shadow_install_log" "warning: hasp on PATH resolves to $shadow_bin_dir/hasp, not the newly installed $shadow_install_bin_dir/hasp"
+assert_log_contains "$shadow_install_log" 'remove the stale binary'
 
 setup_bin_dir="$tmp_dir/setup-bin"
 setup_log="$tmp_dir/install-start-setup.log"

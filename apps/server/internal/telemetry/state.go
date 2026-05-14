@@ -34,10 +34,11 @@ var (
 	NowFn       = func() time.Time { return time.Now().UTC() }
 	RandomFn    = rand.Read
 
-	readFileFn  = os.ReadFile
-	writeFileFn = os.WriteFile
-	mkdirAllFn  = os.MkdirAll
-	removeFn    = os.Remove
+	readFileFn          = os.ReadFile
+	writeFileFn         = os.WriteFile
+	mkdirAllFn          = os.MkdirAll
+	removeFn            = os.Remove
+	jsonMarshalIndentFn = json.MarshalIndent
 )
 
 type Store struct {
@@ -52,11 +53,13 @@ func (s Store) statePath() (string, error) {
 	if strings.TrimSpace(s.Path) != "" {
 		return s.Path, nil
 	}
+	if path := strings.TrimSpace(os.Getenv("HASP_TELEMETRY_TEST_STATE")); path != "" {
+		return path, nil
+	}
 	if testing.Testing() || os.Getenv(paths.EnvTest) == "1" {
-		if path := strings.TrimSpace(os.Getenv("HASP_TELEMETRY_TEST_STATE")); path != "" {
-			return path, nil
+		if os.Getenv("HASP_TELEMETRY_ALLOW_DEFAULT_STATE_PATH") != "1" {
+			return "", errors.New("telemetry state path must be explicit in test contexts")
 		}
-		return "", errors.New("telemetry state path must be explicit in test contexts")
 	}
 	return StatePathFn()
 }
@@ -128,7 +131,7 @@ func (s Store) Save(state State) error {
 	if err := mkdirAllFn(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	data, err := jsonMarshalIndentFn(state, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -205,9 +208,6 @@ func (s Store) RecordRootCommand(root string, now time.Time) error {
 	}
 	state.Commands24h++
 	state.CommandsTotal++
-	if state.RootCommands == nil {
-		state.RootCommands = Counts{}
-	}
 	state.RootCommands[root]++
 	if err := ensureInstallID(&state, now.UTC()); err != nil {
 		return nil

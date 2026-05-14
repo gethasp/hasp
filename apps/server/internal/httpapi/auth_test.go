@@ -9,15 +9,23 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
+
+type failingReadCloser struct{}
+
+func (f failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("read fail") }
+func (f failingReadCloser) Close() error             { return nil }
 
 func TestValidatorAcceptsSignedRequestAndRestoresBody(t *testing.T) {
 	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
@@ -43,6 +51,20 @@ func TestValidatorAcceptsSignedRequestAndRestoresBody(t *testing.T) {
 	}
 	if !bytes.Equal(gotBody, body) {
 		t.Fatalf("restored body = %q, want %q", gotBody, body)
+	}
+}
+
+func TestWriteErrorEnvelope(t *testing.T) {
+	rec := httptest.NewRecorder()
+	WriteErrorEnvelope(rec, http.StatusTeapot, "short", "Short", "detail")
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"code":"short"`) || !strings.Contains(body, `"detail":"detail"`) {
+		t.Fatalf("body = %s", body)
 	}
 }
 
@@ -324,6 +346,82 @@ func TestValidatorRejectsBodyTamper(t *testing.T) {
 	err = validator.Validate(req)
 	if !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("expected signature rejection, got %v", err)
+	}
+}
+
+func TestValidatorResidualBranches(t *testing.T) {
+	if _, err := NewValidator(nil, ValidatorOptions{}); err == nil {
+		t.Fatal("empty validator key should fail")
+	}
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x44}, 32)
+	validator, err := NewValidator(key, ValidatorOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("new default validator: %v", err)
+	}
+	if validator.allowedDateSkew != DefaultAllowedDateSkew || validator.nonces.ttl != DefaultNonceTTL {
+		t.Fatalf("validator defaults skew=%s ttl=%s", validator.allowedDateSkew, validator.nonces.ttl)
+	}
+	if err := validator.Validate(nil); err == nil {
+		t.Fatal("nil request should fail validation")
+	}
+	for _, header := range []string{
+		AuthorizationScheme + " sig=",
+		AuthorizationScheme + " sig=%%%bad",
+		AuthorizationScheme + " sig=" + base64.StdEncoding.EncodeToString([]byte("short")),
+	} {
+		if _, err := parseAuthorizationHeader(header); err == nil {
+			t.Fatalf("malformed authorization %q should fail", header)
+		}
+	}
+	req := signedRequest(t, key, now, "abcdefabcdefabcdefabcdefabcdefac", http.MethodPost, "/v1/items", "", []byte("body"))
+	req.Body = failingReadCloser{}
+	if err := validator.Validate(req); err == nil || !strings.Contains(err.Error(), "hash request body") {
+		t.Fatalf("body read failure = %v", err)
+	}
+	if got := requestTarget(nil); got != "" {
+		t.Fatalf("nil request target = %q", got)
+	}
+	if got := requestTarget(&url.URL{}); got != "/" {
+		t.Fatalf("empty URL target = %q", got)
+	}
+	nilBodyReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	nilBodyReq.Body = nil
+	emptyHash, err := requestBodyHash(nilBodyReq)
+	if err != nil {
+		t.Fatalf("nil request body hash: %v", err)
+	}
+	sum := sha256.Sum256(nil)
+	if emptyHash != hex.EncodeToString(sum[:]) {
+		t.Fatalf("nil body hash = %q", emptyHash)
+	}
+	cache := nonceCache{
+		entries: map[string]time.Time{"old": now.Add(-2 * time.Minute)},
+		ttl:     time.Minute,
+		now:     func() time.Time { return now },
+	}
+	if err := cache.remember("new"); err != nil {
+		t.Fatalf("remember with stale entry: %v", err)
+	}
+	if _, ok := cache.entries["old"]; ok {
+		t.Fatalf("stale nonce was not pruned: %+v", cache.entries)
+	}
+
+	rec := httptest.NewRecorder()
+	validator.Middleware(nil).ServeHTTP(rec, signedRequest(t, key, now, "abcdefabcdefabcdefabcdefabcdefad", http.MethodGet, "/", "", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("nil middleware next status = %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	called := false
+	validator.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(rec, signedRequest(t, key, now, "abcdefabcdefabcdefabcdefabcdefae", http.MethodGet, "/", "", nil))
+	if !called {
+		t.Fatal("middleware did not call next on valid request")
+	}
+	rec = httptest.NewRecorder()
+	validator.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next should not run") })).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("middleware invalid status = %d", rec.Code)
 	}
 }
 

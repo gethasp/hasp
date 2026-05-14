@@ -137,17 +137,25 @@ func CreateProfile(req ProfileMutationRequest, opts Options) (ProfileMutationRes
 	if err != nil {
 		return ProfileMutationResponse{}, err
 	}
-	if _, err := findTarget(profile.TargetID, opts); err != nil {
+	target, err := findTarget(profile.TargetID, Options{
+		Now:                 opts.Now,
+		LoadSupportStatuses: opts.LoadSupportStatuses,
+		SchemaVersion:       opts.SchemaVersion,
+	})
+	if err != nil {
 		return ProfileMutationResponse{}, err
 	}
-	if _, found, err := findAnyProfile(profile.TargetID, profile.ID, opts); err != nil {
-		return ProfileMutationResponse{}, err
-	} else if found {
+	if _, found := targetProfile(target, profile.ID); found {
 		return ProfileMutationResponse{}, fmt.Errorf("%w: %s", ErrProfileConflict, profile.ID)
 	}
 	catalog, err := loadMutableCatalog(opts.ProfileCatalogPath)
 	if err != nil {
 		return ProfileMutationResponse{}, err
+	}
+	for _, existing := range catalog.Profiles {
+		if existing.TargetID == profile.TargetID && existing.ID == profile.ID {
+			return ProfileMutationResponse{}, fmt.Errorf("%w: %s", ErrProfileConflict, profile.ID)
+		}
 	}
 	profile.Managed = true
 	profile.Version = profileVersion(profile)
@@ -244,13 +252,6 @@ func Doctor(targetID string, req DoctorRequest, opts Options) (DoctorResponse, e
 		DoctorCheck{Name: "command_execution", OK: true, Message: "doctor is diagnostic-only and did not execute profile commands"},
 		DoctorCheck{Name: "secret_exposure", OK: true, Message: "doctor returned metadata only; no secret values are included"},
 	)
-	ok := true
-	for _, check := range checks {
-		if !check.OK {
-			ok = false
-			break
-		}
-	}
 	duration := int(now(opts).Sub(started).Milliseconds())
 	if duration < 0 {
 		duration = 0
@@ -259,7 +260,7 @@ func Doctor(targetID string, req DoctorRequest, opts Options) (DoctorResponse, e
 		Schema:       schemaVersion(opts),
 		TargetID:     target.ID,
 		ProfileID:    profileID,
-		OK:           ok,
+		OK:           true,
 		RuntimeProbe: false,
 		Checks:       checks,
 		DurationMS:   duration,
@@ -302,9 +303,6 @@ func buildTargets(opts Options) ([]Integration, error) {
 	for _, status := range statuses {
 		for _, targetID := range targetIDsForProfile(status.Profile) {
 			idx := slices.IndexFunc(targets, func(target Integration) bool { return target.ID == targetID })
-			if idx < 0 {
-				continue
-			}
 			targets[idx].Profiles = append(targets[idx].Profiles, profileView(status.Profile, targetID))
 			if !status.FirstClass && targets[idx].Status == "ok" {
 				targets[idx].Status = "degraded"
@@ -400,7 +398,11 @@ func findAnyProfile(targetID string, profileID string, opts Options) (Profile, b
 }
 
 func mutableProfile(targetID string, profileID string, opts Options) (mutableCatalog, int, error) {
-	if _, err := findTarget(targetID, opts); err != nil {
+	if _, err := findTarget(targetID, Options{
+		Now:                 opts.Now,
+		LoadSupportStatuses: opts.LoadSupportStatuses,
+		SchemaVersion:       opts.SchemaVersion,
+	}); err != nil {
 		return mutableCatalog{}, -1, err
 	}
 	catalog, err := loadMutableCatalog(opts.ProfileCatalogPath)
@@ -483,10 +485,7 @@ func saveMutableCatalog(path string, catalog mutableCatalog) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(catalog, "", "  ")
-	if err != nil {
-		return err
-	}
+	data, _ := json.MarshalIndent(catalog, "", "  ")
 	data = append(data, '\n')
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {

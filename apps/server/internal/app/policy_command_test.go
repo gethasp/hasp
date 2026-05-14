@@ -94,6 +94,46 @@ func TestPolicyHelpAndCompletionAreWired(t *testing.T) {
 	}
 }
 
+func TestPolicyCommandEdgesAndReadPolicyFailures(t *testing.T) {
+	lockAppSeams(t)
+	var out bytes.Buffer
+	if err := policyCommand(context.Background(), nil, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("policy help: %v", err)
+	}
+	if !strings.Contains(out.String(), "usage: hasp policy") {
+		t.Fatalf("policy help output = %q", out.String())
+	}
+	if err := policyCommand(context.Background(), []string{"unknown"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected unknown policy subcommand")
+	}
+	if err := policyShowCommand(context.Background(), []string{"extra"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected policy show usage error")
+	}
+	if err := policySetCommand(context.Background(), nil, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected policy set usage error")
+	}
+	if err := policyValidateCommand(context.Background(), nil, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected policy validate usage error")
+	}
+	if _, err := readPolicyFile(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Fatal("expected missing policy read error")
+	}
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write bad policy: %v", err)
+	}
+	if _, err := readPolicyFile(bad); err == nil {
+		t.Fatal("expected policy decode error")
+	}
+	extra := filepath.Join(t.TempDir(), "extra.json")
+	if err := os.WriteFile(extra, []byte(`{"version":"0"} {"version":"1"}`), 0o600); err != nil {
+		t.Fatalf("write extra policy: %v", err)
+	}
+	if _, err := readPolicyFile(extra); err == nil {
+		t.Fatal("expected extra JSON policy error")
+	}
+}
+
 func writePolicyFile(t *testing.T, path string, policy runtime.PolicyDocument) {
 	t.Helper()
 	data, err := json.Marshal(policy)

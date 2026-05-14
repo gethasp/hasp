@@ -470,6 +470,29 @@ func TestNewWithNilKeyringFallsBackToUnsupported(t *testing.T) {
 	}
 }
 
+func TestNewForPathsUsesProvidedPathsAndFallbackKeyring(t *testing.T) {
+	home := t.TempDir()
+	resolved := paths.Paths{HomeDir: home, StatePath: filepath.Join(home, "state.json")}
+	store, err := NewForPaths(nil, resolved)
+	if err != nil {
+		t.Fatalf("new for paths: %v", err)
+	}
+	if store.paths.StatePath != resolved.StatePath {
+		t.Fatalf("state path = %q, want %q", store.paths.StatePath, resolved.StatePath)
+	}
+	if _, ok := store.keyring.(unsupportedKeyring); !ok {
+		t.Fatal("expected unsupported keyring fallback")
+	}
+	keyring := newMemoryKeyring()
+	store, err = NewForPaths(keyring, resolved)
+	if err != nil {
+		t.Fatalf("new for paths with keyring: %v", err)
+	}
+	if got, ok := store.keyring.(*memoryKeyring); !ok || got != keyring {
+		t.Fatalf("provided keyring was not preserved: %#v", store.keyring)
+	}
+}
+
 func TestNewKeepsProvidedKeyring(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv(paths.EnvHome, baseDir)

@@ -1,4 +1,4 @@
-//go:build darwin && cgo
+//go:build darwin && cgo && !hasp_test_fastkdf
 
 package store
 

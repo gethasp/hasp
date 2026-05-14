@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -78,6 +79,48 @@ func TestConfigHelpAndCompletionAreWired(t *testing.T) {
 	for _, want := range []string{"show", "get", "set"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("config completions missing %q: %v", want, got)
+		}
+	}
+}
+
+func TestConfigCommandEdgesAndValueParsing(t *testing.T) {
+	lockAppSeams(t)
+	var out bytes.Buffer
+	if err := configCommand(context.Background(), nil, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("config help: %v", err)
+	}
+	if !strings.Contains(out.String(), "usage: hasp config") {
+		t.Fatalf("config help output = %q", out.String())
+	}
+	if err := configCommand(context.Background(), []string{"unknown"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected unknown config subcommand")
+	}
+	if err := configShowCommand(context.Background(), []string{"extra"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected config show usage error")
+	}
+	if err := configGetCommand(context.Background(), nil, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected config get usage error")
+	}
+	if err := configSetCommand(context.Background(), []string{"only-key"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected config set usage error")
+	}
+	if _, err := parseConfigCLIValue("[not-json"); err == nil {
+		t.Fatal("expected config array decode error")
+	}
+	for raw, want := range map[string]any{
+		"":             "",
+		"true":         true,
+		"false":        false,
+		"42":           42,
+		`["a","b"]`:    []string{"a", "b"},
+		"plain-string": "plain-string",
+	} {
+		got, err := parseConfigCLIValue(raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parse %q = %#v, want %#v", raw, got, want)
 		}
 	}
 }

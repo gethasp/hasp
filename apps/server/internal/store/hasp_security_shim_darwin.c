@@ -1,3 +1,5 @@
+//go:build darwin && cgo && !hasp_test_fastkdf
+
 #include "hasp_security_shim_darwin.h"
 
 #include <stdlib.h>

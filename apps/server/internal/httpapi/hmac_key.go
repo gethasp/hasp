@@ -31,8 +31,18 @@ var HMACTeamID = ""
 
 var ErrHMACSecretNotProvisioned = errors.New("HMAC secret not provisioned")
 
+var (
+	currentUserFn  = user.Current
+	hmacRandomFn   = rand.Read
+	userHomeDirFn  = os.UserHomeDir
+	hmacRuntimeOS  = runtime.GOOS
+	hmacReadFile   = os.ReadFile
+	hmacMkdirAll   = os.MkdirAll
+	hmacWriteFile  = os.WriteFile
+)
+
 var currentUsername = func() string {
-	if current, err := user.Current(); err == nil {
+	if current, err := currentUserFn(); err == nil {
 		return strings.TrimSpace(current.Username)
 	}
 	if isGoTestProcess() {
@@ -73,7 +83,7 @@ func LoadOrCreateHMACKey(ctx context.Context, keyring store.Keyring) ([]byte, er
 		return nil, accountErr
 	}
 	key = make([]byte, sha256.Size)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := hmacRandomFn(key); err != nil {
 		return nil, fmt.Errorf("generate HTTP HMAC key: %w", err)
 	}
 	if err := storeHMACKey(ctx, keyring, account, base64.StdEncoding.EncodeToString(key)); err != nil {
@@ -105,14 +115,8 @@ func HMACKeyDesignatedRequirements() ([]string, error) {
 			return nil, errors.New("httpapi: build-time HMACTeamID is required for HTTP HMAC key ACL")
 		}
 	}
-	appRequirement, err := designatedRequirement(HASPAppBundleID, teamID)
-	if err != nil {
-		return nil, err
-	}
-	daemonRequirement, err := designatedRequirement(HASPDaemonBundleID, teamID)
-	if err != nil {
-		return nil, err
-	}
+	appRequirement, _ := designatedRequirement(HASPAppBundleID, teamID)
+	daemonRequirement, _ := designatedRequirement(HASPDaemonBundleID, teamID)
 	return []string{appRequirement, daemonRequirement}, nil
 }
 
@@ -176,7 +180,7 @@ func ReinitializeHMACKey(ctx context.Context, keyring store.Keyring) ([]byte, er
 		return nil, err
 	}
 	key := make([]byte, sha256.Size)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := hmacRandomFn(key); err != nil {
 		return nil, fmt.Errorf("generate HTTP HMAC key: %w", err)
 	}
 	if err := storeHMACKey(ctx, keyring, account, base64.StdEncoding.EncodeToString(key)); err != nil {
@@ -235,7 +239,7 @@ func isGoTestProcess() bool {
 }
 
 func usesLocalDebugHMACKey() bool {
-	return runtime.GOOS == "darwin" && strings.TrimSpace(HMACTeamID) == "TEAM123456"
+	return hmacRuntimeOS == "darwin" && strings.TrimSpace(HMACTeamID) == "TEAM123456"
 }
 
 func loadOrCreateLocalDebugHMACKey() ([]byte, error) {
@@ -254,7 +258,7 @@ func loadLocalDebugHMACKey() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := os.ReadFile(path)
+	key, err := hmacReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -270,13 +274,13 @@ func createLocalDebugHMACKey() ([]byte, error) {
 		return nil, err
 	}
 	key := make([]byte, sha256.Size)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := hmacRandomFn(key); err != nil {
 		return nil, fmt.Errorf("generate HTTP HMAC key: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := hmacMkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, key, 0o600); err != nil {
+	if err := hmacWriteFile(path, key, 0o600); err != nil {
 		return nil, err
 	}
 	return key, nil
@@ -286,7 +290,7 @@ func localDebugHMACKeyPath() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("HASP_HOME")); home != "" {
 		return filepath.Join(home, localDebugHMACKeyFile), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := userHomeDirFn()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return "", errors.New("httpapi: user home is required for local debug HMAC key")
 	}

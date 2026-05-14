@@ -49,25 +49,20 @@ func telemetryCommand(ctx context.Context, args []string, stdin io.Reader, stdou
 }
 
 func telemetryStatusCommand(ctx context.Context, args []string, stdout io.Writer, includePayload bool) error {
-	fs := flag.NewFlagSet("telemetry status", flag.ContinueOnError)
+	commandName := "telemetry status"
+	usage := "usage: hasp telemetry status [--json]"
+	if includePayload {
+		commandName = "telemetry preview"
+		usage = "usage: hasp telemetry preview [--json]"
+	}
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: hasp telemetry status [--json]")
-	}
-	if includePayload {
-		fs = flag.NewFlagSet("telemetry preview", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		jsonOutput = fs.Bool("json", false, "")
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		if fs.NArg() != 0 {
-			return errors.New("usage: hasp telemetry preview [--json]")
-		}
+		return errors.New(usage)
 	}
 	status, err := telemetryStatus(includePayload)
 	if err != nil {

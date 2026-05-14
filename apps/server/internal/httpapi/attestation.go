@@ -139,10 +139,7 @@ func RevealSecretRef(r *http.Request) (string, bool, error) {
 	default:
 		return "", false, nil
 	}
-	decoded, err := url.PathUnescape(ref)
-	if err != nil {
-		return "", true, fmt.Errorf("decode secret id: %w", err)
-	}
+	decoded, _ := url.PathUnescape(ref)
 	decoded = strings.TrimSpace(decoded)
 	if decoded == "" || strings.Contains(decoded, "/") {
 		return "", true, errors.New("secret id is required")

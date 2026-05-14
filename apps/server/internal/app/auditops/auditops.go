@@ -33,6 +33,8 @@ type ExportTrailer struct {
 	Count   int    `json:"count"`
 }
 
+var jsonMarshal = json.Marshal
+
 func Verify(log *audit.Log, now time.Time) (VerifyResponse, error) {
 	if log == nil {
 		return VerifyResponse{}, errors.New("audit log is unavailable")
@@ -70,7 +72,7 @@ func ExportNDJSON(w io.Writer, events []audit.Event, opts ExportOptions, trailer
 		if !opts.To.IsZero() && event.Timestamp.After(opts.To) {
 			continue
 		}
-		line, err := json.Marshal(event)
+		line, err := jsonMarshal(event)
 		if err != nil {
 			return ExportTrailer{}, err
 		}
@@ -88,7 +90,7 @@ func ExportNDJSON(w io.Writer, events []audit.Event, opts ExportOptions, trailer
 		HMAC:    hex.EncodeToString(mac.Sum(nil)),
 		Count:   count,
 	}
-	line, err := json.Marshal(trailer)
+	line, err := jsonMarshal(trailer)
 	if err != nil {
 		return ExportTrailer{}, err
 	}

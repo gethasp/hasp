@@ -129,6 +129,26 @@ func TestDesignatedRequirementAttestorVerifyPIDPropagatesPlatformVerifierError(t
 	}
 }
 
+func TestPeerPIDContextAndClipboardRevealHelpers(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/items/api/reveal/clipboard", nil)
+	pid, err := PeerPIDFromContext(req.WithContext(WithPeerPID(req.Context(), 4242)))
+	if err != nil {
+		t.Fatalf("peer pid: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("pid = %d", pid)
+	}
+	if _, err := PeerPIDFromContext(nil); !errors.Is(err, ErrAttestationRejected) {
+		t.Fatalf("nil request err = %v", err)
+	}
+	if _, err := PeerPIDFromContext(req); !errors.Is(err, ErrAttestationRejected) {
+		t.Fatalf("missing pid err = %v", err)
+	}
+	if !isClipboardRevealRequest(req) || isClipboardRevealRequest(nil) {
+		t.Fatal("clipboard reveal helper mismatch")
+	}
+}
+
 func TestRevealAttestationMiddlewareRejectsMismatchedCaller(t *testing.T) {
 	nextCalled := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -165,6 +185,42 @@ func TestRevealAttestationMiddlewareAllowsAttestedCaller(t *testing.T) {
 
 	if resp.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.Code)
+	}
+}
+
+func TestRevealAttestationResidualBranches(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/items/api/reveal/inline", nil)
+	resp := httptest.NewRecorder()
+	RevealAttestationMiddlewareWithAudit(nil, nil, nil, nil).ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("non-reveal nil next status = %d", resp.Code)
+	}
+
+	var recorded error
+	req = httptest.NewRequest(http.MethodPost, "/v1/items/api/reveal/inline", nil)
+	resp = httptest.NewRecorder()
+	RevealAttestationMiddlewareWithAudit(nil, nil, func(_ *http.Request, err error) {
+		recorded = err
+	}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden || !errors.Is(recorded, ErrAttestationUnavailable) {
+		t.Fatalf("nil attestation status=%d recorded=%v", resp.Code, recorded)
+	}
+
+	for _, path := range []string{
+		"/v1/secrets//reveal",
+		"/v1/items/folder/name/reveal/clipboard",
+	} {
+		if _, ok, err := RevealSecretRef(httptest.NewRequest(http.MethodPost, path, nil)); !ok || err == nil {
+			t.Fatalf("invalid reveal ref %s ok=%t err=%v", path, ok, err)
+		}
+	}
+	if _, ok, err := RevealSecretRef(httptest.NewRequest(http.MethodPost, "/v1/unknown/api/reveal", nil)); ok || err != nil {
+		t.Fatalf("unknown reveal route ok=%t err=%v", ok, err)
+	}
+	if err := verifyPIDDesignatedRequirement(0, `identifier "com.gethasp.hasp.HASP"`); !errors.Is(err, ErrAttestationRejected) {
+		t.Fatalf("non-positive pid err = %v", err)
 	}
 }
 

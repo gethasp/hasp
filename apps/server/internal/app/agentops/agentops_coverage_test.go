@@ -398,6 +398,14 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 	})
 
 	t.Run("mcp dependency errors", func(t *testing.T) {
+		t.Run("serve dependency is required", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			deps.AgentServeMCP = nil
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+				t.Fatal("expected missing MCP serve dependency error")
+			}
+		})
+
 		t.Run("missing consumer falls back to transient agent identity", func(t *testing.T) {
 			deps := fullAgentDeps(t)
 			deps.StoreGetAgent = func(*store.Handle, string) (store.AgentConsumer, error) {
@@ -521,4 +529,75 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestAgentMCPResidualHelperBranches(t *testing.T) {
+	ctx := context.Background()
+	restores := []func(){func() {}}
+	restoreMCPEnv(restores)
+
+	deps := fullAgentDeps(t)
+	if err := setMCPEnv(deps, &restores, "", "value"); err != nil {
+		t.Fatalf("blank key should no-op: %v", err)
+	}
+	deps.SetEnv = nil
+	if err := setMCPEnv(deps, &restores, "BAD=KEY", "value"); err == nil {
+		t.Fatal("invalid env key should fail")
+	}
+	t.Setenv("HASP_AGENTOPS_RESTORE_EMPTY", "")
+	if err := os.Unsetenv("HASP_AGENTOPS_RESTORE_EMPTY"); err != nil {
+		t.Fatalf("unset restore test env: %v", err)
+	}
+	if err := setMCPEnv(deps, &restores, "HASP_AGENTOPS_RESTORE_EMPTY", "value"); err != nil {
+		t.Fatalf("set env with default setter: %v", err)
+	}
+	restoreMCPEnv(restores)
+	if got := os.Getenv("HASP_AGENTOPS_RESTORE_EMPTY"); got != "" {
+		t.Fatalf("env should be unset after restore, got %q", got)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Deps)
+	}{
+		{"open vault missing", func(d *Deps) { d.OpenVault = nil }},
+		{"store get missing", func(d *Deps) { d.StoreGetAgent = nil }},
+		{"starter missing", func(d *Deps) { d.AgentNewStarter = nil }},
+		{"build env missing", func(d *Deps) { d.AgentBuildExecutionEnv = nil }},
+		{"consumer env set", func(d *Deps) {
+			d.SetEnv = func(key string, value string) (func(), error) {
+				if key == secrettypes.EnvAgentConsumer {
+					return nil, errors.New("consumer env")
+				}
+				return func() {}, nil
+			}
+		}},
+		{"project root env set", func(d *Deps) {
+			d.SetEnv = func(key string, value string) (func(), error) {
+				if key == secrettypes.EnvAgentProjectRoot {
+					return nil, errors.New("project env")
+				}
+				return func() {}, nil
+			}
+		}},
+		{"register missing", func(d *Deps) {
+			d.AgentRegisterProcess = nil
+		}},
+		{"execution env set", func(d *Deps) {
+			d.SetEnv = func(key string, value string) (func(), error) {
+				if key == "HASP_EXTRA" {
+					return nil, errors.New("extra env")
+				}
+				return func() {}, nil
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			tc.mutate(&deps)
+			if err := prepareAgentMCPEnv(ctx, deps, "codex", &[]func(){}); err == nil {
+				t.Fatal("expected dependency error")
+			}
+		})
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -682,6 +683,10 @@ func TestDaemonRestartLocksVaultAndRestarts(t *testing.T) {
 	if starts != 1 || stops != 1 {
 		t.Fatalf("starts/stops = %d/%d, want 1/1", starts, stops)
 	}
+	fake.lockErr = errors.New("lock")
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "operator"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "lock" {
+		t.Fatalf("daemon restart lock err = %v", err)
+	}
 }
 
 func TestDaemonRestartValidatesReason(t *testing.T) {
@@ -786,4 +791,166 @@ func TestDaemonHTTPKeyDoesNotConstructRuntimeManager(t *testing.T) {
 	if err := RuntimeCommand(ctx, deps, []string{"daemon", "http-key", "fingerprint"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
 		t.Fatalf("http-key fingerprint should bypass runtime manager: %v", err)
 	}
+}
+
+func TestDaemonAdditionalBranches(t *testing.T) {
+	ctx := context.Background()
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	origRun := managerRunDaemon
+	origStart := managerStartDaemon
+	origStop := managerStopDaemon
+	t.Cleanup(func() {
+		managerRunDaemon = origRun
+		managerStartDaemon = origStart
+		managerStopDaemon = origStop
+	})
+	managerRunDaemon = func(*runtime.Manager, context.Context) error { return errors.New("run") }
+	managerStartDaemon = func(*runtime.Manager, context.Context) error { return errors.New("start") }
+	managerStopDaemon = func(*runtime.Manager) error { return errors.New("process already finished") }
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "run", "--bad"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("daemon run bad flag should fail")
+	}
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "run", "extra"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("daemon run extra arg should fail")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := RuntimeCommand(canceled, deps, []string{"daemon", "run"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatalf("daemon run canceled = %v", err)
+	}
+	if err := RuntimeCommand(canceled, deps, []string{"daemon", "serve"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatalf("daemon serve canceled = %v", err)
+	}
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "serve"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "run" {
+		t.Fatalf("daemon serve run err = %v", err)
+	}
+
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--bad"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("daemon restart bad flag should fail")
+	}
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "extra"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
+		t.Fatal("daemon restart extra arg should fail")
+	}
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "start" {
+		t.Fatalf("daemon restart should ignore already-finished stop and return start err, got %v", err)
+	}
+	managerStopDaemon = func(*runtime.Manager) error { return errors.New("stop") }
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "stop" {
+		t.Fatalf("daemon restart stop err = %v", err)
+	}
+	deps.NewStarter = func() (Starter, error) { return nil, errors.New("starter") }
+	if err := lockVaultIfRunning(ctx, deps, "operator"); err == nil || err.Error() != "starter" {
+		t.Fatalf("lock starter err = %v", err)
+	}
+	if err := lockVaultIfRunning(ctx, Deps{}, "operator"); err != nil {
+		t.Fatalf("lock missing deps = %v", err)
+	}
+	if err := daemonHTTPKey(ctx, deps, []string{"unknown"}, io.Discard); err == nil {
+		t.Fatal("daemon http-key unknown should fail")
+	}
+}
+
+func TestApproveHMACKeyReinitializeResidualBranches(t *testing.T) {
+	oldArgs0 := os.Args[0]
+	oldGOOS := approvalRuntimeGOOS
+	oldExecCommand := approvalExecCommand
+	oldOSAScript := approvalRunOSAScript
+	oldIsCharDevice := approvalIsCharDevice
+	oldInput := approvalInput
+	oldOutput := approvalOutput
+	t.Cleanup(func() {
+		os.Args[0] = oldArgs0
+		approvalRuntimeGOOS = oldGOOS
+		approvalExecCommand = oldExecCommand
+		approvalRunOSAScript = oldOSAScript
+		approvalIsCharDevice = oldIsCharDevice
+		approvalInput = oldInput
+		approvalOutput = oldOutput
+	})
+	approvalExecCommand = helperCommand
+	if err := runApprovalOSAScript("display dialog test"); err != nil {
+		t.Fatalf("default osascript runner with helper command: %v", err)
+	}
+	os.Args[0] = "/usr/local/bin/hasp"
+
+	approvalRuntimeGOOS = "darwin"
+	approvalRunOSAScript = func(string) error { return nil }
+	if err := approveHMACKeyReinitialize(Deps{}); err != nil {
+		t.Fatalf("darwin approval success: %v", err)
+	}
+	approvalRunOSAScript = func(string) error { return errors.New("cancel") }
+	if err := approveHMACKeyReinitialize(Deps{}); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("darwin approval cancel err = %v", err)
+	}
+
+	approvalRuntimeGOOS = "linux"
+	approvalIsCharDevice = func(*os.File) bool { return false }
+	if err := approveHMACKeyReinitialize(Deps{}); err == nil || !strings.Contains(err.Error(), "interactive") {
+		t.Fatalf("non-tty approval err = %v", err)
+	}
+	approvalIsCharDevice = func(*os.File) bool { return true }
+	approvalOutput = errorWriter{}
+	if err := approveHMACKeyReinitialize(Deps{}); err == nil || !strings.Contains(err.Error(), "write denied") {
+		t.Fatalf("approval prompt write err = %v", err)
+	}
+	approvalOutput = io.Discard
+	approvalInput = strings.NewReader("wrong\n")
+	if err := approveHMACKeyReinitialize(Deps{}); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("approval wrong phrase err = %v", err)
+	}
+	approvalInput = errorReader{}
+	if err := approveHMACKeyReinitialize(Deps{}); err == nil || !strings.Contains(err.Error(), "read denied") {
+		t.Fatalf("approval read err = %v", err)
+	}
+	approvalInput = strings.NewReader("reinitialize hmac pairing\n")
+	if err := approveHMACKeyReinitialize(Deps{}); err != nil {
+		t.Fatalf("terminal approval success: %v", err)
+	}
+
+	deps := fullRuntimeDeps(t, &fakeRuntimeRPC{})
+	deps.ConnectIfRunning = func(context.Context, Starter) RuntimeClient { return nil }
+	if err := lockVaultIfRunning(context.Background(), deps, "operator"); err != nil {
+		t.Fatalf("nil connected client should no-op: %v", err)
+	}
+	socket := startRuntimeRPC(t, &fakeRuntimeRPC{})
+	client := connectIfRunningFn(context.Background(), Deps{}, fakeRuntimeStarter{socketPath: socket})
+	if client == nil {
+		t.Fatal("fallback connect should return a runtime client")
+	}
+	_ = client.Close()
+
+	keyring := &fakeKeyring{err: errors.New("keyring")}
+	deps.HTTPKeyring = func() store.Keyring { return keyring }
+	deps.ApproveHMACKeyReinitialize = func() error { return nil }
+	if err := RuntimeCommand(context.Background(), deps, []string{"daemon", "http-key", "reinitialize"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "keyring") {
+		t.Fatalf("http-key reinitialize keyring err = %v", err)
+	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write denied")
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) {
+	return 0, errors.New("read denied")
+}
+
+func helperCommand(name string, arg ...string) *exec.Cmd {
+	args := []string{"-test.run=TestRuntimeOpsHelperProcess", "--", name}
+	args = append(args, arg...)
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "HASP_RUNTIMEOPS_HELPER_PROCESS=1")
+	return cmd
+}
+
+func TestRuntimeOpsHelperProcess(t *testing.T) {
+	if os.Getenv("HASP_RUNTIMEOPS_HELPER_PROCESS") != "1" {
+		return
+	}
+	os.Exit(0)
 }

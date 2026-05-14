@@ -125,6 +125,137 @@ func TestBuildProjectsCanonicalCellStatesByPrecedenceAndRange(t *testing.T) {
 	}
 }
 
+func TestBuildEdgeBranchesAndHelpers(t *testing.T) {
+	now := time.Date(2026, 5, 10, 8, 0, 0, 0, time.UTC)
+	usedOld := now.Add(-2 * time.Minute)
+	usedNew := now.Add(-30 * time.Second)
+	input := Input{
+		AppConsumers: []store.AppConsumer{
+			{Name: "app", Bindings: []store.AppBinding{{SecretName: "missing"}, {SecretName: "api"}}},
+			{Name: "  "},
+		},
+		AgentConsumers: []store.AgentConsumer{{Name: "agent"}, {Name: "  "}},
+		Items: []store.Item{
+			{ID: "api-id", Name: "api", UpdatedAt: now},
+			{ID: "db-id", Name: "db", UpdatedAt: now.Add(-time.Hour)},
+		},
+		Sessions: []Session{
+			{Token: "tok-agent", ConsumerID: "agent"},
+			{Token: "", ConsumerID: "skip"},
+			{Token: "tok-empty", ConsumerID: ""},
+		},
+		SecretGrants: []store.SecretGrant{
+			{SessionToken: "tok-agent", ItemName: "db", Scope: store.GrantSession, UsedAt: &usedOld},
+			{SessionToken: "missing-token", ItemName: "db", Scope: store.GrantSession, UsedAt: &usedOld},
+			{SessionToken: "tok-agent", ItemName: "missing", Scope: store.GrantSession, UsedAt: &usedOld},
+		},
+		PlaintextGrants: []store.PlaintextGrant{
+			{SessionToken: "tok-agent", ItemName: "api", Scope: store.GrantSession, Action: store.PlaintextReveal, UsedAt: &usedNew},
+			{SessionToken: "tok-agent", ItemName: "missing", Scope: store.GrantSession},
+		},
+		MutationGrants: []store.MutationGrant{
+			{SessionToken: "tok-agent", ItemName: "api", Scope: store.GrantSession, Action: store.SecretMutationExpose, UsedAt: &usedOld},
+			{SessionToken: "tok-agent", ItemName: "missing", Scope: store.GrantSession},
+		},
+		Leases: []leases.Lease{
+			{ID: "inactive", SecretID: "api", ConsumerID: "agent", LastUsedAt: now, Scope: "session", Status: "revoked"},
+			{ID: "nameref", SecretID: "api", ConsumerID: "agent", LastUsedAt: now, ExpiresAt: now.Add(2 * time.Hour), Scope: "session", Status: "active"},
+			{ID: "idref", SecretID: "db-id", ConsumerID: "agent", LastUsedAt: now.Add(-time.Second), ExpiresAt: now.Add(2 * time.Hour), Scope: "window", Status: "active"},
+			{ID: "badsecret", SecretID: "missing", ConsumerID: "agent", LastUsedAt: now, Scope: "session", Status: "active"},
+			{ID: "badconsumer", SecretID: "api", ConsumerID: " ", LastUsedAt: now, Scope: "session", Status: "active"},
+		},
+		Approvals: []approvals.Approval{
+			{ID: "skip-status", SecretID: "api", RequesterConsumerID: "agent", Status: "granted", RequestedAt: now},
+			{ID: "skip-secret", SecretID: "missing", RequesterConsumerID: "agent", Status: "pending", RequestedAt: now},
+			{ID: "skip-consumer", SecretID: "api-id", RequesterConsumerID: "", Status: "pending", RequestedAt: now},
+			{ID: "newer", SecretID: "api-id", RequesterConsumerID: "agent", Status: "pending", RequestedAt: now},
+			{ID: "older", SecretID: "api-id", RequesterConsumerID: "agent", Status: "pending", RequestedAt: now.Add(-time.Minute)},
+		},
+		AuditEvents: []audit.Event{
+			{Sequence: 1, Timestamp: now.Add(-25 * time.Hour), Type: audit.EventRead, Details: map[string]any{"consumer_id": "agent", "secret_id": "db-id"}},
+			{Sequence: 2, Timestamp: now.Add(-time.Hour), Type: audit.EventRead, Details: map[string]any{"consumer_name": "agent", "item_name": "db"}},
+			{Sequence: 1, Timestamp: now.Add(-30 * time.Minute), Type: audit.EventRead, Details: map[string]any{"consumer_id": "agent", "secret_id": "db-id", "outcome": "denied"}},
+			{Sequence: 3, Timestamp: now.Add(-10 * time.Minute), Type: audit.EventRead, Details: map[string]any{"actor": "agent", "secret": "missing"}},
+			{Sequence: 4, Timestamp: now.Add(-5 * time.Minute), Type: audit.EventRead, Details: map[string]any{"actor": "", "secret": "api"}},
+		},
+		Now: now,
+	}
+	if _, err := Build(input, Options{Source: "bad"}); err == nil {
+		t.Fatal("invalid source should fail")
+	}
+	if _, err := Build(input, Options{Cursor: "bad"}); err == nil {
+		t.Fatal("invalid cursor should fail")
+	}
+	if _, err := Build(input, Options{Cursor: "-1"}); err == nil {
+		t.Fatal("negative cursor should fail")
+	}
+	reply, err := Build(input, Options{Range: "ALL-TIME", Consumer: "agent", Secret: "db-id", Scope: "window", Source: "manual", HasActiveLease: boolPtr(true), Cursor: "200", Limit: -1})
+	if err != nil {
+		t.Fatalf("build filtered edge matrix: %v", err)
+	}
+	if reply.Range != "all-time" || reply.Total == 0 || len(reply.Grants) != 0 {
+		t.Fatalf("cursor past end reply = %+v", reply)
+	}
+	noActive, err := Build(input, Options{HasActiveLease: boolPtr(false), Limit: 100})
+	if err != nil {
+		t.Fatalf("build inactive filter: %v", err)
+	}
+	if noActive.Total == 0 {
+		t.Fatalf("inactive filter should retain policy-only grants: %+v", noActive)
+	}
+	if normalizeRange("unknown") != "live" || durationText(-time.Second) != "0s" || durationText(90*time.Minute) != "1h" {
+		t.Fatal("range or duration edge cases failed")
+	}
+}
+
+func TestResidualHelperBranches(t *testing.T) {
+	now := time.Date(2026, 5, 10, 8, 0, 0, 0, time.UTC)
+	_, _, secrets := indexSecrets([]store.Item{
+		{ID: "b", Name: "same", UpdatedAt: now},
+		{ID: "a", Name: "same", UpdatedAt: now},
+	})
+	if len(secrets) != 2 || secrets[0].ID != "a" {
+		t.Fatalf("secret tie sort = %+v", secrets)
+	}
+	consumers := collectConsumers(Input{
+		Leases: []leases.Lease{
+			{ConsumerID: "lease-consumer"},
+			{ConsumerID: "app"},
+		},
+		AppConsumers: []store.AppConsumer{{Name: "app"}},
+	}, "")
+	if len(consumers) != 2 || consumers[0].ID != "app" || consumers[1].ID != "lease-consumer" {
+		t.Fatalf("lease consumers = %+v", consumers)
+	}
+	emptySecret := map[string]Secret{"": {ID: "", Path: ""}}
+	counts, _ := indexActiveLeases([]leases.Lease{{Status: "active", SecretID: "", ConsumerID: ""}}, nil, emptySecret)
+	if len(counts) != 0 {
+		t.Fatalf("empty active lease key should be skipped: %+v", counts)
+	}
+	if matchesGrant(Grant{Source: "policy"}, Options{Source: "manual"}, nil) {
+		t.Fatal("source mismatch should not match")
+	}
+	cells := projectCells(Input{Now: time.Time{}}, "live", []Consumer{{ID: "consumer"}}, []Secret{{ID: "secret", Path: "secret"}}, nil)
+	if len(cells) != 1 || cells[0].State != "never" {
+		t.Fatalf("zero-time cells = %+v", cells)
+	}
+	pending := pendingApprovalsByCell([]approvals.Approval{{Status: "pending", SecretID: "", RequesterConsumerID: ""}}, emptySecret)
+	if len(pending) != 0 {
+		t.Fatalf("empty pending key should be skipped: %+v", pending)
+	}
+	oldAudit := latestAuditByCell([]audit.Event{{Sequence: 1, Timestamp: now.Add(-25 * time.Hour), Details: map[string]any{"consumer_id": "consumer", "secret_id": "secret"}}}, map[string]Secret{"secret": {ID: "secret", Path: "secret"}}, now, "24h")
+	if len(oldAudit) != 0 {
+		t.Fatalf("old audit should be skipped: %+v", oldAudit)
+	}
+	latest := latestAuditByCell([]audit.Event{
+		{Sequence: 2, Timestamp: now, Details: map[string]any{"consumer_id": "consumer", "secret_id": "secret"}},
+		{Sequence: 1, Timestamp: now.Add(time.Minute), Details: map[string]any{"consumer_id": "consumer", "secret_id": "secret"}},
+	}, map[string]Secret{"secret": {ID: "secret", Path: "secret"}}, now, "all-time")
+	if latest["consumer\x00secret"].AuditSeq != 2 {
+		t.Fatalf("latest audit map = %+v", latest)
+	}
+}
+
 func stateFor(cells []Cell, secretID string) string {
 	for _, cell := range cells {
 		if cell.SecretID == secretID {

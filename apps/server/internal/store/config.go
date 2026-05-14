@@ -12,6 +12,11 @@ var (
 	ErrConfigInvalid     = errors.New("config invalid")
 )
 
+var configIntBounds = func() (int64, int64) {
+	maxInt := int64(int(^uint(0) >> 1))
+	return -maxInt - 1, maxInt
+}
+
 type ConfigDocument map[string]any
 
 type ConfigValue struct {
@@ -241,9 +246,8 @@ func intFromConfigValue(value any) (int, bool) {
 	case int:
 		return typed, true
 	case int64:
-		maxInt := int(^uint(0) >> 1)
-		minInt := -maxInt - 1
-		if typed < int64(minInt) || typed > int64(maxInt) {
+		minInt, maxInt := configIntBounds()
+		if typed < minInt || typed > maxInt {
 			return 0, false
 		}
 		return int(typed), true

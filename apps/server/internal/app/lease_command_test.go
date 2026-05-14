@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
@@ -97,5 +98,31 @@ func TestLeaseListAndRevokeCommandsUseLeaseSchema(t *testing.T) {
 	}
 	if revoked.RevokedCount != 1 {
 		t.Fatalf("bulk revoke count = %d, want remaining one ci-runner lease", revoked.RevokedCount)
+	}
+}
+
+func TestLeaseCommandEdges(t *testing.T) {
+	lockAppSeams(t)
+	var out bytes.Buffer
+	if err := leaseCommand(context.Background(), nil, &out, &fakeStarter{}); err != nil {
+		t.Fatalf("lease help: %v", err)
+	}
+	if !strings.Contains(out.String(), "usage: hasp lease") {
+		t.Fatalf("lease help output = %q", out.String())
+	}
+	if err := leaseCommand(context.Background(), []string{"unknown"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected unknown lease subcommand")
+	}
+	if err := leaseListCommand(context.Background(), []string{"extra"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected lease list usage error")
+	}
+	if err := leaseRevokeCommand(context.Background(), []string{"lease-id", "--all-for-consumer", "agent"}, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected mutually exclusive revoke usage error")
+	}
+	if err := leaseRevokeCommand(context.Background(), nil, &out, &fakeStarter{}); err == nil {
+		t.Fatal("expected missing lease id usage error")
+	}
+	if got := normalizeLeaseRevokeArgs([]string{"lease-id", "--reason", "done"}); strings.Join(got, ",") != "--reason,done,lease-id" {
+		t.Fatalf("normalized args = %v", got)
 	}
 }

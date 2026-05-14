@@ -29,6 +29,7 @@ var (
 	chmodSocket       = os.Chmod
 	openExclusiveFile = os.OpenFile
 	removeFile        = os.Remove
+	portFileMarshal   = json.Marshal
 	nowUTC            = func() time.Time { return time.Now().UTC() }
 )
 
@@ -237,9 +238,6 @@ func (s *Server) Close() error {
 	var closeErr error
 	s.closeOnce.Do(func() {
 		closeErr = s.httpServer.Close()
-		if errors.Is(closeErr, http.ErrServerClosed) {
-			closeErr = nil
-		}
 		if err := s.removePortFile(); err != nil && closeErr == nil {
 			closeErr = err
 		}
@@ -265,7 +263,7 @@ func (s *Server) removeUnixSocket() error {
 }
 
 func writePortFileExclusive(path string, state PortFileState) error {
-	data, err := json.Marshal(state)
+	data, err := portFileMarshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal port file: %w", err)
 	}

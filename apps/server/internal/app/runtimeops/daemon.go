@@ -23,7 +23,18 @@ var (
 	managerRunDaemon   = (*runtime.Manager).RunDaemon
 	managerStartDaemon = (*runtime.Manager).StartDaemon
 	managerStopDaemon  = (*runtime.Manager).StopDaemon
+
+	approvalRuntimeGOOS            = goruntime.GOOS
+	approvalExecCommand            = exec.Command
+	approvalRunOSAScript           = runApprovalOSAScript
+	approvalIsCharDevice           = ttyutil.IsCharDevice
+	approvalInput        io.Reader = os.Stdin
+	approvalOutput       io.Writer = os.Stdout
 )
+
+func runApprovalOSAScript(script string) error {
+	return approvalExecCommand("osascript", "-e", script).Run()
+}
 
 var validRestartReasons = map[string]bool{
 	"app-update": true,
@@ -188,21 +199,21 @@ func approveHMACKeyReinitialize(deps Deps) error {
 	if strings.HasSuffix(strings.TrimSpace(filepath.Base(os.Args[0])), ".test") {
 		return nil
 	}
-	if goruntime.GOOS == "darwin" {
+	if approvalRuntimeGOOS == "darwin" {
 		script := `display dialog "Reinitialize HASP daemon HMAC pairing? Existing daemon connections must reconnect." buttons {"Cancel", "Reinitialize"} default button "Cancel" with icon caution`
-		if err := exec.Command("osascript", "-e", script).Run(); err != nil {
+		if err := approvalRunOSAScript(script); err != nil {
 			return errors.New("HMAC pairing reinitialize approval was cancelled")
 		}
 		return nil
 	}
-	if !ttyutil.IsCharDevice(os.Stdin) {
+	if !approvalIsCharDevice(os.Stdin) {
 		return errors.New("HMAC pairing reinitialize requires local interactive operator approval")
 	}
 	const phrase = "reinitialize hmac pairing"
-	if _, err := fmt.Fprintf(os.Stdout, "This rotates the local daemon HMAC key and forces clients to reconnect.\nType %q to approve: ", phrase); err != nil {
+	if _, err := fmt.Fprintf(approvalOutput, "This rotates the local daemon HMAC key and forces clients to reconnect.\nType %q to approve: ", phrase); err != nil {
 		return err
 	}
-	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	answer, err := bufio.NewReader(approvalInput).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}

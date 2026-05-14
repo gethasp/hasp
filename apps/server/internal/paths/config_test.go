@@ -33,6 +33,13 @@ func TestConfigPathAndRoundTrip(t *testing.T) {
 	if path != expected {
 		t.Fatalf("config path = %q, want %q", path, expected)
 	}
+	telemetryPath, err := TelemetryStatePath()
+	if err != nil {
+		t.Fatalf("telemetry path: %v", err)
+	}
+	if telemetryPath != filepath.Join(base, "hasp-telemetry.json") {
+		t.Fatalf("telemetry path = %q", telemetryPath)
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -149,6 +156,15 @@ func TestLoadConfigPropagatesReadFailure(t *testing.T) {
 	configReadFileFn = func(string) ([]byte, error) { return nil, fmt.Errorf("read fail") }
 	if _, err := LoadConfig(); err == nil {
 		t.Fatal("expected config read failure")
+	}
+}
+
+func TestTelemetryStatePathPropagatesConfigDirFailure(t *testing.T) {
+	origUserConfigDir := userConfigDir
+	defer func() { userConfigDir = origUserConfigDir }()
+	userConfigDir = func() (string, error) { return "", fmt.Errorf("config dir failed") }
+	if _, err := TelemetryStatePath(); err == nil {
+		t.Fatal("expected telemetry config dir failure")
 	}
 }
 

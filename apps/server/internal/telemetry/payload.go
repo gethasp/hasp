@@ -11,6 +11,8 @@ import (
 
 var Endpoint string
 
+var jsonMarshalFn = json.Marshal
+
 const TrustedEndpoint = "https://telemetry.gethasp.com/v1/cli/ping"
 
 var safeTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
@@ -83,7 +85,7 @@ func EncodePayload(payload Payload) ([]byte, error) {
 	if err := ValidatePayload(payload); err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(payload)
+	data, err := jsonMarshalFn(payload)
 	if err != nil {
 		return nil, err
 	}

@@ -179,7 +179,8 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 	if err := setupResolveBoolOptions(&opts, prompt, selectedAgents); err != nil {
 		return setupSummary{}, err
 	}
-	if err := setupResolveTelemetryOption(&opts, prompt); err != nil {
+	err = setupResolveTelemetryOption(&opts, prompt)
+	if err != nil {
 		return setupSummary{}, err
 	}
 	if err := validateProjectScopedSetupOptions(opts); err != nil {

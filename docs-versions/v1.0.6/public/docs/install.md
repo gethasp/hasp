@@ -15,6 +15,15 @@ hasp version
 ```
 
 If you already added the tap, `brew install gethasp/tap/hasp` is enough.
+If `hasp version` still prints an older version after Homebrew upgrades,
+another install is earlier on your shell's PATH. Run:
+
+```bash
+which -a hasp
+```
+
+Remove the older binary, or move Homebrew's bin directory earlier in PATH, then
+run `hash -r` in open shells before checking `hasp version` again.
 
 After install, continue with [After Install](after-homebrew.md):
 
