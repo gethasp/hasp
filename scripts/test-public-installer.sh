@@ -476,8 +476,7 @@ assert_log_contains "$install_log" '==> Checking installer prerequisites'
 assert_log_contains "$install_log" "==> Selected HASP $version for $os_name/$arch_name"
 assert_log_contains "$install_log" "installed hasp to $bin_dir/hasp"
 assert_log_contains "$install_log" 'version: hasp-test'
-assert_log_contains "$install_log" 'warning: hasp on PATH resolves to'
-assert_log_contains "$install_log" "not the newly installed $bin_dir/hasp"
+assert_log_matches "$install_log" "warning: (hasp on PATH resolves to .*, not the newly installed $bin_dir/hasp|$bin_dir is not on PATH; add it or run $bin_dir/hasp directly)"
 assert_log_contains "$install_log" 'next: hasp setup'
 
 shadow_bin_dir="$tmp_dir/shadow-bin"

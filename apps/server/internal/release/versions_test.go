@@ -17,7 +17,7 @@ func TestParseSemVerAccepts(t *testing.T) {
 		{"1.2.3-rc.1", SemVer{1, 2, 3, "rc.1"}},
 		{"1.2.3+meta", SemVer{1, 2, 3, ""}},
 		{"1.2.3-beta+go", SemVer{1, 2, 3, "beta"}},
-		{" v1.0.10+build.7 ", SemVer{1, 0, 10, ""}},
+		{" v1.0.11+build.7 ", SemVer{1, 0, 11, ""}},
 	}
 	for _, c := range cases {
 		got, err := ParseSemVer(c.in)
