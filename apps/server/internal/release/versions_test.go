@@ -57,6 +57,15 @@ func TestSemVerCompare(t *testing.T) {
 	}
 }
 
+func TestSemVerStringOmitsEmptyPrerelease(t *testing.T) {
+	if got := (SemVer{Major: 1, Minor: 0, Patch: 9}).String(); got != "1.0.9" {
+		t.Fatalf("stable String() = %q, want 1.0.9", got)
+	}
+	if got := (SemVer{Major: 1, Minor: 0, Patch: 9, Prerelease: "rc.1"}).String(); got != "1.0.9-rc.1" {
+		t.Fatalf("prerelease String() = %q, want 1.0.9-rc.1", got)
+	}
+}
+
 func TestCheckUpgradeRefusesSameAndOlder(t *testing.T) {
 	if err := CheckUpgrade("1.0.0", "1.0.0"); !errors.Is(err, ErrDowngrade) {
 		t.Errorf("same version: expected ErrDowngrade, got %v", err)

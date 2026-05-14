@@ -84,8 +84,26 @@ jobs:
           node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
-      - name: Verify public CI
-        run: make verify-ci
+      - name: Check links
+        run: make check-links
+      - name: Check Go module tidy
+        run: make check-tidy
+      - name: Check generated docs
+        run: make check-generated-docs
+      - name: Check telemetry release gate
+        run: make check-telemetry-release-gate
+      - name: Lint workflows
+        run: make workflow-lint
+      - name: Shellcheck scripts
+        run: make shellcheck
+      - name: Test scripts
+        run: make test-scripts
+      - name: Check web
+        run: make web-check
+      - name: Test server
+        run: make test
+      - name: Lint server
+        run: make lint
       - name: Test release publication
         env:
           HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"

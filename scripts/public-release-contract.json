@@ -103,11 +103,11 @@
       "jobs": {
         "fork-pr-verify": {
           "runs_on_contains": "ubuntu-latest",
-          "run_contains": ["make verify-ci", "make coverage"]
+          "run_contains": ["make check-links", "make check-generated-docs", "make web-check", "make test", "make lint", "make coverage"]
         },
         "merge-gate": {
           "runs_on_contains": "ubuntu-latest",
-          "run_contains": ["make verify-ci", "make test-release-publication", "make coverage", "make conformance"]
+          "run_contains": ["make check-links", "make check-generated-docs", "make web-check", "make test", "make lint", "make test-release-publication", "make coverage", "make conformance"]
         },
         "darwin-audit-coverage": {
           "runs_on_contains": "macos-15",
