@@ -70,7 +70,7 @@ jobs:
 
   release-preflight:
     needs: release-targets
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -84,8 +84,12 @@ jobs:
           node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
-      - name: Run release preflight
-        run: make release-preflight
+      - name: Verify public CI
+        run: make verify-ci
+      - name: Test release publication
+        env:
+          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
+        run: make test-release-publication
 
   build-public-release:
     needs:

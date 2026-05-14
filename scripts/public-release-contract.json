@@ -106,7 +106,8 @@
           "run_contains": ["make verify-ci", "make coverage"]
         },
         "merge-gate": {
-          "run_contains": ["make release-gate"]
+          "runs_on_contains": "ubuntu-latest",
+          "run_contains": ["make verify-ci", "make test-release-publication", "make coverage", "make conformance"]
         },
         "darwin-audit-coverage": {
           "runs_on_contains": "macos-15",
