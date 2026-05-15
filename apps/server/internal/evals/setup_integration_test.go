@@ -193,7 +193,7 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 		"--agent", "codex-cli",
 		"--master-password-env", "SETUP_MASTER_PASSWORD",
 		"--install-hooks=false",
-		"--enable-convenience-unlock=true",
+		"--enable-convenience-unlock=ask",
 		"--overwrite-existing-config=true",
 	)
 	if err != nil {

@@ -73,7 +73,7 @@ func TestSetupCommandEvalPublishesConcreteFirstProofSteps(t *testing.T) {
 		`verify MCP with: printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | hasp mcp`,
 		`review the repo binding with: hasp project status --project-root "`,
 		`run a brokered proof command: hasp run --project-root "`,
-		`future CLI commands still need HASP_MASTER_PASSWORD unless you rerun setup and enable convenience unlock`,
+		`future CLI commands still need HASP_MASTER_PASSWORD because convenience unlock is not active`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("setup next steps missing %q in %q", want, joined)
