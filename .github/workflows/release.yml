@@ -83,9 +83,6 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Check links
@@ -110,26 +107,14 @@ jobs:
         run: bash scripts/test-release-metadata-parser.sh
       - name: Test release targets
         run: bash scripts/test-release-targets.sh
-      - name: Test macOS DMG signing scripts
-        run: bash scripts/test-macos-dmg-signing.sh
-      - name: Test Sparkle appcast scripts
-        run: bash scripts/test-sparkle-appcast.sh
       - name: Check public release contract
         run: python3 scripts/check-public-release-contract.py
-      - name: Test docs versioning run gate
-        run: bash scripts/test-run-docs-versioning-if-needed.sh
       - name: Test public release package
         run: bash scripts/test-package-public-release.sh
-      - name: Check web
-        run: make web-check
       - name: Test server
         run: make test
       - name: Lint server
         run: make lint
-      - name: Test release publication
-        env:
-          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
-        run: make test-release-publication
 
   build-public-release:
     needs:
@@ -144,9 +129,6 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Validate release tag matches VERSION
@@ -221,7 +203,7 @@ jobs:
           test "v${actual_version}" = "$RELEASE_TAG"
           bash ./scripts/publish-release-to-r2.sh "$release_dir" "$RELEASE_TAG"
 
-  deploy-download-worker:
+  promote-latest-mirror:
     needs: publish-r2
     runs-on: ubicloud-standard-2
     steps:
@@ -229,93 +211,6 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: public-release
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
-      - name: Bootstrap web tools
-        run: bash ./scripts/bootstrap_web_tools.sh
-      - name: Rotate Worker release metadata guards
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          release_dir="dist/public-release/${GITHUB_REF_NAME}"
-          metadata_path="$release_dir/release-metadata.json"
-          metadata_url="https://downloads.gethasp.com/hasp/releases/${GITHUB_REF_NAME}/release-metadata.json"
-          test -f "$metadata_path"
-          metadata_sha256="$(shasum -a 256 "$metadata_path" | awk '{print $1}')"
-          release_sequence="$(python3 - <<'PY' "$metadata_path"
-          import json
-          import sys
-          with open(sys.argv[1], "r", encoding="utf-8") as handle:
-              print(json.load(handle)["release_sequence"])
-          PY
-          )"
-          {
-            printf 'HASP_EXPECTED_RELEASE_VERSION=%s\n' "${GITHUB_REF_NAME#v}"
-            printf 'HASP_EXPECTED_RELEASE_SEQUENCE=%s\n' "$release_sequence"
-          } >> "$GITHUB_ENV"
-          wrangler="apps/web/node_modules/.bin/wrangler"
-          test -x "$wrangler"
-          printf '%s' "$metadata_sha256" | "$wrangler" secret put HASP_RELEASE_METADATA_SHA256 --config apps/web/downloads/wrangler.toml
-          printf '%s' "$release_sequence" | "$wrangler" secret put HASP_RELEASE_MIN_SEQUENCE --config apps/web/downloads/wrangler.toml
-          printf '%s' "$metadata_url" | "$wrangler" secret put HASP_RELEASE_METADATA_URL --config apps/web/downloads/wrangler.toml
-          "$wrangler" deploy --config apps/web/downloads/wrangler.toml
-      - name: Smoke download Worker release endpoint
-        run: |
-          retry_curl() {
-            local output="$1"
-            local url="$2"
-            local attempt
-            for attempt in $(seq 1 12); do
-              if curl -fsS "$url" -o "$output"; then
-                return 0
-              fi
-              sleep 10
-            done
-            curl -fsS "$url" -o "$output"
-          }
-          retry_curl /tmp/hasp-release.json https://download.gethasp.com/api/release
-          retry_curl /tmp/hasp-release-metadata.json https://download.gethasp.com/api/release-metadata
-          retry_curl /tmp/hasp-release-metadata.asc https://download.gethasp.com/api/release-metadata.asc
-          retry_curl /tmp/hasp-release-public-key.asc https://download.gethasp.com/api/release-public-key.asc
-          export GNUPGHOME="$(mktemp -d)"
-          chmod 700 "$GNUPGHOME"
-          trap 'rm -rf "$GNUPGHOME"' EXIT
-          source scripts/release-public-key-trust.sh
-          trusted_fingerprints="$(sed -E 's/#.*$//; s/[[:space:]]+//g; /^$/d' scripts/release-trusted-gpg-fingerprints.txt | paste -sd, -)"
-          release_trust_import_public_key_bundle /tmp/hasp-release-public-key.asc "$GNUPGHOME" "$trusted_fingerprints"
-          gpgv --keyring "$release_trust_keyring_path" /tmp/hasp-release-metadata.asc /tmp/hasp-release-metadata.json
-          while read -r goos goarch _runner; do
-            expected_location="https://downloads.gethasp.com/hasp/releases/${GITHUB_REF_NAME}/hasp_${GITHUB_REF_NAME#v}_${goos}_${goarch}.tar.gz"
-            for attempt in $(seq 1 12); do
-              redirect_location="$(curl -fsSI "https://download.gethasp.com/download/${goos}/${goarch}" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/\r$/, "", $2); print $2; exit}')"
-              if [[ "$redirect_location" == "$expected_location" ]]; then
-                break
-              fi
-              if [[ "$attempt" == "12" ]]; then
-                printf 'unexpected %s/%s download redirect: %s\n' "$goos" "$goarch" "$redirect_location" >&2
-                exit 1
-              fi
-              sleep 10
-            done
-          done < <(python3 scripts/release_targets.py shell)
-          python3 - <<'PY'
-          import os
-          import json
-          with open("/tmp/hasp-release.json", "r", encoding="utf-8") as handle:
-              metadata = json.load(handle)
-          with open("/tmp/hasp-release-metadata.json", "r", encoding="utf-8") as handle:
-              signed_metadata = json.load(handle)
-          expected_version = os.environ["HASP_EXPECTED_RELEASE_VERSION"]
-          expected_sequence = int(os.environ["HASP_EXPECTED_RELEASE_SEQUENCE"])
-          if metadata.get("version") != expected_version:
-              raise SystemExit(f"download Worker returned version {metadata.get('version')}, want {expected_version}")
-          if metadata.get("release_sequence") != expected_sequence:
-              raise SystemExit(f"download Worker returned sequence {metadata.get('release_sequence')}, want {expected_sequence}")
-          if signed_metadata.get("version") != expected_version:
-              raise SystemExit("download Worker served stale release metadata")
-          PY
       - name: Promote latest release mirror
         env:
           HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
@@ -361,7 +256,7 @@ jobs:
 
   publish-homebrew-tap:
     needs:
-      - deploy-download-worker
+      - promote-latest-mirror
       - homebrew-formula-smoke
     runs-on: ubicloud-standard-2
     steps:
@@ -405,7 +300,7 @@ jobs:
   github-release:
     needs:
       - publish-r2
-      - deploy-download-worker
+      - promote-latest-mirror
       - publish-homebrew-tap
       - published-release-live-smoke
     runs-on: ubicloud-standard-2
@@ -438,99 +333,6 @@ jobs:
           name: public-release
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
-      - name: Bootstrap web tools
-        run: bash ./scripts/bootstrap_web_tools.sh
-      - name: Rotate Worker release metadata guards
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          case "$RELEASE_TAG" in
-            v*) ;;
-            *) echo "tag must start with v: $RELEASE_TAG" >&2; exit 2 ;;
-          esac
-          release_dir="dist/public-release/$RELEASE_TAG"
-          metadata_path="$release_dir/release-metadata.json"
-          metadata_url="https://downloads.gethasp.com/hasp/releases/${RELEASE_TAG}/release-metadata.json"
-          test -f "$metadata_path"
-          metadata_sha256="$(shasum -a 256 "$metadata_path" | awk '{print $1}')"
-          release_sequence="$(python3 - <<'PY' "$metadata_path"
-          import json
-          import sys
-          with open(sys.argv[1], "r", encoding="utf-8") as handle:
-              print(json.load(handle)["release_sequence"])
-          PY
-          )"
-          {
-            printf 'HASP_EXPECTED_RELEASE_VERSION=%s\n' "${RELEASE_TAG#v}"
-            printf 'HASP_EXPECTED_RELEASE_SEQUENCE=%s\n' "$release_sequence"
-          } >> "$GITHUB_ENV"
-          wrangler="apps/web/node_modules/.bin/wrangler"
-          test -x "$wrangler"
-          printf '%s' "$metadata_sha256" | "$wrangler" secret put HASP_RELEASE_METADATA_SHA256 --config apps/web/downloads/wrangler.toml
-          printf '%s' "$release_sequence" | "$wrangler" secret put HASP_RELEASE_MIN_SEQUENCE --config apps/web/downloads/wrangler.toml
-          printf '%s' "$metadata_url" | "$wrangler" secret put HASP_RELEASE_METADATA_URL --config apps/web/downloads/wrangler.toml
-          "$wrangler" deploy --config apps/web/downloads/wrangler.toml
-      - name: Smoke download Worker release endpoint
-        run: |
-          retry_curl() {
-            local output="$1"
-            local url="$2"
-            local attempt
-            for attempt in $(seq 1 12); do
-              if curl -fsS "$url" -o "$output"; then
-                return 0
-              fi
-              sleep 10
-            done
-            curl -fsS "$url" -o "$output"
-          }
-          retry_curl /tmp/hasp-release.json https://download.gethasp.com/api/release
-          retry_curl /tmp/hasp-release-metadata.json https://download.gethasp.com/api/release-metadata
-          retry_curl /tmp/hasp-release-metadata.asc https://download.gethasp.com/api/release-metadata.asc
-          retry_curl /tmp/hasp-release-public-key.asc https://download.gethasp.com/api/release-public-key.asc
-          export GNUPGHOME="$(mktemp -d)"
-          chmod 700 "$GNUPGHOME"
-          trap 'rm -rf "$GNUPGHOME"' EXIT
-          source scripts/release-public-key-trust.sh
-          trusted_fingerprints="$(sed -E 's/#.*$//; s/[[:space:]]+//g; /^$/d' scripts/release-trusted-gpg-fingerprints.txt | paste -sd, -)"
-          release_trust_import_public_key_bundle /tmp/hasp-release-public-key.asc "$GNUPGHOME" "$trusted_fingerprints"
-          gpgv --keyring "$release_trust_keyring_path" /tmp/hasp-release-metadata.asc /tmp/hasp-release-metadata.json
-          while read -r goos goarch _runner; do
-            expected_location="https://downloads.gethasp.com/hasp/releases/${{ inputs.tag }}/hasp_${{ inputs.tag }}_${goos}_${goarch}.tar.gz"
-            expected_location="${expected_location/hasp_v/hasp_}"
-            for attempt in $(seq 1 12); do
-              redirect_location="$(curl -fsSI "https://download.gethasp.com/download/${goos}/${goarch}" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/\r$/, "", $2); print $2; exit}')"
-              if [[ "$redirect_location" == "$expected_location" ]]; then
-                break
-              fi
-              if [[ "$attempt" == "12" ]]; then
-                printf 'unexpected %s/%s download redirect: %s\n' "$goos" "$goarch" "$redirect_location" >&2
-                exit 1
-              fi
-              sleep 10
-            done
-          done < <(python3 scripts/release_targets.py shell)
-          python3 - <<'PY'
-          import os
-          import json
-          with open("/tmp/hasp-release.json", "r", encoding="utf-8") as handle:
-              metadata = json.load(handle)
-          with open("/tmp/hasp-release-metadata.json", "r", encoding="utf-8") as handle:
-              signed_metadata = json.load(handle)
-          expected_version = os.environ["HASP_EXPECTED_RELEASE_VERSION"]
-          expected_sequence = int(os.environ["HASP_EXPECTED_RELEASE_SEQUENCE"])
-          if metadata.get("version") != expected_version:
-              raise SystemExit(f"download Worker returned version {metadata.get('version')}, want {expected_version}")
-          if metadata.get("release_sequence") != expected_sequence:
-              raise SystemExit(f"download Worker returned sequence {metadata.get('release_sequence')}, want {expected_sequence}")
-          if signed_metadata.get("version") != expected_version:
-              raise SystemExit("download Worker served stale release metadata")
-          PY
       - name: Promote latest release mirror
         env:
           RELEASE_TAG: ${{ inputs.tag }}

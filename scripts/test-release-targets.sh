@@ -12,18 +12,6 @@ else
   ROOT="$script_root"
 fi
 
-generated="$(mktemp)"
-cleanup() {
-  /bin/rm -f "$generated"
-}
-trap cleanup EXIT
-
-python3 "$ROOT/scripts/release_targets.py" worker-js >"$generated"
-diff -u "$generated" "$ROOT/apps/web/downloads/src/release-targets.generated.js"
-if [[ -f "$ROOT/public/apps/web/downloads/src/release-targets.generated.js" ]]; then
-  diff -u "$generated" "$ROOT/public/apps/web/downloads/src/release-targets.generated.js"
-fi
-
 while read -r goos goarch _runner; do
   python3 "$ROOT/scripts/release_targets.py" has-target "$goos/$goarch"
 done < <(python3 "$ROOT/scripts/release_targets.py" shell)

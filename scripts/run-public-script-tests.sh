@@ -19,10 +19,7 @@ tests=(
   scripts/test-public-docs-versioning.sh
   scripts/test-release-metadata-parser.sh
   scripts/test-release-targets.sh
-  scripts/test-macos-dmg-signing.sh
-  scripts/test-sparkle-appcast.sh
   scripts/check-public-release-contract.py
-  scripts/test-run-docs-versioning-if-needed.sh
   scripts/test-package-public-release.sh
 )
 

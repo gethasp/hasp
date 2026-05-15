@@ -4,26 +4,17 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  publish-homebrew-tap.sh [--cask <cask-path>] <formula-path> <tap-repo-dir>
-  publish-homebrew-tap.sh --push [--cask <cask-path>] <formula-path> <tap-repo-dir> <release-tag>
+  publish-homebrew-tap.sh <formula-path> <tap-repo-dir>
+  publish-homebrew-tap.sh --push <formula-path> <tap-repo-dir> <release-tag>
 EOF
 }
 
 push_mode=0
-cask_path=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push)
       push_mode=1
       shift
-      ;;
-    --cask)
-      cask_path="${2:-}"
-      if [[ -z "$cask_path" ]]; then
-        usage >&2
-        exit 1
-      fi
-      shift 2
       ;;
     *)
       break
@@ -44,19 +35,12 @@ if [[ ! -f "$formula_path" ]]; then
   echo "formula not found: $formula_path" >&2
   exit 1
 fi
-if [[ -n "$cask_path" && ! -f "$cask_path" ]]; then
-  echo "cask not found: $cask_path" >&2
-  exit 1
-fi
 if [[ ! -d "$tap_repo/.git" ]]; then
   echo "tap repo must be an existing git checkout: $tap_repo" >&2
   exit 1
 fi
 
 formula_path="$(cd "$(dirname "$formula_path")" && pwd)/$(basename "$formula_path")"
-if [[ -n "$cask_path" ]]; then
-  cask_path="$(cd "$(dirname "$cask_path")" && pwd)/$(basename "$cask_path")"
-fi
 
 (
   cd "$tap_repo"
@@ -85,10 +69,6 @@ fi
 
   /bin/mkdir -p Formula
   /bin/cp -f "$formula_path" Formula/hasp.rb
-  if [[ -n "$cask_path" ]]; then
-    /bin/mkdir -p Casks
-    /bin/cp -f "$cask_path" Casks/hasp.rb
-  fi
 
   if [[ -z "$(git config --get user.name || true)" ]]; then
     git config user.name "HASP Bot"
@@ -96,11 +76,7 @@ fi
   if [[ -z "$(git config --get user.email || true)" ]]; then
     git config user.email "bot@gethasp.com"
   fi
-  if [[ -n "$cask_path" ]]; then
-    git add Formula/hasp.rb Casks/hasp.rb
-  else
-    git add Formula/hasp.rb
-  fi
+  git add Formula/hasp.rb
   if ! git diff --cached --quiet; then
     msg="Update HASP Homebrew tap"
     if [[ -n "$release_tag" ]]; then

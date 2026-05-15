@@ -152,8 +152,11 @@ def main() -> int:
     public_root = root / "public" if (root / "public" / "Makefile").exists() else root
 
     if (root / "scripts" / "check-public-export.sh").exists():
-        validate_makefile(root / "Makefile", contract["private_makefile_targets"])
-        validate_workflow(root / contract["workflows"]["private_verify"]["path"], contract["workflows"]["private_verify"])
+        if "private_makefile_targets" in contract:
+            validate_makefile(root / "Makefile", contract["private_makefile_targets"])
+        private_verify = contract["workflows"].get("private_verify")
+        if private_verify:
+            validate_workflow(root / private_verify["path"], private_verify)
 
     validate_makefile(public_root / "Makefile", contract["public_makefile_targets"])
     validate_script_commands(public_root, contract["scripts"])

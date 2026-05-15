@@ -49,8 +49,6 @@ metadata_file="$release_dir/release-metadata.json"
 metadata_signature_file="${metadata_file}.asc"
 formula_dir="$release_dir/Formula"
 formula_path="$formula_dir/hasp.rb"
-cask_dir="$release_dir/Casks"
-cask_path="$cask_dir/hasp.rb"
 tmp_extract="$(mktemp -d)"
 upgrade_signing_key_temp=""
 cleanup() {
@@ -135,7 +133,7 @@ if [[ -z "$signing_key" ]]; then
   exit 1
 fi
 
-/bin/mkdir -p "$formula_dir" "$cask_dir"
+/bin/mkdir -p "$formula_dir"
 release_export_public_key "$signing_key" "$public_key_file"
 signing_fingerprint="$(release_signing_fingerprint "$signing_key")"
 release_require_allowed_signing_fingerprint "$signing_fingerprint" "release signing key"
@@ -236,12 +234,6 @@ release_detached_sign "$signing_key" "$metadata_file" "$metadata_signature_file"
 release_detached_sign "$signing_key" "$checksum_file" "$signature_file"
 
 bash "$script_dir/render-homebrew-formula.sh" --metadata "$metadata_file" "$formula_path" >/dev/null
-if [[ -n "${HASP_MACOS_DMG_SHA256:-}" ]]; then
-  bash "$script_dir/render-homebrew-cask.sh" \
-    "${HASP_MACOS_DMG_URL:-https://download.gethasp.com/macos/HASP-${release_version}.dmg}" \
-    "$HASP_MACOS_DMG_SHA256" \
-    "$cask_path" >/dev/null
-fi
 
 if [[ ! -s "$checksum_file" || ! -s "$signature_file" || ! -s "$public_key_file" || ! -s "$metadata_file" || ! -s "$metadata_signature_file" || ! -s "$formula_path" || ! -s "$upgrade_keys_file" || ! -s "$upgrade_keys_sig_file" ]]; then
   echo "public release assembly output incomplete" >&2

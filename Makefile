@@ -1,8 +1,7 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts test-release-publication test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full web-check verify-ci verify release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
-PNPM ?= npx --yes pnpm@10.33.2
 TOOLS_BIN := $(REPO_ROOT)/bin/tools
 
 ## build: Build the local HASP broker binary
@@ -45,10 +44,6 @@ shellcheck:
 ## test-scripts: Run regression coverage for exported repo verification scripts
 test-scripts:
 	@bash ./scripts/run-public-script-tests.sh
-
-## test-release-publication: Run heavyweight release-publication regression coverage
-test-release-publication:
-	@bash ./scripts/test-release-publication.sh
 
 ## test: Run the fast local verification path
 test:
@@ -97,27 +92,22 @@ vulncheck:
 ## lint-full: Lint plus vulncheck
 lint-full: lint vulncheck
 
-## web-check: Validate exported web and download Worker surfaces
-web-check:
-	@/bin/mkdir -p .cache/corepack
-	@if command -v corepack >/dev/null 2>&1; then COREPACK_HOME="$(CURDIR)/.cache/corepack" corepack enable && COREPACK_HOME="$(CURDIR)/.cache/corepack" corepack prepare pnpm@10.33.2 --activate; fi
-	@$(PNPM) -C apps/web install --frozen-lockfile
-	@$(MAKE) -C apps/web check PNPM="$(PNPM)"
-	@python3 ./scripts/check-public-docs-versioning.py
-
 ## verify-ci: Canonical fast CI gate
-verify-ci: check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts web-check test lint
+verify-ci: check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts test lint
 
 ## verify: Default public verification gate
 verify: verify-ci release-smoke coverage vulncheck
 
+## release-readiness: Local pre-tag release readiness audit (TAG=vX.Y.Z, FULL=1 for heavy gates)
+release-readiness:
+	@bash ./scripts/check-release-readiness.sh $(if $(FULL),--full,) $(TAG)
+
 ## release-preflight: Fast local preflight before publishing a release tag
-release-preflight: verify-ci test-release-publication
+release-preflight: verify-ci evals
 
 ## release-gate: Release-blocking gate with all tests and Go coverage reporting
 release-gate:
 	@$(MAKE) verify-ci
-	@$(MAKE) test-release-publication
 	@$(MAKE) evals
 	@$(MAKE) vulncheck
 	@$(MAKE) test-integration
@@ -145,9 +135,9 @@ package-public-release:
 publish-r2:
 	@bash ./scripts/publish-release-to-r2.sh dist/public-release/v$(VERSION) v$(VERSION)
 
-## publish-tap: Copy the rendered formula and cask into a tap checkout
+## publish-tap: Copy the rendered formula into a tap checkout
 publish-tap:
-	@bash ./scripts/publish-homebrew-tap.sh $(PUSH) --cask dist/public-release/v$(VERSION)/Casks/hasp.rb dist/public-release/v$(VERSION)/Formula/hasp.rb $(TAP_REPO) v$(VERSION)
+	@bash ./scripts/publish-homebrew-tap.sh $(PUSH) dist/public-release/v$(VERSION)/Formula/hasp.rb $(TAP_REPO) v$(VERSION)
 
 ## install-hooks: Install the repo guardrail hooks into the current repo
 install-hooks:

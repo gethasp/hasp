@@ -20,8 +20,14 @@ grep -q 'telemetry.gethasp.com/v1/cli/ping' "$telemetry_doc" || fail "telemetry 
 grep -q 'HASP_TELEMETRY_ENDPOINT' scripts/build.sh || fail "build script must make the endpoint explicit"
 grep -q 'telemetry.gethasp.com/v1/cli/ping' scripts/build.sh || fail "build script must pin the production endpoint"
 
+telemetry_worker_src="apps/${HASP_PRIVATE_TELEMETRY_APP_NAME:-telemetry}/src"
+third_party_scan_paths=(apps/server/internal/telemetry apps/server/internal/app/telemetry_command.go)
+if [[ -d "$telemetry_worker_src" ]]; then
+  third_party_scan_paths+=("$telemetry_worker_src")
+fi
+
 if rg -n 'posthog|umami|segment\.com|api-js\.mixpanel|plausible' \
-  apps/server/internal/telemetry apps/server/internal/app/telemetry_command.go apps/telemetry/src \
+  "${third_party_scan_paths[@]}" \
   >/tmp/hasp-telemetry-third-party.$$ 2>/dev/null; then
   cat /tmp/hasp-telemetry-third-party.$$ >&2
   rm -f /tmp/hasp-telemetry-third-party.$$

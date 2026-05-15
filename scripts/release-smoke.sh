@@ -323,9 +323,7 @@ test -f "$release_dir/hasp-release-public-key.asc"
 test -f "$release_dir/$(basename "$tarball").asc"
 test -f "$release_dir/$(basename "${tarball%.tar.gz}")_bin.asc"
 test -f "$release_dir/Formula/hasp.rb"
-if [[ -f "$release_dir/Casks/hasp.rb" ]]; then
-  bash ./scripts/homebrew-cask-smoke.sh "$release_dir/Casks/hasp.rb"
-fi
+test ! -e "$release_dir/Casks/hasp.rb"
 test -f "$install_root/RELEASE_MANIFEST"
 test -f "$install_root/sbom.spdx.json"
 test -f "$install_root/slsa-provenance.json"

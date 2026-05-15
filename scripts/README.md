@@ -39,7 +39,6 @@ directory.
 
 - `package-release.sh`: builds one release tarball for the current target.
 - `package-public-release.sh`: builds the multi-target release directory.
-- `package-macos-dmg.sh`: builds, signs, and optionally notarizes the private macOS app DMG.
 - `assemble-public-release.sh`: assembles checksums, metadata, and formula input.
 - `generate-supply-chain-artifacts.sh`: emits release provenance material.
 - `hasp-release-common.sh`: shared release helper functions.
@@ -49,16 +48,13 @@ directory.
 - `hasp-upgrade-release.sh`: upgrades an installed release.
 - `hasp-uninstall-release.sh`: removes an installed release tree.
 - `render-homebrew-formula.sh`: renders the Homebrew formula from metadata.
-- `render-homebrew-cask.sh`: renders the paid macOS app Homebrew cask.
-- `homebrew-cask-smoke.sh`: validates the rendered cask contract.
-- `homebrew-cask-fixture-smoke.sh`: exercises the cask with a local fixture DMG.
 - `release-notes-from-changelog.sh`: extracts release notes from the changelog.
 
 ## Publication
 
 - `publish-release-to-r2.sh`: mirrors a prepared release directory to R2.
 - `publish-r2-release.sh`: compatibility wrapper for R2 publication.
-- `publish-homebrew-tap.sh`: copies rendered formula and cask files into a tap checkout.
+- `publish-homebrew-tap.sh`: copies the rendered CLI formula into a tap checkout.
 
 Publication scripts require explicit credentials and target paths from the
 operator environment. They should fail when required inputs are missing.

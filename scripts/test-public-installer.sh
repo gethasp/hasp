@@ -12,7 +12,8 @@ else
   ROOT="$script_root"
 fi
 
-PRIVATE_INSTALLER="$ROOT/apps/web/src/public/install.sh"
+private_web_app_dir="$ROOT/apps/${HASP_PRIVATE_WEB_APP_NAME:-web}"
+PRIVATE_INSTALLER="$private_web_app_dir/src/public/install.sh"
 PUBLIC_INSTALLER="$ROOT/public/install.sh"
 INSTALLER="$PRIVATE_INSTALLER"
 if [[ -f "$PRIVATE_INSTALLER" && -f "$PUBLIC_INSTALLER" ]] && ! cmp -s "$PRIVATE_INSTALLER" "$PUBLIC_INSTALLER"; then

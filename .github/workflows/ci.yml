@@ -20,9 +20,6 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Check links
@@ -47,18 +44,10 @@ jobs:
         run: bash scripts/test-release-metadata-parser.sh
       - name: Test release targets
         run: bash scripts/test-release-targets.sh
-      - name: Test macOS DMG signing scripts
-        run: bash scripts/test-macos-dmg-signing.sh
-      - name: Test Sparkle appcast scripts
-        run: bash scripts/test-sparkle-appcast.sh
       - name: Check public release contract
         run: python3 scripts/check-public-release-contract.py
-      - name: Test docs versioning run gate
-        run: bash scripts/test-run-docs-versioning-if-needed.sh
       - name: Test public release package
         run: bash scripts/test-package-public-release.sh
-      - name: Check web
-        run: make web-check
       - name: Test server
         run: make test
       - name: Lint server
@@ -77,9 +66,6 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 24
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
       - name: Check links
@@ -104,26 +90,14 @@ jobs:
         run: bash scripts/test-release-metadata-parser.sh
       - name: Test release targets
         run: bash scripts/test-release-targets.sh
-      - name: Test macOS DMG signing scripts
-        run: bash scripts/test-macos-dmg-signing.sh
-      - name: Test Sparkle appcast scripts
-        run: bash scripts/test-sparkle-appcast.sh
       - name: Check public release contract
         run: python3 scripts/check-public-release-contract.py
-      - name: Test docs versioning run gate
-        run: bash scripts/test-run-docs-versioning-if-needed.sh
       - name: Test public release package
         run: bash scripts/test-package-public-release.sh
-      - name: Check web
-        run: make web-check
       - name: Test server
         run: make test
       - name: Lint server
         run: make lint
-      - name: Test release publication
-        env:
-          HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING: "1"
-        run: make test-release-publication
       - name: Run evals
         run: make evals
       - name: Vulnerability check

@@ -69,16 +69,15 @@ For manual verification before every tag:
 ```bash
 make build
 ./bin/hasp docs markdown --out public/docs/cli-reference.md
-pnpm -C apps/web docs:snapshot -- vX.Y.Z --force
 make release-gate
 ```
 
 Canonical-source maintainers should use the guarded release driver rather than
 manually repeating the export, tag, public workflow, install-script, and
 Homebrew checks. The driver first proves the candidate includes core terminal
-app changes, regenerates and commits the docs snapshot if needed, pushes the
-private source, tags both repositories, then waits for R2, the Download Worker,
-the hosted installer, and the published Homebrew tap to verify live:
+app changes, regenerates and commits generated docs if needed, pushes the
+private source, tags both repositories, then waits for R2 and the published
+Homebrew tap to verify live:
 
 ```bash
 make cut-public-release TAG=vX.Y.Z
