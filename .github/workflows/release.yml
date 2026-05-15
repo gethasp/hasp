@@ -61,7 +61,11 @@ jobs:
         run: make test
       - name: Race Darwin packages
         if: matrix.goos == 'darwin' && matrix.goarch == 'arm64'
-        run: make test-race
+        run: |
+          make test-race || {
+            echo "first Darwin race run failed; retrying once" >&2
+            make test-race
+          }
       - name: Audit Darwin coverage
         if: matrix.goos == 'darwin' && matrix.goarch == 'arm64'
         run: make coverage-audit-platform

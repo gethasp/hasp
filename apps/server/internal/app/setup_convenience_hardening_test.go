@@ -133,6 +133,18 @@ func TestSetupConvenienceUnlockDetailAndSummary(t *testing.T) {
 	}
 }
 
+func TestSetupConvenienceDetailForDisplayLabelsKeychainFailures(t *testing.T) {
+	if got := setupConvenienceDetailForDisplay("  "); got != "" {
+		t.Fatalf("expected blank detail to stay blank, got %q", got)
+	}
+	if got := setupConvenienceDetailForDisplay("keychain write failed: denied"); !strings.Contains(got, "not your HASP master password") {
+		t.Fatalf("expected keychain detail to distinguish HASP password, got %q", got)
+	}
+	if got := setupConvenienceDetailForDisplay("generic failure"); got != "generic failure" {
+		t.Fatalf("expected non-keychain detail to pass through, got %q", got)
+	}
+}
+
 func TestSetupConvenienceUnlockUnavailableHelper(t *testing.T) {
 	if !setupConvenienceUnlockUnavailable(store.ErrKeyringUnavailable) {
 		t.Fatal("expected keyring unavailable to count")
