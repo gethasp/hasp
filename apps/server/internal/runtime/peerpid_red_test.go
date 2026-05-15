@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,8 +167,9 @@ func TestResolveProcessRejectsMismatchedPeerPID(t *testing.T) {
 	lockRuntimeSeams(t)
 	srv, ln, socketPath := makePeerCredServer(t)
 	srv.peerUID = func(_ net.Conn) (uint32, error) { return uint32(os.Geteuid()), nil }
-	var peerPID uint32 = 100
-	srv.peerPID = func(_ net.Conn) (uint32, error) { return peerPID, nil }
+	var peerPID atomic.Uint32
+	peerPID.Store(100)
+	srv.peerPID = func(_ net.Conn) (uint32, error) { return peerPID.Load(), nil }
 	srv.sessions.processIdentity = func(pid int) (string, error) {
 		return "identity-" + strconv.Itoa(pid), nil
 	}
@@ -193,7 +195,7 @@ func TestResolveProcessRejectsMismatchedPeerPID(t *testing.T) {
 	}
 	_ = victim.Close()
 
-	peerPID = 200
+	peerPID.Store(200)
 	attacker, err := Dial(ctx, socketPath)
 	if err != nil {
 		t.Fatalf("dial attacker: %v", err)
@@ -203,7 +205,7 @@ func TestResolveProcessRejectsMismatchedPeerPID(t *testing.T) {
 		t.Fatalf("expected attacker resolve to fail, got reply %+v", reply)
 	}
 
-	peerPID = 100
+	peerPID.Store(100)
 	legit, err := Dial(ctx, socketPath)
 	if err != nil {
 		t.Fatalf("dial legitimate peer: %v", err)

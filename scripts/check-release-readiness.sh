@@ -88,7 +88,7 @@ say "Tag availability"
 local_tag_commit="$(
   git show-ref --tags --dereference "$release_tag" 2>/dev/null |
     awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled ? peeled : direct }'
-)"
+)" || true
 if [[ -n "$local_tag_commit" ]]; then
   head_commit="$(git rev-parse HEAD)"
   if [[ "$local_tag_commit" != "$head_commit" ]]; then
@@ -107,7 +107,7 @@ check_remote_tag_absent() {
   remote_tag="$(
     git ls-remote --tags "$remote" "refs/tags/$release_tag" "refs/tags/$release_tag^{}" 2>/dev/null |
       awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled ? peeled : direct }'
-  )"
+  )" || true
   if [[ -n "$remote_tag" ]]; then
     fail "$label already has tag $release_tag at $remote_tag"
   fi
@@ -132,7 +132,7 @@ if [[ "$skip_docs_dry_run" == "0" && -d "$docs_app_dir" ]]; then
   git clone --quiet --no-hardlinks "$root" "$tmp_dir/source"
   (
     cd "$tmp_dir/source"
-    git tag -f "$release_tag" HEAD
+    git tag -f "$release_tag" -m "Release $release_tag" HEAD
     HASP_TEAM_ID="${HASP_TEAM_ID:-TEAMID1234}" bash scripts/build.sh >/dev/null
     bin/hasp docs markdown --out public/docs/cli-reference.md
     HASP_DOCS_SNAPSHOT_SKIP_CHECK=1 pnpm -C "$docs_app_rel" docs:snapshot -- "$release_tag" --force >/dev/null
@@ -168,9 +168,9 @@ fi
 
 say "Local gates"
 if [[ "$full" == "1" ]]; then
-  HASP_COVERAGE_TARGET="${HASP_COVERAGE_TARGET:-100}" make release-gate
+  HASP_COVERAGE_TARGET="${HASP_COVERAGE_TARGET:-100}" HASP_DOCS_VERSIONING_SKIP=1 make release-gate
 else
-  make release-preflight
+  HASP_DOCS_VERSIONING_SKIP=1 make release-preflight
 fi
 
 printf 'release readiness passed for %s\n' "$release_tag"

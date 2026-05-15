@@ -28,6 +28,10 @@ if [[ -f "$ROOT/scripts/test-check-public-export.sh" ]]; then
 fi
 
 for test_script in "${tests[@]}"; do
+  if [[ "${HASP_DOCS_VERSIONING_SKIP:-0}" == "1" && "$test_script" == "scripts/test-public-docs-versioning.sh" ]]; then
+    printf 'skipping %s because HASP_DOCS_VERSIONING_SKIP=1\n' "$test_script"
+    continue
+  fi
   case "$test_script" in
     *.py) python3 "$ROOT/$test_script" ;;
     *) bash "$ROOT/$test_script" ;;

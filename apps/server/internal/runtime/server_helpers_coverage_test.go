@@ -571,6 +571,8 @@ func TestHTTPServerResidualRouteBranches(t *testing.T) {
 }
 
 func TestHTTPServerSeamedFailureBranches(t *testing.T) {
+	lockRuntimeSeams(t)
+
 	key := []byte("0123456789abcdef0123456789abcdef")
 	oldHTTPHMACKey := httpHMACKey
 	oldHTTPAttestor := httpAttestor
@@ -1690,6 +1692,8 @@ func TestRuntimeDefaultVaultHelpersCoverage(t *testing.T) {
 }
 
 func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
+	lockRuntimeSeams(t)
+
 	password := "correct horse battery staple"
 	t.Setenv("HASP_MASTER_PASSWORD", password)
 	home := t.TempDir()
