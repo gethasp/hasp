@@ -15,7 +15,7 @@ func TestSetupOptionalBoolAcceptsAlways(t *testing.T) {
 	if err := b.Set("always"); err != nil {
 		t.Fatalf("Set(always): %v", err)
 	}
-	if !b.set || !b.value {
+	if !b.set || !b.value || b.source != "always" {
 		t.Fatalf("always should resolve to set=true, value=true; got %+v", b)
 	}
 }
@@ -25,7 +25,7 @@ func TestSetupOptionalBoolAcceptsNever(t *testing.T) {
 	if err := b.Set("never"); err != nil {
 		t.Fatalf("Set(never): %v", err)
 	}
-	if !b.set || b.value {
+	if !b.set || b.value || b.source != "never" {
 		t.Fatalf("never should resolve to set=true, value=false; got %+v", b)
 	}
 }
@@ -35,7 +35,7 @@ func TestSetupOptionalBoolAcceptsAsk(t *testing.T) {
 	if err := b.Set("ask"); err != nil {
 		t.Fatalf("Set(ask): %v", err)
 	}
-	if b.set {
+	if b.set || b.source != "ask" {
 		t.Fatalf("ask should leave the flag unset (interactive default); got %+v", b)
 	}
 }

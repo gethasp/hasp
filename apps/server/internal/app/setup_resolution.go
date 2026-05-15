@@ -156,13 +156,13 @@ func setupResolveBoolOptions(opts *setupOptions, prompt *setupPrompter, agents [
 	}
 	if !opts.EnableConvenienceUnlock.set {
 		if opts.NonInteractive {
-			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: defaultSetupConvenienceUnlock()}
+			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: defaultSetupConvenienceUnlock(), source: "default"}
 		} else {
 			value, err := promptBool(prompt, "Use convenience unlock on this machine when available", defaultSetupConvenienceUnlock())
 			if err != nil {
 				return err
 			}
-			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value}
+			opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: value, source: "prompt"}
 		}
 	}
 	if opts.ImportPath == "" && !opts.NonInteractive {

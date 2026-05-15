@@ -12,10 +12,17 @@ import (
 )
 
 func renderSetupSummary(out io.Writer, summary setupSummary) error {
-	if err := setupWriteStage(out, "Setup complete"); err != nil {
+	warnConvenience := summary.ConvenienceUnlock == "unavailable"
+	title := "Setup complete"
+	lead := "HASP is configured for this machine."
+	if warnConvenience {
+		title = "Setup complete with warnings"
+		lead = "HASP is configured, but convenience unlock is not working."
+	}
+	if err := setupWriteStage(out, title); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(out, setupSummaryLead(out, "HASP is configured for this machine.")); err != nil {
+	if _, err := fmt.Fprintln(out, setupSummaryLead(out, lead)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(out); err != nil {
@@ -35,7 +42,7 @@ func renderSetupSummary(out io.Writer, summary setupSummary) error {
 		setupSummaryKeyValue(out, "Telemetry", summary.Telemetry),
 	}
 	if strings.TrimSpace(summary.ConvenienceDetail) != "" {
-		defaults = append(defaults, setupSummaryKeyValue(out, "Convenience detail", summary.ConvenienceDetail))
+		defaults = append(defaults, setupSummaryKeyValue(out, "Convenience detail", setupConvenienceDetailForDisplay(summary.ConvenienceDetail)))
 	}
 	if strings.TrimSpace(summary.ProjectRoot) != "" {
 		defaults = append(defaults, setupSummaryKeyValue(out, "Protected repository", summary.ProjectRoot))

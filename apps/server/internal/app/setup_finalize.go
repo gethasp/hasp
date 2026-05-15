@@ -186,9 +186,9 @@ func setupNotes(agents []setupAgentSpec, configExisted bool, opts setupOptions, 
 		notes = append(notes, "imported items were bound only because bind-imports was explicitly requested")
 	}
 	if convenienceState == "unavailable" {
-		notes = append(notes, "convenience unlock was requested but the keyring was unavailable")
+		notes = append(notes, "convenience unlock was requested but the macOS login keychain was unavailable")
 		if strings.TrimSpace(convenienceDetail) != "" {
-			notes = append(notes, "convenience unlock detail: "+convenienceDetail)
+			notes = append(notes, "convenience unlock detail: "+setupConvenienceDetailForDisplay(convenienceDetail))
 		}
 	}
 	for _, agent := range agents {
@@ -212,9 +212,10 @@ func setupNextSteps(projectRoot string, binding store.Binding, haspHome string, 
 		steps = append(steps, "inspect an adopted repo with: hasp project status --project-root /path/to/repo")
 	}
 	if convenienceState != "enabled" {
-		steps = append(steps, "future CLI commands still need HASP_MASTER_PASSWORD unless you rerun setup and enable convenience unlock")
+		steps = append(steps, "future CLI commands still need HASP_MASTER_PASSWORD because convenience unlock is not active")
 		if strings.TrimSpace(convenienceDetail) != "" {
-			steps = append(steps, "if you want convenience unlock, unlock your macOS login keychain, allow HASP in the keychain prompt, then rerun hasp setup")
+			steps = append(steps, "this is a macOS login keychain issue, not a HASP master-password rejection")
+			steps = append(steps, "repair convenience unlock with: security unlock-keychain ~/Library/Keychains/login.keychain-db && hasp setup --enable-convenience-unlock=always")
 		}
 	}
 	steps = append(steps, "saved CLI config keeps HASP_HOME at "+haspHome)

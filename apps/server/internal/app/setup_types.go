@@ -18,8 +18,9 @@ import (
 )
 
 type setupOptionalBool struct {
-	set   bool
-	value bool
+	set    bool
+	value  bool
+	source string
 }
 
 func (b *setupOptionalBool) String() string {
@@ -37,12 +38,15 @@ func (b *setupOptionalBool) Set(value string) error {
 	case "always", "true", "1", "yes", "y", "on":
 		b.set = true
 		b.value = true
+		b.source = "always"
 	case "never", "false", "0", "no", "n", "off":
 		b.set = true
 		b.value = false
+		b.source = "never"
 	case "ask":
 		b.set = false
 		b.value = false
+		b.source = "ask"
 	default:
 		return fmt.Errorf("expected always|never|ask (got %q)", value)
 	}

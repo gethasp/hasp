@@ -119,7 +119,7 @@ func TestSetupResidualCoverageBranches(t *testing.T) {
 		if verifyCalls != 2 {
 			t.Fatalf("expected convenience verify retry count, got %d", verifyCalls)
 		}
-		if !strings.Contains(strings.Join(summary.Notes, "\n"), "convenience unlock detail: macOS keychain access did not complete during setup") {
+		if !strings.Contains(strings.Join(summary.Notes, "\n"), "not your HASP master password") {
 			t.Fatalf("expected convenience detail note, got %+v", summary.Notes)
 		}
 	})

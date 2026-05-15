@@ -105,11 +105,11 @@ func TestSetupConvenienceUnlockDetailAndSummary(t *testing.T) {
 	}
 
 	steps := setupNextSteps("", store.Binding{}, "/tmp/hasp-home", "unavailable", "keychain write failed: denied", true, true)
-	if !strings.Contains(strings.Join(steps, "\n"), "unlock your macOS login keychain") {
+	if !strings.Contains(strings.Join(steps, "\n"), "not a HASP master-password rejection") {
 		t.Fatalf("expected convenience guidance in next steps, got %+v", steps)
 	}
 	notes := setupNotes([]setupAgentSpec{{ID: "codex-cli"}}, false, setupOptions{}, "unavailable", "keychain write failed: denied")
-	if !strings.Contains(strings.Join(notes, "\n"), "convenience unlock detail: keychain write failed: denied") {
+	if !strings.Contains(strings.Join(notes, "\n"), "not your HASP master password") {
 		t.Fatalf("expected convenience detail note, got %+v", notes)
 	}
 
@@ -128,7 +128,7 @@ func TestSetupConvenienceUnlockDetailAndSummary(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("render setup summary: %v", err)
 	}
-	if !strings.Contains(out.String(), "Convenience detail") || !strings.Contains(out.String(), "keychain write failed: denied") {
+	if !strings.Contains(out.String(), "Setup complete with warnings") || !strings.Contains(out.String(), "Convenience detail") || !strings.Contains(out.String(), "not your HASP master password") || !strings.Contains(out.String(), "keychain write failed: denied") {
 		t.Fatalf("expected convenience detail in summary, got %q", out.String())
 	}
 }

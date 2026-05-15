@@ -163,6 +163,16 @@ func TestRunSetupAdditionalCoverageBranches(t *testing.T) {
 		}
 	})
 
+	t.Run("required convenience unavailable fails setup", func(t *testing.T) {
+		opts := baseOpts
+		opts.EnableConvenienceUnlock = setupOptionalBool{set: true, value: true, source: "always"}
+		opts.HaspHome = filepath.Join(t.TempDir(), "vault")
+		newVaultStoreFn = func() (*store.Store, error) { return store.New(unavailableSetupKeyring{}) }
+		if _, err := runSetup(context.Background(), opts, bytes.NewBuffer(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "convenience unlock was required but is unavailable") {
+			t.Fatalf("expected required convenience unlock failure, got %v", err)
+		}
+	})
+
 	t.Run("resolve home failure propagates", func(t *testing.T) {
 		origHomeEnv := os.Getenv("HOME")
 		origXDG := os.Getenv("XDG_CONFIG_HOME")
@@ -584,7 +594,7 @@ func TestSetupHelperCoverageBranches(t *testing.T) {
 
 		notes := setupNotes([]setupAgentSpec{{ID: "codex-cli"}}, false, setupOptions{}, "unavailable", "detail")
 		joined := strings.Join(notes, "\n")
-		if !strings.Contains(joined, "keyring was unavailable") {
+		if !strings.Contains(joined, "macOS login keychain was unavailable") {
 			t.Fatalf("expected unavailable note, got %v", notes)
 		}
 	})

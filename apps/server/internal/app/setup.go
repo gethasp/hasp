@@ -289,6 +289,9 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
 				convenienceDetail = setupConvenienceUnlockDetail(err)
+				if setupConvenienceUnlockRequired(opts) {
+					return setupSummary{}, setupConvenienceUnlockRequiredError(convenienceDetail)
+				}
 			} else {
 				return setupSummary{}, err
 			}
@@ -298,6 +301,9 @@ func runSetup(ctx context.Context, opts setupOptions, stdin io.Reader, promptOut
 			if setupConvenienceUnlockUnavailable(err) {
 				convenienceState = "unavailable"
 				convenienceDetail = setupConvenienceUnlockDetail(err)
+				if setupConvenienceUnlockRequired(opts) {
+					return setupSummary{}, setupConvenienceUnlockRequiredError(convenienceDetail)
+				}
 			} else {
 				return setupSummary{}, err
 			}
@@ -420,6 +426,30 @@ func setupConvenienceUnlockDetail(err error) string {
 		return strings.TrimSpace(strings.TrimPrefix(text, store.ErrKeyringUnavailable.Error()+":"))
 	}
 	return text
+}
+
+func setupConvenienceUnlockRequired(opts setupOptions) bool {
+	return opts.EnableConvenienceUnlock.value && opts.EnableConvenienceUnlock.source == "always"
+}
+
+func setupConvenienceUnlockRequiredError(detail string) error {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return errors.New("convenience unlock was required but is unavailable")
+	}
+	return fmt.Errorf("convenience unlock was required but is unavailable: %s", setupConvenienceDetailForDisplay(detail))
+}
+
+func setupConvenienceDetailForDisplay(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	lower := strings.ToLower(detail)
+	if strings.Contains(lower, "keychain") {
+		return "macOS login keychain access failed (this is not your HASP master password): " + detail
+	}
+	return detail
 }
 
 func setupOpenHandleWithRetry(ctx context.Context, prompt *setupPrompter, vaultStore *store.Store, password string, vaultExists bool, nonInteractive bool, skipPasswordPolicy bool) (*store.Handle, string, string, error) {
