@@ -22,9 +22,9 @@ if [[ "$#" -eq 0 ]]; then
   exit 1
 fi
 
-override_args=()
 if [[ "${HASP_ALLOW_MANAGED_SECRETS:-}" == "1" ]]; then
-  override_args+=(--allow-managed-secrets)
+  run_hasp check-repo --project-root "$project_root" --allow-managed-secrets
+else
+  run_hasp check-repo --project-root "$project_root"
 fi
-run_hasp check-repo --project-root "$project_root" "${override_args[@]}"
 exec "$@"

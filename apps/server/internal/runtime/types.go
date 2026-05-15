@@ -34,9 +34,9 @@ type StatusResponse struct {
 	Sessions        []SessionView `json:"sessions"`
 	AuditDegraded   bool          `json:"audit_degraded"`
 	AuditDegradedAt *time.Time    `json:"audit_degraded_at,omitempty"`
-	// ProcessIdentityDegraded is true when process binding fell back to
-	// ancestry-only checks because the platform probe could not produce a stable
-	// per-process identity token.
+	// ProcessIdentityDegraded is true when implicit process binding was disabled
+	// or a stale binding was dropped because the platform probe could not
+	// produce or recheck a per-process stale-binding token.
 	ProcessIdentityDegraded       bool                   `json:"process_identity_degraded"`
 	ProcessIdentityDegradedReason string                 `json:"process_identity_degraded_reason,omitempty"`
 	LeasesCount                   int                    `json:"leases_count"`

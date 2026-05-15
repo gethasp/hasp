@@ -3,8 +3,8 @@
 package runtime
 
 import (
+	"errors"
 	"os"
-	"os/exec"
 	"testing"
 )
 
@@ -31,18 +31,17 @@ func TestProcessLineageAndParentPID(t *testing.T) {
 func TestProcessLineageAdditionalBranches(t *testing.T) {
 	lockRuntimeSeams(t)
 
-	origExec := lineageExecCommand
-	defer func() { lineageExecCommand = origExec }()
+	origParentPID := processParentPID
+	defer func() { processParentPID = origParentPID }()
 
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		pid := args[len(args)-1]
+	processParentPID = func(pid int) (int, error) {
 		switch pid {
-		case "44":
-			return exec.Command("sh", "-c", "printf '43'")
-		case "43":
-			return exec.Command("sh", "-c", "printf '1'")
+		case 44:
+			return 43, nil
+		case 43:
+			return 1, nil
 		default:
-			return exec.Command("sh", "-c", "printf '0'")
+			return 0, nil
 		}
 	}
 	lineage, err := processLineage(44)
@@ -50,24 +49,22 @@ func TestProcessLineageAdditionalBranches(t *testing.T) {
 		t.Fatalf("expected synthetic lineage, got %+v err=%v", lineage, err)
 	}
 
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		pid := args[len(args)-1]
-		if pid == "50" {
-			return exec.Command("sh", "-c", "exit 1")
+	processParentPID = func(pid int) (int, error) {
+		if pid == 50 {
+			return 0, errors.New("lookup failed")
 		}
-		return exec.Command("sh", "-c", "printf '0'")
+		return 0, nil
 	}
 	lineage, err = processLineage(50)
 	if err != nil || len(lineage) != 1 || lineage[0] != 50 {
 		t.Fatalf("expected partial lineage on parent failure, got %+v err=%v", lineage, err)
 	}
 
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		pid := args[len(args)-1]
-		if pid == "60" {
-			return exec.Command("sh", "-c", "printf '60'")
+	processParentPID = func(pid int) (int, error) {
+		if pid == 60 {
+			return 60, nil
 		}
-		return exec.Command("sh", "-c", "printf ''")
+		return 0, nil
 	}
 	lineage, err = processLineage(60)
 	if err != nil || len(lineage) != 1 || lineage[0] != 60 {
@@ -77,15 +74,14 @@ func TestProcessLineageAdditionalBranches(t *testing.T) {
 		t.Fatalf("expected blank parent pid to map to zero, got %d err=%v", parent, err)
 	}
 
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		pid := args[len(args)-1]
+	processParentPID = func(pid int) (int, error) {
 		switch pid {
-		case "70":
-			return exec.Command("sh", "-c", "printf '69'")
-		case "69":
-			return exec.Command("sh", "-c", "printf '70'")
+		case 70:
+			return 69, nil
+		case 69:
+			return 70, nil
 		default:
-			return exec.Command("sh", "-c", "printf '0'")
+			return 0, nil
 		}
 	}
 	lineage, err = processLineage(70)

@@ -157,8 +157,8 @@ func TestRPCServerOpenSessionAndStatus(t *testing.T) {
 		t.Fatalf("active count = %d, want 1", server.sessions.ActiveCount())
 	}
 	server.sessions.processIdentity = func(int) (string, error) { return "", nil }
-	if !server.sessions.RegisterProcess(session.Token, 12345) {
-		t.Fatal("register process for degraded identity status")
+	if server.sessions.RegisterProcess(session.Token, 12345) {
+		t.Fatal("expected degraded identity registration to fail closed")
 	}
 	if session.ExpiresAt.Sub(time.Now().UTC()) > DefaultSessionTTL+time.Second {
 		t.Fatalf("session ttl exceeded limit")

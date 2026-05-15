@@ -40,6 +40,7 @@ func TestClientRevokeAllSessionsAndLockVault(t *testing.T) {
 
 func TestBrokerRevokeAllSessionsAndLockVault(t *testing.T) {
 	sessions := NewSessionStore()
+	sessions.processIdentity = func(int) (string, error) { return "identity", nil }
 	if _, err := sessions.Open("agent-a", "", time.Minute, false, ""); err != nil {
 		t.Fatalf("open a: %v", err)
 	}

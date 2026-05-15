@@ -114,7 +114,8 @@ func runDaemon(ctx context.Context, manager *runtime.Manager, args []string) err
 
 func stopDaemon(manager *runtime.Manager, deps Deps) error {
 	if err := managerStopDaemon(manager); err != nil {
-		if strings.Contains(err.Error(), "process already finished") {
+		if strings.Contains(err.Error(), "process already finished") ||
+			strings.Contains(err.Error(), "pidfile does not match live HASP daemon socket") {
 			if deps.NewInternalError != nil {
 				return deps.NewInternalError("daemon was not running")
 			}

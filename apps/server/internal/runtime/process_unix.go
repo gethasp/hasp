@@ -21,6 +21,7 @@ var (
 	findProcessByPID = os.FindProcess
 	releaseProcess   = func(proc *os.Process) error { return proc.Release() }
 	signalProcess    = func(proc *os.Process, sig os.Signal) error { return proc.Signal(sig) }
+	verifyDaemonPID  = realVerifyDaemonPID
 	waitProcess      = func(proc *os.Process) error {
 		_, err := proc.Wait()
 		return err
@@ -97,6 +98,10 @@ func stopDetachedProcess() error {
 	if err != nil {
 		return fmt.Errorf("parse pid: %w", err)
 	}
+	if resolved.SocketPath != "" && !verifyDaemonPID(resolved.SocketPath, pid) {
+		_ = runtimeRemove(resolved.PidFilePath)
+		return fmt.Errorf("refusing to signal daemon pid %d: pidfile does not match live HASP daemon socket", pid)
+	}
 	proc, err := findProcessByPID(pid)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
@@ -149,4 +154,23 @@ func waitForProcessExit(proc *os.Process, waitCh <-chan error, timeout time.Dura
 func processStillRunning(proc *os.Process) bool {
 	err := signalProcess(proc, syscall.Signal(0))
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func realVerifyDaemonPID(socketPath string, pid int) bool {
+	if strings.TrimSpace(socketPath) == "" || pid <= 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	client, err := Dial(ctx, socketPath)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	peerPID, err := realPeerPID(client.conn)
+	if err != nil || int(peerPID) != pid {
+		return false
+	}
+	status, err := client.Status(ctx)
+	return err == nil && status.PID == pid && status.SocketPath == socketPath
 }

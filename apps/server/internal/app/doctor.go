@@ -240,7 +240,7 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 			report.auditDetail = "audit append is degraded; check disk space, permissions, and the audit path"
 		}
 		if status.ProcessIdentityDegraded {
-			report.processIdentityDetail = "process binding fell back to ancestry-only checks"
+			report.processIdentityDetail = "implicit process binding is fail-closed"
 			if status.ProcessIdentityDegradedReason != "" {
 				report.processIdentityDetail += ": " + status.ProcessIdentityDegradedReason
 			}

@@ -25,6 +25,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -158,5 +159,80 @@ func TestRegisterProcessRejectsPeerPIDLookupFailure(t *testing.T) {
 
 	if err := client.RegisterProcess(ctx, sess.SessionToken, os.Getpid()); err == nil {
 		t.Fatal("expected RegisterProcess to fail closed when peer-PID lookup errored")
+	}
+}
+
+func TestResolveProcessRejectsMismatchedPeerPID(t *testing.T) {
+	lockRuntimeSeams(t)
+	srv, ln, socketPath := makePeerCredServer(t)
+	srv.peerUID = func(_ net.Conn) (uint32, error) { return uint32(os.Geteuid()), nil }
+	var peerPID uint32 = 100
+	srv.peerPID = func(_ net.Conn) (uint32, error) { return peerPID, nil }
+	srv.sessions.processIdentity = func(pid int) (string, error) {
+		return "identity-" + strconv.Itoa(pid), nil
+	}
+	spawnServeLoop(t, srv, ln)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	victim, err := Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("dial victim: %v", err)
+	}
+	sess, err := victim.OpenSession(ctx, OpenSessionRequest{
+		HostLabel:   "victim",
+		ProjectRoot: t.TempDir(),
+		TTLSeconds:  300,
+	})
+	if err != nil {
+		t.Fatalf("open victim session: %v", err)
+	}
+	if err := victim.RegisterProcess(ctx, sess.SessionToken, 100); err != nil {
+		t.Fatalf("register victim process: %v", err)
+	}
+	_ = victim.Close()
+
+	peerPID = 200
+	attacker, err := Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("dial attacker: %v", err)
+	}
+	defer attacker.Close()
+	if reply, err := attacker.ResolveProcess(ctx, 100); err == nil {
+		t.Fatalf("expected attacker resolve to fail, got reply %+v", reply)
+	}
+
+	peerPID = 100
+	legit, err := Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("dial legitimate peer: %v", err)
+	}
+	defer legit.Close()
+	reply, err := legit.ResolveProcess(ctx, 100)
+	if err != nil {
+		t.Fatalf("resolve legitimate peer: %v", err)
+	}
+	if !reply.Found || reply.SessionToken != sess.SessionToken {
+		t.Fatalf("unexpected legitimate resolve reply %+v", reply)
+	}
+}
+
+func TestResolveProcessRejectsZeroPeerPID(t *testing.T) {
+	srv, ln, socketPath := makePeerCredServer(t)
+	srv.peerUID = func(_ net.Conn) (uint32, error) { return uint32(os.Geteuid()), nil }
+	srv.peerPID = func(_ net.Conn) (uint32, error) { return 0, nil }
+	spawnServeLoop(t, srv, ln)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client, err := Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if reply, err := client.ResolveProcess(ctx, os.Getpid()); err == nil {
+		t.Fatalf("expected ResolveProcess to fail closed when peer PID is unknown, got %+v", reply)
 	}
 }

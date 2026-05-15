@@ -2871,11 +2871,11 @@ type brokerRPC struct {
 	events      *runtimeEventHub
 	keyring     store.Keyring
 	matrixInput func(context.Context, paths.Paths, *SessionStore) (accessmatrix.Input, error)
-	// peerPID is the PID of the unix-socket peer for this connection, captured
+	// peerPID is the PID of the Unix-socket peer for this connection, captured
 	// at accept time via SO_PEERCRED / LOCAL_PEERPID. Zero means "unknown" —
 	// either the lookup failed or this brokerRPC was registered on the shared
 	// rpc.Server (legacy/template path). Privileged operations that depend on
-	// peer identity (RegisterProcess) fail closed when peerPID is zero.
+	// peer identity fail closed when peerPID is zero.
 	peerPID uint32
 }
 
@@ -3864,11 +3864,15 @@ func peerSharesLineage(peerPID uint32, reqPID int) bool {
 
 func (b *brokerRPC) appendAudit(eventType string, actor string, details map[string]any) {
 	if b.audit == nil {
-		b.auditState.RecordAppendResult(errors.New("audit logger unavailable"))
+		if b.auditState != nil {
+			b.auditState.RecordAppendResult(errors.New("audit logger unavailable"))
+		}
 		return
 	}
 	_, err := b.audit.Append(eventType, actor, details)
-	b.auditState.RecordAppendResult(err)
+	if b.auditState != nil {
+		b.auditState.RecordAppendResult(err)
+	}
 	if err == nil && b.events != nil {
 		b.events.publish("audit.changed", fmt.Sprintf(`{"type":%q}`, eventType))
 	}
@@ -3878,7 +3882,24 @@ func (b *brokerRPC) ResolveProcess(req ResolveProcessRequest, reply *ResolveProc
 	if req.PID <= 0 {
 		return errors.New("pid is required")
 	}
-	session, token, ok := b.sessions.ResolveProcess(req.PID)
+	if b.peerPID == 0 {
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{
+			"action": "session.process.resolve.reject",
+			"reason": "unknown_peer_pid",
+			"pid":    req.PID,
+		})
+		return errors.New("peer pid unavailable; refusing to resolve caller-supplied pid")
+	}
+	if uint32(req.PID) != b.peerPID {
+		b.appendAudit(audit.EventDeny, "daemon", map[string]any{
+			"action":   "session.process.resolve.reject",
+			"reason":   "peer_pid_mismatch",
+			"req_pid":  req.PID,
+			"peer_pid": b.peerPID,
+		})
+		return fmt.Errorf("pid mismatch: socket peer PID=%d differs from req.PID=%d", b.peerPID, req.PID)
+	}
+	session, token, ok := b.sessions.ResolveProcess(int(b.peerPID))
 	if !ok {
 		*reply = ResolveProcessResponse{Found: false}
 		return nil

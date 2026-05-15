@@ -2,27 +2,23 @@ package runtime
 
 import (
 	"errors"
-	"os/exec"
 	"testing"
 	"time"
 )
 
-// hasp-sy8: A registered pid identifies a session. If that pid exits and is
-// reused by an unrelated process, the new process must NOT inherit the old
-// session — that's the lineage-spoof attack the bead calls out. We probe a
-// per-process identity token (start time on Linux/Darwin) at registration,
-// then re-probe at resolution; on mismatch the binding is dropped.
+// hasp-sy8: A registered pid identifies a process binding. If that pid exits
+// and is reused by an unrelated process, the new process must NOT inherit the
+// old session. We probe a per-process stale-binding token (start time on
+// Linux/Darwin) at registration, then re-probe at resolution; on mismatch,
+// failure, or unavailability, the binding is dropped.
 
 func TestSessionStoreResolveProcessRejectsPIDReuse(t *testing.T) {
 	lockRuntimeSeams(t)
 
 	identities := map[int]string{42: "alpha"}
-	origLineage := lineageExecCommand
-	t.Cleanup(func() { lineageExecCommand = origLineage })
-	lineageExecCommand = func(_ string, _ ...string) *exec.Cmd {
-		// ppid=0 → processLineage stops at the input pid alone.
-		return exec.Command("sh", "-c", "printf '0\\n'")
-	}
+	origParentPID := processParentPID
+	t.Cleanup(func() { processParentPID = origParentPID })
+	processParentPID = func(int) (int, error) { return 0, nil }
 
 	store := NewSessionStore()
 	store.processIdentity = func(pid int) (string, error) {
@@ -51,14 +47,12 @@ func TestSessionStoreResolveProcessRejectsPIDReuse(t *testing.T) {
 	}
 }
 
-func TestSessionStoreResolveProcessAdvisoryWhenIdentityProbeFails(t *testing.T) {
+func TestSessionStoreRegisterProcessFailsClosedWhenIdentityProbeUnavailable(t *testing.T) {
 	lockRuntimeSeams(t)
 
-	origLineage := lineageExecCommand
-	t.Cleanup(func() { lineageExecCommand = origLineage })
-	lineageExecCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "printf '0\\n'")
-	}
+	origParentPID := processParentPID
+	t.Cleanup(func() { processParentPID = origParentPID })
+	processParentPID = func(int) (int, error) { return 0, nil }
 
 	store := NewSessionStore()
 	store.processIdentity = func(pid int) (string, error) {
@@ -68,14 +62,11 @@ func TestSessionStoreResolveProcessAdvisoryWhenIdentityProbeFails(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	if !store.RegisterProcess(session.Token, 99) {
-		t.Fatal("register process")
+	if store.RegisterProcess(session.Token, 99) {
+		t.Fatal("expected register to fail closed when identity probe is unsupported")
 	}
-	// When the identity probe returns "" at register and at resolve, ancestry
-	// remains advisory — resolution still works (no false denials on platforms
-	// without a probe).
-	if _, _, ok := store.ResolveProcess(99); !ok {
-		t.Fatal("expected resolve to succeed when identity probe is unsupported")
+	if _, _, ok := store.ResolveProcess(99); ok {
+		t.Fatal("expected resolve to fail when identity probe is unsupported")
 	}
 	degraded, reason := store.ProcessIdentityDegraded()
 	if !degraded || reason == "" {
@@ -86,11 +77,9 @@ func TestSessionStoreResolveProcessAdvisoryWhenIdentityProbeFails(t *testing.T) 
 func TestSessionStoreProcessIdentityDegradationBranches(t *testing.T) {
 	lockRuntimeSeams(t)
 
-	origLineage := lineageExecCommand
-	t.Cleanup(func() { lineageExecCommand = origLineage })
-	lineageExecCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "printf '0\\n'")
-	}
+	origParentPID := processParentPID
+	t.Cleanup(func() { processParentPID = origParentPID })
+	processParentPID = func(int) (int, error) { return 0, nil }
 
 	t.Run("register probe error", func(t *testing.T) {
 		store := NewSessionStore()
@@ -101,8 +90,8 @@ func TestSessionStoreProcessIdentityDegradationBranches(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open session: %v", err)
 		}
-		if !store.RegisterProcess(session.Token, 77) {
-			t.Fatal("register process")
+		if store.RegisterProcess(session.Token, 77) {
+			t.Fatal("expected register process to fail closed")
 		}
 		degraded, reason := store.ProcessIdentityDegraded()
 		if !degraded || reason == "" {
@@ -127,8 +116,8 @@ func TestSessionStoreProcessIdentityDegradationBranches(t *testing.T) {
 			t.Fatal("register process")
 		}
 		identityErr = true
-		if _, _, ok := store.ResolveProcess(88); !ok {
-			t.Fatal("expected resolve to remain advisory on recheck error")
+		if _, _, ok := store.ResolveProcess(88); ok {
+			t.Fatal("expected resolve to fail closed on recheck error")
 		}
 		degraded, reason := store.ProcessIdentityDegraded()
 		if !degraded || reason == "" {
@@ -150,8 +139,8 @@ func TestSessionStoreProcessIdentityDegradationBranches(t *testing.T) {
 			t.Fatal("register process")
 		}
 		currentIdentity = ""
-		if _, _, ok := store.ResolveProcess(99); !ok {
-			t.Fatal("expected resolve to remain advisory when recheck is unavailable")
+		if _, _, ok := store.ResolveProcess(99); ok {
+			t.Fatal("expected resolve to fail closed when recheck is unavailable")
 		}
 		degraded, reason := store.ProcessIdentityDegraded()
 		if !degraded || reason == "" {

@@ -224,6 +224,50 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses stale pidfile without live daemon proof", func(t *testing.T) {
+		origResolve := resolveRuntimePaths
+		origRead := processReadFile
+		origVerify := verifyDaemonPID
+		origSignal := signalProcess
+		origRemove := runtimeRemove
+		defer func() {
+			resolveRuntimePaths = origResolve
+			processReadFile = origRead
+			verifyDaemonPID = origVerify
+			signalProcess = origSignal
+			runtimeRemove = origRemove
+		}()
+
+		pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+		resolveRuntimePaths = func() (paths.Paths, error) {
+			return paths.Paths{PidFilePath: pidPath, SocketPath: filepath.Join(t.TempDir(), "daemon.sock")}, nil
+		}
+		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
+		verifyDaemonPID = func(string, int) bool { return false }
+		signaled := false
+		signalProcess = func(*os.Process, os.Signal) error {
+			signaled = true
+			return nil
+		}
+		removed := false
+		runtimeRemove = func(path string) error {
+			if path == pidPath {
+				removed = true
+			}
+			return nil
+		}
+
+		if err := stopDetachedProcess(); err == nil || !strings.Contains(err.Error(), "pidfile does not match live HASP daemon socket") {
+			t.Fatalf("expected stale pidfile refusal, got %v", err)
+		}
+		if signaled {
+			t.Fatal("stale pidfile must not signal arbitrary process")
+		}
+		if !removed {
+			t.Fatal("expected stale pidfile removal")
+		}
+	})
+
 	t.Run("signal failure", func(t *testing.T) {
 		origResolve := resolveRuntimePaths
 		origRead := processReadFile

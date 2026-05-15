@@ -105,7 +105,9 @@ type SessionView struct {
 // processBinding pairs a session token with the per-process identity token
 // captured at registration time. ResolveProcess re-probes the identity to
 // detect pid reuse: a registered pid whose identity has changed must not
-// inherit the prior session.
+// inherit the prior session. The identity is not an authorization capability;
+// an unavailable identity disables implicit process binding rather than
+// falling back to PID ancestry alone.
 type processBinding struct {
 	token    string
 	identity string
@@ -120,8 +122,8 @@ type SessionStore struct {
 	idleTTL                       time.Duration
 	processIdentityDegraded       bool
 	processIdentityDegradedReason string
-	// processIdentity returns a stable token identifying the process at pid.
-	// Set explicitly per SessionStore so tests can simulate pid reuse without
+	// processIdentity returns a stale-binding token for the process at pid. Set
+	// explicitly per SessionStore so tests can simulate pid reuse without
 	// swapping a package-level var under a global mutex.
 	processIdentity func(pid int) (string, error)
 }
@@ -372,8 +374,10 @@ func (s *SessionStore) RegisterProcess(sessionToken string, pid int) bool {
 	}
 	if identityErr != nil {
 		s.markProcessIdentityDegradedLocked("identity probe failed: " + identityErr.Error())
+		return false
 	} else if identity == "" {
 		s.markProcessIdentityDegradedLocked("identity probe unavailable")
+		return false
 	}
 	s.processes[pid] = processBinding{token: sessionToken, identity: identity}
 	return true
@@ -393,21 +397,27 @@ func (s *SessionStore) ResolveProcess(pid int) (Session, string, bool) {
 			continue
 		}
 		// PID-reuse defense: re-probe the per-process identity captured at
-		// registration. If both sides report a non-empty token and they
-		// differ, the kernel reused this pid for an unrelated process — drop
-		// the stale binding rather than honoring it. When either probe is
-		// empty the platform is unsupported and we fall back to ancestry.
-		if binding.identity != "" {
-			current, err := s.processIdentity(ancestor)
-			if err != nil {
-				s.markProcessIdentityDegradedLocked("identity recheck failed: " + err.Error())
-			} else if current == "" {
-				s.markProcessIdentityDegradedLocked("identity recheck unavailable")
-			}
-			if current != "" && current != binding.identity {
-				delete(s.processes, ancestor)
-				continue
-			}
+		// registration. Any unavailable, failed, or mismatched recheck is a
+		// fail-closed stale binding. PID ancestry alone is not authoritative.
+		if binding.identity == "" {
+			s.markProcessIdentityDegradedLocked("identity binding unavailable")
+			delete(s.processes, ancestor)
+			continue
+		}
+		current, err := s.processIdentity(ancestor)
+		if err != nil {
+			s.markProcessIdentityDegradedLocked("identity recheck failed: " + err.Error())
+			delete(s.processes, ancestor)
+			continue
+		}
+		if current == "" {
+			s.markProcessIdentityDegradedLocked("identity recheck unavailable")
+			delete(s.processes, ancestor)
+			continue
+		}
+		if current != binding.identity {
+			delete(s.processes, ancestor)
+			continue
 		}
 		token := binding.token
 		session, ok := s.sessions[token]

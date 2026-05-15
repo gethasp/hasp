@@ -2,12 +2,13 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -115,6 +116,7 @@ func TestProcessRegistrationAndLineageEdgeBranches(t *testing.T) {
 	lockRuntimeSeams(t)
 
 	store := NewSessionStore()
+	store.processIdentity = func(pid int) (string, error) { return "pid-" + strconv.Itoa(pid), nil }
 	session, err := store.Open("agent", t.TempDir(), time.Minute, true, "cursor")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
@@ -132,35 +134,28 @@ func TestProcessRegistrationAndLineageEdgeBranches(t *testing.T) {
 		t.Fatal("expected expired process mapping to be pruned")
 	}
 
-	origLineage := lineageExecCommand
-	defer func() { lineageExecCommand = origLineage }()
-	lineageExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("/definitely-missing-ps-binary")
+	origParentPID := processParentPID
+	defer func() { processParentPID = origParentPID }()
+	processParentPID = func(int) (int, error) {
+		return 0, errors.New("parent lookup failed")
 	}
 	if _, err := processParentPID(os.Getpid()); err == nil {
-		t.Fatal("expected processParentPID command failure")
-	}
-	lineageExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "printf 'not-a-pid'")
-	}
-	if _, err := processParentPID(os.Getpid()); err == nil {
-		t.Fatal("expected processParentPID parse failure")
+		t.Fatal("expected processParentPID lookup failure")
 	}
 }
 
 func TestRegisterProcessRejectsChildParentAndSiblingLineage(t *testing.T) {
 	lockRuntimeSeams(t)
-	origLineage := lineageExecCommand
-	defer func() { lineageExecCommand = origLineage }()
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		pid := args[len(args)-1]
+	origParentPID := processParentPID
+	defer func() { processParentPID = origParentPID }()
+	processParentPID = func(pid int) (int, error) {
 		switch pid {
-		case "20", "30":
-			return exec.Command("sh", "-c", "printf '10'")
-		case "10":
-			return exec.Command("sh", "-c", "printf '1'")
+		case 20, 30:
+			return 10, nil
+		case 10:
+			return 1, nil
 		default:
-			return exec.Command("sh", "-c", "printf '0'")
+			return 0, nil
 		}
 	}
 
@@ -285,17 +280,13 @@ func TestResolveProcessNoLineageBranch(t *testing.T) {
 	if _, _, ok := store.ResolveProcess(0); ok {
 		t.Fatal("expected zero pid resolve to return false")
 	}
-	origExec := lineageExecCommand
-	defer func() { lineageExecCommand = origExec }()
-	lineageExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "exit 1")
-	}
+	origParentPID := processParentPID
+	defer func() { processParentPID = origParentPID }()
+	processParentPID = func(int) (int, error) { return 0, errors.New("lineage failed") }
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process failure when lineage lookup fails")
 	}
-	lineageExecCommand = func(_ string, args ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "printf '0'")
-	}
+	processParentPID = func(int) (int, error) { return 0, nil }
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process failure when no process mapping exists")
 	}
@@ -304,7 +295,7 @@ func TestResolveProcessNoLineageBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	store.processes[os.Getpid()] = processBinding{token: session.Token}
+	store.processes[os.Getpid()] = processBinding{token: session.Token, identity: "current"}
 	delete(store.sessions, session.Token)
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process to drop missing session mapping")
@@ -314,7 +305,7 @@ func TestResolveProcessNoLineageBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open expiring session: %v", err)
 	}
-	store.processes[os.Getpid()] = processBinding{token: expired.Token}
+	store.processes[os.Getpid()] = processBinding{token: expired.Token, identity: "current"}
 	time.Sleep(5 * time.Millisecond)
 	if _, _, ok := store.ResolveProcess(os.Getpid()); ok {
 		t.Fatal("expected resolve process to drop expired session mapping")
