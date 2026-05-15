@@ -179,6 +179,13 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 		t.Fatalf("initial setup failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 
+	convenienceFlag := "--enable-convenience-unlock=false"
+	wantConvenienceUnlock := "disabled"
+	if goruntime.GOOS == "darwin" {
+		convenienceFlag = "--enable-convenience-unlock=ask"
+		wantConvenienceUnlock = "unavailable"
+	}
+
 	stdout, stderr, err = runCmdWithInput(
 		t,
 		env.projectRoot,
@@ -193,7 +200,7 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 		"--agent", "codex-cli",
 		"--master-password-env", "SETUP_MASTER_PASSWORD",
 		"--install-hooks=false",
-		"--enable-convenience-unlock=ask",
+		convenienceFlag,
 		"--overwrite-existing-config=true",
 	)
 	if err != nil {
@@ -207,8 +214,8 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 	if payload["init_state"] != "existing" {
 		t.Fatalf("expected existing vault state, got %+v", payload)
 	}
-	if payload["convenience_unlock"] != "unavailable" {
-		t.Fatalf("expected unavailable convenience unlock, got %+v", payload)
+	if payload["convenience_unlock"] != wantConvenienceUnlock {
+		t.Fatalf("expected %s convenience unlock, got %+v", wantConvenienceUnlock, payload)
 	}
 
 	noPasswordEnv := env.commandEnv(map[string]string{
@@ -236,7 +243,11 @@ func TestSetupConvenienceUnlockRegressionEval(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected project status failure without master password when convenience unlock is unavailable\nstdout:\n%s\nstderr:\n%s", statusOut, statusErr)
 	}
-	if !strings.Contains(statusErr, "HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable") {
+	wantStatusErr := "HASP_MASTER_PASSWORD is not set"
+	if goruntime.GOOS == "darwin" {
+		wantStatusErr = "HASP_MASTER_PASSWORD is not set and convenience unlock is unavailable"
+	}
+	if !strings.Contains(statusErr, wantStatusErr) {
 		t.Fatalf("expected clearer convenience unlock error, got stdout=%q stderr=%q", statusOut, statusErr)
 	}
 }
