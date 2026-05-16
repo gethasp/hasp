@@ -52,7 +52,7 @@ jobs:
           name: public-release
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: stable
+          go-version: '1.26.3'
           cache: false
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh release-smoke
@@ -81,7 +81,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: stable
+          go-version: '1.26.3'
           cache: false
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
@@ -127,7 +127,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: stable
+          go-version: '1.26.3'
           cache: false
       - name: Bootstrap Go tools
         run: bash ./scripts/bootstrap_go_tools.sh verify
@@ -323,49 +323,88 @@ jobs:
             dist/public-release/${{ github.ref_name }}/SHA256SUMS*
             dist/public-release/${{ github.ref_name }}/RELEASE-SIGNING-FINGERPRINT.txt
 
+  resume-inputs:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'gethasp/hasp'
+    runs-on: ubicloud-standard-2
+    permissions:
+      actions: read
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      source_run_id: ${{ steps.validate.outputs.source_run_id }}
+      release_dir: ${{ steps.validate.outputs.release_dir }}
+    steps:
+      - name: Validate resume inputs
+        id: validate
+        env:
+          RAW_TAG: ${{ inputs.tag }}
+          RAW_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          tag="$RAW_TAG"
+          source_run_id="$RAW_SOURCE_RUN_ID"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must match ^v[0-9]+\\.[0-9]+\\.[0-9]+$: $tag" >&2
+            exit 2
+          fi
+          if [[ ! "$source_run_id" =~ ^[0-9]+$ ]]; then
+            echo "source_run_id must match ^[0-9]+$: $source_run_id" >&2
+            exit 2
+          fi
+          release_dir="dist/public-release/$tag"
+          {
+            printf 'tag=%s\n' "$tag"
+            printf 'source_run_id=%s\n' "$source_run_id"
+            printf 'release_dir=%s\n' "$release_dir"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-release
+          run-id: ${{ steps.validate.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify resume artifact
+        env:
+          RELEASE_DIR: ${{ steps.validate.outputs.release_dir }}
+        run: |
+          test -d "$RELEASE_DIR"
+
   resume-latest-mirror:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'gethasp/hasp'
+    needs: resume-inputs
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: public-release
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ needs.resume-inputs.outputs.source_run_id }}
           github-token: ${{ github.token }}
       - name: Promote latest release mirror
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.resume-inputs.outputs.tag }}
+          RELEASE_DIR: ${{ needs.resume-inputs.outputs.release_dir }}
           HASP_R2_ENDPOINT: ${{ secrets.HASP_R2_ENDPOINT }}
           HASP_R2_BUCKET: ${{ secrets.HASP_R2_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.HASP_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HASP_R2_SECRET_ACCESS_KEY }}
           HASP_R2_PROMOTE_LATEST: "1"
         run: |
-          case "$RELEASE_TAG" in
-            v*) ;;
-            *) echo "tag must start with v: $RELEASE_TAG" >&2; exit 2 ;;
-          esac
-          release_dir="dist/public-release/$RELEASE_TAG"
-          test -d "$release_dir"
-          bash ./scripts/publish-release-to-r2.sh "$release_dir" "$RELEASE_TAG"
+          test -d "$RELEASE_DIR"
+          bash ./scripts/publish-release-to-r2.sh "$RELEASE_DIR" "$RELEASE_TAG"
       - name: Verify latest release mirror
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_DIR: ${{ needs.resume-inputs.outputs.release_dir }}
         run: |
-          release_dir="dist/public-release/$RELEASE_TAG"
           retry_latest_diff() {
             local asset="$1"
             local tmp="/tmp/hasp-latest-${asset//\//-}"
             local attempt
             for attempt in $(seq 1 12); do
-              if curl -fsS "https://downloads.gethasp.com/hasp/releases/latest/${asset}" -o "$tmp" && diff -u "$release_dir/$asset" "$tmp"; then
+              if curl -fsS "https://downloads.gethasp.com/hasp/releases/latest/${asset}" -o "$tmp" && diff -u "$RELEASE_DIR/$asset" "$tmp"; then
                 return 0
               fi
               sleep 10
             done
             curl -fsS "https://downloads.gethasp.com/hasp/releases/latest/${asset}" -o "$tmp"
-            diff -u "$release_dir/$asset" "$tmp"
+            diff -u "$RELEASE_DIR/$asset" "$tmp"
           }
           for asset in release-metadata.json release-metadata.json.asc hasp-release-public-key.asc; do
             retry_latest_diff "$asset"
@@ -373,17 +412,21 @@ jobs:
 
   resume-publish-homebrew-tap:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'gethasp/hasp'
-    needs: resume-latest-mirror
+    needs:
+      - resume-inputs
+      - resume-latest-mirror
     runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: public-release
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ needs.resume-inputs.outputs.source_run_id }}
           github-token: ${{ github.token }}
       - name: Publish Homebrew tap
         env:
+          RELEASE_TAG: ${{ needs.resume-inputs.outputs.tag }}
+          RELEASE_DIR: ${{ needs.resume-inputs.outputs.release_dir }}
           HASP_HOMEBREW_TAP_TOKEN: ${{ secrets.HASP_HOMEBREW_TAP_TOKEN }}
           HASP_HOMEBREW_TAP_PUSH_KEY: ${{ secrets.HASP_HOMEBREW_TAP_PUSH_KEY }}
         run: |
@@ -404,21 +447,26 @@ jobs:
             echo "HASP_HOMEBREW_TAP_TOKEN or HASP_HOMEBREW_TAP_PUSH_KEY is required" >&2
             exit 1
           fi
-          bash ./scripts/publish-homebrew-tap.sh --push "dist/public-release/${{ inputs.tag }}/Formula/hasp.rb" tap-repo "${{ inputs.tag }}"
+          bash ./scripts/publish-homebrew-tap.sh --push "$RELEASE_DIR/Formula/hasp.rb" tap-repo "$RELEASE_TAG"
 
   resume-published-release-live-smoke:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'gethasp/hasp'
-    needs: resume-publish-homebrew-tap
+    needs:
+      - resume-inputs
+      - resume-publish-homebrew-tap
     runs-on: macos-15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Smoke published install paths
+        env:
+          RELEASE_TAG: ${{ needs.resume-inputs.outputs.tag }}
         run: |
-          bash ./scripts/verify-live-release.sh --skip-github-release --brew-install "${{ inputs.tag }}"
+          bash ./scripts/verify-live-release.sh --skip-github-release --brew-install "$RELEASE_TAG"
 
   resume-github-release:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'gethasp/hasp'
     needs:
+      - resume-inputs
       - resume-latest-mirror
       - resume-publish-homebrew-tap
       - resume-published-release-live-smoke
@@ -430,17 +478,17 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: public-release
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ needs.resume-inputs.outputs.source_run_id }}
           github-token: ${{ github.token }}
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ needs.resume-inputs.outputs.tag }}
           body_path: release-notes.md
           fail_on_unmatched_files: true
           files: |
-            dist/public-release/${{ inputs.tag }}/hasp*
-            dist/public-release/${{ inputs.tag }}/KEYS-*
-            dist/public-release/${{ inputs.tag }}/release-metadata.json*
-            dist/public-release/${{ inputs.tag }}/SHA256SUMS*
-            dist/public-release/${{ inputs.tag }}/RELEASE-SIGNING-FINGERPRINT.txt
+            ${{ needs.resume-inputs.outputs.release_dir }}/hasp*
+            ${{ needs.resume-inputs.outputs.release_dir }}/KEYS-*
+            ${{ needs.resume-inputs.outputs.release_dir }}/release-metadata.json*
+            ${{ needs.resume-inputs.outputs.release_dir }}/SHA256SUMS*
+            ${{ needs.resume-inputs.outputs.release_dir }}/RELEASE-SIGNING-FINGERPRINT.txt

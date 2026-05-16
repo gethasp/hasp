@@ -24,6 +24,25 @@ func (h *Handle) GrantProjectLease(bindingID string, sessionToken string, scope 
 		Scope:        scope,
 		ExpiresAt:    expiresAt,
 	}
+	if scope == GrantOnce {
+		unlock := lockVaultStatePath(h.store.paths.StatePath)
+		defer unlock()
+		if err := h.refreshStateUnlocked(); err != nil {
+			return ProjectLease{}, err
+		}
+		key := leaseKey(bindingID, sessionToken)
+		if existing, ok := h.state.ProjectLeases[key]; ok {
+			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
+				return existing, nil
+			}
+		}
+		h.state.ProjectLeases[key] = lease
+		err = h.persistUnlocked()
+		if err == nil {
+			h.store.appendAuditBestEffort("grant.project", "user", map[string]any{"binding_id": bindingID, "scope": scope})
+		}
+		return lease, err
+	}
 	h.state.ProjectLeases[leaseKey(bindingID, sessionToken)] = lease
 	err = h.persist()
 	if err == nil {
@@ -68,6 +87,25 @@ func (h *Handle) GrantSecretUse(bindingID string, sessionToken string, itemName 
 		Scope:           scope,
 		RelaxedByWindow: relaxed,
 		ExpiresAt:       expiresAt,
+	}
+	if scope == GrantOnce {
+		unlock := lockVaultStatePath(h.store.paths.StatePath)
+		defer unlock()
+		if err := h.refreshStateUnlocked(); err != nil {
+			return SecretGrant{}, err
+		}
+		key := secretGrantKey(bindingID, sessionToken, itemName)
+		if existing, ok := h.state.SecretGrants[key]; ok {
+			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
+				return existing, nil
+			}
+		}
+		h.state.SecretGrants[key] = grant
+		err = h.persistUnlocked()
+		if err == nil {
+			h.store.appendAuditBestEffort("grant.secret", "user", map[string]any{"binding_id": bindingID, "item": itemName, "scope": scope, "relaxed": relaxed})
+		}
+		return grant, err
 	}
 	h.state.SecretGrants[secretGrantKey(bindingID, sessionToken, itemName)] = grant
 	err = h.persist()
@@ -118,6 +156,36 @@ func (h *Handle) GrantConvenience(bindingID string, sessionToken string, destina
 		GrantedBy:           grantedBy,
 		Scope:               scope,
 		ExpiresAt:           expiresAt,
+	}
+	if scope == GrantOnce {
+		leaseKeyValue := leaseKey(bindingID, sessionToken)
+		priorLease, hadPriorLease := h.state.ProjectLeases[leaseKeyValue]
+		unlock := lockVaultStatePath(h.store.paths.StatePath)
+		defer unlock()
+		if err := h.refreshStateUnlocked(); err != nil {
+			return ConvenienceGrant{}, err
+		}
+		lease, ok = h.state.ProjectLeases[leaseKeyValue]
+		if !ok && hadPriorLease && grantIsActive(priorLease.Scope, priorLease.ExpiresAt, priorLease.RevokedAt, priorLease.UsedAt, h.store.now()) {
+			lease = priorLease
+			h.state.ProjectLeases[leaseKeyValue] = priorLease
+			ok = true
+		}
+		if !ok || !grantIsActive(lease.Scope, lease.ExpiresAt, lease.RevokedAt, lease.UsedAt, h.store.now()) {
+			return ConvenienceGrant{}, fmt.Errorf("active project lease required for convenience grant")
+		}
+		key := convenienceGrantKey(bindingID, destinationPath, resolvedSet)
+		if existing, ok := h.state.ConvenienceGrants[key]; ok {
+			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
+				return existing, nil
+			}
+		}
+		h.state.ConvenienceGrants[key] = grant
+		err = h.persistUnlocked()
+		if err == nil {
+			h.store.appendAuditBestEffort(audit.EventWriteEnv, "user", map[string]any{"action": "grant", "binding_id": bindingID, "destination_path": destinationPath, "scope": scope})
+		}
+		return grant, err
 	}
 	h.state.ConvenienceGrants[convenienceGrantKey(bindingID, destinationPath, resolvedSet)] = grant
 	err = h.persist()

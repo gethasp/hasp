@@ -112,7 +112,7 @@ func TestCompletionCzalHiddenCompleteSubcommandRoutes(t *testing.T) {
 	t.Run("inventory-derived nested commands", func(t *testing.T) {
 		for command, want := range map[string][]string{
 			"lease":    {"list", "revoke"},
-			"approval": {"decide", "list"},
+			"approval": {"list"},
 			"access":   {"matrix"},
 		} {
 			var stdout bytes.Buffer

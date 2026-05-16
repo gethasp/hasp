@@ -119,7 +119,10 @@ var (
 	}
 )
 
-var errVaultLocked = errors.New("vault is locked")
+var (
+	errVaultLocked                 = errors.New("vault is locked")
+	errApprovalTrustedPathRequired = errors.New("approval operations require the trusted local app or HTTP path")
+)
 
 const (
 	headerRequestID       = "HASP-Request-Id"
@@ -316,7 +319,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		payload, err := rpcSrv.dashboardSnapshot()
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusServiceUnavailable, "vault_state_unavailable", "Vault state unavailable", err.Error())
+			writeRedactedHTTPError(w, http.StatusServiceUnavailable, "vault_state_unavailable", "Vault state unavailable", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -329,7 +332,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		payload, err := rpcSrv.dashboardSnapshot()
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusServiceUnavailable, "vault_state_unavailable", "Vault state unavailable", err.Error())
+			writeRedactedHTTPError(w, http.StatusServiceUnavailable, "vault_state_unavailable", "Vault state unavailable", err)
 			return
 		}
 		var out any
@@ -358,13 +361,13 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		req, err := listLeasesRequestFromHTTP(r)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		broker := rpcSrv.broker()
 		var reply ListLeasesResponse
 		if err := broker.ListLeases(req, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "lease_list_failed", "Lease list failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "lease_list_failed", "Lease list failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -384,7 +387,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
@@ -392,7 +395,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		broker := rpcSrv.broker()
 		var reply RevokeLeaseResponse
 		if err := broker.RevokeLease(req, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "lease_revoke_failed", "Lease revoke failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "lease_revoke_failed", "Lease revoke failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -407,7 +410,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
@@ -420,7 +423,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		broker := rpcSrv.broker()
 		var reply RevokeLeaseResponse
 		if err := broker.RevokeLease(req, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "lease_revoke_failed", "Lease revoke failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "lease_revoke_failed", "Lease revoke failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -440,8 +443,8 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		broker := rpcSrv.broker()
 		var reply ListApprovalsResponse
-		if err := broker.ListApprovals(req, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "approval_list_failed", "Approval list failed", err.Error())
+		if err := broker.listApprovalsTrusted(req, &reply); err != nil {
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "approval_list_failed", "Approval list failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -456,7 +459,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			}
 			reply, err := rpcSrv.approvalDetailSnapshot(approvalID)
 			if err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "approval_detail_failed", "Approval detail failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusNotFound, "approval_detail_failed", "Approval detail failed", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -476,7 +479,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
@@ -517,12 +520,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		req.Actor = "http"
 		broker := rpcSrv.broker()
 		var reply DecideApprovalResponse
-		if err := broker.DecideApproval(req, &reply); err != nil {
+		if err := broker.decideApprovalTrusted(req, &reply); err != nil {
 			if errors.Is(err, errVaultLocked) {
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "approval_decide_failed", "Approval decide failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "approval_decide_failed", "Approval decide failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -535,17 +538,17 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		req, err := accessMatrixRequestFromHTTP(r)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		broker := rpcSrv.broker()
 		var reply AccessMatrixResponse
 		if err := broker.AccessMatrix(req, &reply); err != nil {
 			if errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized) {
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "access_matrix_failed", "Access matrix failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "access_matrix_failed", "Access matrix failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -558,7 +561,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		var reply IntegrationListResponse
 		if err := rpcSrv.broker().Integrations(IntegrationGetRequest{}, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_list_failed", "Integration list failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "integration_list_failed", "Integration list failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -570,7 +573,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			case http.MethodGet:
 				var reply IntegrationProfilesResponse
 				if err := rpcSrv.broker().IntegrationProfileCatalog(IntegrationGetRequest{}, &reply); err != nil {
-					httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_profiles_failed", "Integration profiles failed", err.Error())
+					writeRedactedHTTPError(w, http.StatusInternalServerError, "integration_profiles_failed", "Integration profiles failed", err)
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -633,10 +636,10 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				return
 			}
 			if errors.Is(err, integrations.ErrTargetNotFound) {
-				httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "integration_not_found", "Integration not found", err.Error())
+				writeRedactedHTTPError(w, http.StatusNotFound, "integration_not_found", "Integration not found", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_profiles_failed", "Integration profiles failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "integration_profiles_failed", "Integration profiles failed", err)
 		case r.Method == http.MethodPost && action == "doctor":
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			defer r.Body.Close()
@@ -645,7 +648,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				decoder := json.NewDecoder(r.Body)
 				decoder.DisallowUnknownFields()
 				if err := decoder.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-					httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+					writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 					return
 				}
 				if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -661,10 +664,10 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				return
 			}
 			if errors.Is(err, integrations.ErrTargetNotFound) || errors.Is(err, integrations.ErrProfileNotFound) {
-				httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "integration_not_found", "Integration not found", err.Error())
+				writeRedactedHTTPError(w, http.StatusNotFound, "integration_not_found", "Integration not found", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_doctor_failed", "Integration doctor failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "integration_doctor_failed", "Integration doctor failed", err)
 		default:
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET profiles or POST doctor is required")
 		}
@@ -676,10 +679,10 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			var reply PolicyResponse
 			if err := broker.Policy(PolicyGetRequest{}, &reply); err != nil {
 				if errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized) {
-					httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+					writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 					return
 				}
-				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "policy_get_failed", "Policy get failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusInternalServerError, "policy_get_failed", "Policy get failed", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -692,7 +695,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			decoder := json.NewDecoder(r.Body)
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&policy); err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 			if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -711,13 +714,13 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				w.Header().Set("ETag", reply.Version)
 				_ = jsonwire.WriteResponse(w, reply)
 			case errors.Is(err, store.ErrPolicyVersionConflict):
-				httpapi.WriteErrorEnvelope(w, http.StatusConflict, "policy_version_conflict", "Policy version conflict", err.Error())
+				writeRedactedHTTPError(w, http.StatusConflict, "policy_version_conflict", "Policy version conflict", err)
 			case errors.Is(err, store.ErrPolicyInvalid):
-				httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "policy_invalid", "Policy invalid", err.Error())
+				writeRedactedHTTPError(w, http.StatusUnprocessableEntity, "policy_invalid", "Policy invalid", err)
 			case errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized):
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 			default:
-				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "policy_set_failed", "Policy set failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusInternalServerError, "policy_set_failed", "Policy set failed", err)
 			}
 		default:
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET or PUT is required")
@@ -731,10 +734,10 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		var reply ConfigResponse
 		if err := rpcSrv.broker().Config(ConfigGetRequest{}, &reply); err != nil {
 			if errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized) {
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "config_get_failed", "Config get failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "config_get_failed", "Config get failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -757,7 +760,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&body); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -771,13 +774,13 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			w.Header().Set("Content-Type", "application/json")
 			_ = jsonwire.WriteResponse(w, reply)
 		case errors.Is(err, store.ErrConfigKeyNotFound):
-			httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "config_key_not_found", "Config key not found", err.Error())
+			writeRedactedHTTPError(w, http.StatusNotFound, "config_key_not_found", "Config key not found", err)
 		case errors.Is(err, store.ErrConfigInvalid):
-			httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "config_invalid", "Config invalid", err.Error())
+			writeRedactedHTTPError(w, http.StatusUnprocessableEntity, "config_invalid", "Config invalid", err)
 		case errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized):
-			httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+			writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 		default:
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "config_set_failed", "Config set failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "config_set_failed", "Config set failed", err)
 		}
 	})
 	mux.HandleFunc("/v1/secrets", func(w http.ResponseWriter, r *http.Request) {
@@ -788,10 +791,10 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		reply, err := rpcSrv.secretsListSnapshot(r.Context())
 		if err != nil {
 			if errors.Is(err, store.ErrKeyringUnavailable) || errors.Is(err, store.ErrInvalidPassword) || errors.Is(err, store.ErrVaultNotInitialized) {
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "secrets_list_failed", "Secrets list failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "secrets_list_failed", "Secrets list failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -808,7 +811,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				rpcSrv.events.publish("audit.changed", `{"action":"audit.verify","status":"failed"}`)
 				rpcSrv.events.publish("dashboard.changed", `{"source":"audit.verify","status":"failed"}`)
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "audit_verify_failed", "Audit verify failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "audit_verify_failed", "Audit verify failed", err)
 			return
 		}
 		if rpcSrv.events != nil {
@@ -829,12 +832,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		opts, err := auditExportOptionsFromHTTP(r)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		if err := rpcSrv.auditExportNDJSON(w, opts); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "audit_export_failed", "Audit export failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "audit_export_failed", "Audit export failed", err)
 			return
 		}
 	})
@@ -845,12 +848,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		limit, err := auditLimitFromHTTP(r)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		reply, err := rpcSrv.auditListSnapshot(limit)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "audit_list_failed", "Audit list failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "audit_list_failed", "Audit list failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -867,7 +870,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -881,9 +884,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			w.Header().Set("Content-Type", "application/json")
 			_ = jsonwire.WriteResponse(w, reply)
 		case errors.Is(err, store.ErrKeyringUnavailable), errors.Is(err, store.ErrInvalidPassword), errors.Is(err, store.ErrVaultNotInitialized):
-			httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+			writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 		default:
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "backup_failed", "Backup failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "backup_failed", "Backup failed", err)
 		}
 	}
 	mux.HandleFunc("/v1/backup", backupHandler)
@@ -901,7 +904,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			decoder := json.NewDecoder(r.Body)
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&req); err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 			if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -910,7 +913,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			}
 			reply, err := rpcSrv.broker().SetBackupPassphrase(req)
 			if err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -918,7 +921,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		case http.MethodDelete:
 			reply, err := rpcSrv.broker().DeleteBackupPassphrase()
 			if err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "backup_passphrase_failed", "Backup passphrase custody failed", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -946,7 +949,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&req); err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 			var extra any
@@ -961,7 +964,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		vaultStore, err := newStoreForPaths(rpcSrv.keyring, rpcSrv.paths)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err)
 			return
 		}
 		if err := storeInitVault(vaultStore, r.Context(), req.MasterPassword); err != nil {
@@ -969,16 +972,16 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				httpapi.WriteErrorEnvelope(w, http.StatusConflict, "vault_exists", "Vault already exists", "unlock the existing vault instead")
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err)
 			return
 		}
 		handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.MasterPassword)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err)
 			return
 		}
 		if err := handleEnableConvenienceUnlock(handle, r.Context()); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_init_failed", "Vault initialization failed", err)
 			return
 		}
 		broker := rpcSrv.broker()
@@ -989,7 +992,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			ConsumerName: "HASP.app",
 			Internal:     true,
 		}, &session); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1004,7 +1007,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
@@ -1016,7 +1019,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				validateUnlock = defaultValidateVaultUnlock
 			}
 			if err := validateUnlock(r.Context(), rpcSrv.paths); err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
 		case "master-password":
@@ -1026,7 +1029,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			}
 			vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 			if err != nil {
-				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err)
 				return
 			}
 			handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.MasterPassword)
@@ -1035,7 +1038,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 					httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "master password is incorrect")
 					return
 				}
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
 			_ = handle
@@ -1051,7 +1054,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			ConsumerName: "HASP.app",
 			Internal:     true,
 		}, &session); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "unlock_failed", "Unlock failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "unlock_failed", "Unlock failed", err)
 			return
 		}
 		broker.appendAudit(audit.EventApprove, "daemon", map[string]any{
@@ -1080,7 +1083,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+			writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -1099,7 +1102,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		}
 		vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 		if err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err)
 			return
 		}
 		handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.CurrentPassword)
@@ -1113,12 +1116,12 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			case errors.Is(err, store.ErrVaultNotInitialized):
 				details["result"] = "vault_not_initialized"
 				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
-				httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", err.Error())
+				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 			default:
 				details["result"] = "open_failed"
 				details["error"] = err.Error()
 				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
-				httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err.Error())
+				writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_rekey_failed", "Vault rekey failed", err)
 			}
 			return
 		}
@@ -1133,7 +1136,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				details["result"] = "invalid_new_password"
 				details["error"] = err.Error()
 				rpcSrv.appendMasterPasswordAudit(audit.EventDeny, details)
-				httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "invalid_new_master_password", "Invalid new master password", err.Error())
+				writeRedactedHTTPError(w, http.StatusUnprocessableEntity, "invalid_new_master_password", "Invalid new master password", err)
 			}
 			return
 		}
@@ -1142,7 +1145,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		rpcSrv.appendMasterPasswordAudit(audit.EventApprove, details)
 		var lockReply LockVaultResponse
 		if err := brokerLockVault(rpcSrv.broker(), LockVaultRequest{Cause: "master-password-change"}, &lockReply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "vault_lock_failed", "Vault lock failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_lock_failed", "Vault lock failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1161,14 +1164,14 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
 		broker := rpcSrv.broker()
 		var reply LockVaultResponse
 		if err := brokerLockVault(broker, req, &reply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "lock_failed", "Lock failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "lock_failed", "Lock failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1205,7 +1208,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		if r.Body != nil {
 			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+				writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 				return
 			}
 		}
@@ -1216,7 +1219,7 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		broker := rpcSrv.broker()
 		var lockReply LockVaultResponse
 		if err := brokerLockVault(broker, LockVaultRequest{Cause: "daemon-restart"}, &lockReply); err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "restart_failed", "Restart failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "restart_failed", "Restart failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1299,7 +1302,7 @@ func (s *rpcServer) httpRevealKey() []byte {
 func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 	secretRef, err := revealSecretRef(r)
 	if err != nil {
-		httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "not_found", "Not found", err.Error())
+		writeRedactedHTTPError(w, http.StatusNotFound, "not_found", "Not found", err)
 		return
 	}
 	requestID := strings.TrimSpace(r.Header.Get(headerRequestID))
@@ -1309,7 +1312,7 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := revealActor(r)
 	if entry, ok, err := s.revealCacheGet(requestID, actor, secretRef); err != nil {
-		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "request_id_conflict", "Request ID conflict", err.Error())
+		writeRedactedHTTPError(w, http.StatusConflict, "request_id_conflict", "Request ID conflict", err)
 		return
 	} else if ok {
 		w.Header().Set("Content-Type", "application/json")
@@ -1323,13 +1326,13 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	inflight, owner, err := s.revealBegin(requestID, actor, secretRef)
 	if err != nil {
-		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "request_id_conflict", "Request ID conflict", err.Error())
+		writeRedactedHTTPError(w, http.StatusConflict, "request_id_conflict", "Request ID conflict", err)
 		return
 	}
 	if !owner {
 		<-inflight.done
 		if inflight.err != nil {
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", inflight.err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", inflight.err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1364,7 +1367,7 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrKeyringUnavailable), errors.Is(err, store.ErrInvalidPassword), errors.Is(err, store.ErrVaultNotInitialized):
 			httpapi.WriteErrorEnvelope(w, http.StatusLocked, "vault_locked", "Vault locked", "vault contents are not available to the daemon")
 		default:
-			httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err.Error())
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err)
 		}
 		return
 	}
@@ -1377,18 +1380,18 @@ func (s *rpcServer) handleHTTPReveal(w http.ResponseWriter, r *http.Request) {
 	payload, err := s.buildRevealResponse(key, item, requestID)
 	if err != nil {
 		finishErr = err
-		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err.Error())
+		writeRedactedHTTPError(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err)
 		return
 	}
 	if err := s.appendRevealAudit(actor, item, requestID); err != nil {
 		finishErr = err
-		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "audit_failed", "Audit failed", err.Error())
+		writeRedactedHTTPError(w, http.StatusInternalServerError, "audit_failed", "Audit failed", err)
 		return
 	}
 	body, err := revealJSONMarshal(payload)
 	if err != nil {
 		finishErr = err
-		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err.Error())
+		writeRedactedHTTPError(w, http.StatusInternalServerError, "reveal_failed", "Reveal failed", err)
 		return
 	}
 	body = append(body, '\n')
@@ -1710,7 +1713,7 @@ func decodeJSONObject(w http.ResponseWriter, r *http.Request, dst any, trailingM
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", err.Error())
+		writeRedactedHTTPError(w, http.StatusBadRequest, "bad_request", "Bad request", err)
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -1720,25 +1723,32 @@ func decodeJSONObject(w http.ResponseWriter, r *http.Request, dst any, trailingM
 	return true
 }
 
+func writeRedactedHTTPError(w http.ResponseWriter, status int, code string, title string, err error) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hasp daemon http %s: %v\n", code, err)
+	}
+	httpapi.WritePublicErrorEnvelope(w, status, code, title)
+}
+
 func writeIntegrationProfileMutationError(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return false
 	}
 	switch {
 	case errors.Is(err, integrations.ErrTargetNotFound), errors.Is(err, integrations.ErrProfileNotFound):
-		httpapi.WriteErrorEnvelope(w, http.StatusNotFound, "integration_not_found", "Integration not found", err.Error())
+		writeRedactedHTTPError(w, http.StatusNotFound, "integration_not_found", "Integration not found", err)
 	case errors.Is(err, integrations.ErrProfileConflict):
-		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "integration_profile_conflict", "Integration profile conflict", err.Error())
+		writeRedactedHTTPError(w, http.StatusConflict, "integration_profile_conflict", "Integration profile conflict", err)
 	case errors.Is(err, integrations.ErrProfileImmutable):
-		httpapi.WriteErrorEnvelope(w, http.StatusConflict, "integration_profile_immutable", "Integration profile immutable", err.Error())
+		writeRedactedHTTPError(w, http.StatusConflict, "integration_profile_immutable", "Integration profile immutable", err)
 	case errors.Is(err, integrations.ErrProfileVersion):
-		httpapi.WriteErrorEnvelope(w, http.StatusPreconditionFailed, "integration_profile_version_mismatch", "Integration profile version mismatch", err.Error())
+		writeRedactedHTTPError(w, http.StatusPreconditionFailed, "integration_profile_version_mismatch", "Integration profile version mismatch", err)
 	case errors.Is(err, integrations.ErrPreconditionRequired):
 		httpapi.WriteErrorEnvelope(w, http.StatusPreconditionRequired, "precondition_required", "Precondition required", "If-Match is required")
 	case errors.Is(err, integrations.ErrProfileInvalid):
-		httpapi.WriteErrorEnvelope(w, http.StatusUnprocessableEntity, "integration_profile_invalid", "Integration profile invalid", err.Error())
+		writeRedactedHTTPError(w, http.StatusUnprocessableEntity, "integration_profile_invalid", "Integration profile invalid", err)
 	default:
-		httpapi.WriteErrorEnvelope(w, http.StatusInternalServerError, "integration_profile_failed", "Integration profile failed", err.Error())
+		writeRedactedHTTPError(w, http.StatusInternalServerError, "integration_profile_failed", "Integration profile failed", err)
 	}
 	return true
 }
@@ -2115,10 +2125,14 @@ func hmacValidatorMiddleware(validator *httpapi.Validator, recorder httpapi.Atte
 				if recorder != nil {
 					recorder(r, err)
 				}
-				httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "forbidden", http.StatusText(http.StatusForbidden), err.Error())
+				writeRedactedHTTPError(w, http.StatusForbidden, "forbidden", http.StatusText(http.StatusForbidden), err)
 				return
 			}
-			httpapi.WriteErrorEnvelope(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
+			if errors.Is(err, httpapi.ErrRequestBodyTooLarge) {
+				writeRedactedHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", http.StatusText(http.StatusRequestEntityTooLarge), err)
+				return
+			}
+			writeRedactedHTTPError(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", err)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -3640,6 +3654,10 @@ func sessionLeaseView(session Session) leases.Lease {
 }
 
 func (b *brokerRPC) ListApprovals(req ListApprovalsRequest, reply *ListApprovalsResponse) error {
+	return errApprovalTrustedPathRequired
+}
+
+func (b *brokerRPC) listApprovalsTrusted(req ListApprovalsRequest, reply *ListApprovalsResponse) error {
 	if b.approvals == nil {
 		return errors.New("approval store unavailable")
 	}
@@ -3652,6 +3670,10 @@ func (b *brokerRPC) ListApprovals(req ListApprovalsRequest, reply *ListApprovals
 }
 
 func (b *brokerRPC) DecideApproval(req DecideApprovalRequest, reply *DecideApprovalResponse) error {
+	return errApprovalTrustedPathRequired
+}
+
+func (b *brokerRPC) decideApprovalTrusted(req DecideApprovalRequest, reply *DecideApprovalResponse) error {
 	if b.approvals == nil {
 		return errors.New("approval store unavailable")
 	}

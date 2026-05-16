@@ -612,8 +612,8 @@ func TestSecretRevealBlockedByRegisteredProcessTreeOutsideRepo(t *testing.T) {
 	}
 
 	err = Run(context.Background(), []string{"secret", "get", "--reveal", "API_TOKEN"}, bytes.NewBuffer(nil), io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "grant-plaintext --token "+reply.SessionToken) {
-		t.Fatalf("expected process-tree plaintext block, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "grant-plaintext --item API_TOKEN --action reveal") || strings.Contains(err.Error(), reply.SessionToken) {
+		t.Fatalf("expected process-tree plaintext block with token-safe grant guidance, got %v", err)
 	}
 }
 

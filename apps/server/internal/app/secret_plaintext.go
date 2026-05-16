@@ -127,7 +127,6 @@ func enforceSecretPlaintextPolicy(ctx context.Context, handle *store.Handle, ite
 			"policy_source":    policy.Source,
 			"project_root":     policy.ProjectRoot,
 			"agent_consumers":  policy.AgentConsumers,
-			"session_token":    policy.SessionToken,
 		})
 		return nil
 	}
@@ -140,10 +139,9 @@ func enforceSecretPlaintextPolicy(ctx context.Context, handle *store.Handle, ite
 		"policy_source":    policy.Source,
 		"project_root":     policy.ProjectRoot,
 		"agent_consumers":  policy.AgentConsumers,
-		"session_token":    policy.SessionToken,
 	})
 	if policy.SessionToken != "" {
-		return fmt.Errorf("plaintext secret access is blocked in agent-safe mode; grant one-time access with: hasp session grant-plaintext --token %s --item %s --action %s", policy.SessionToken, itemName, action)
+		return fmt.Errorf("plaintext secret access is blocked in agent-safe mode; ask the local operator to grant one-time access with hasp session grant-plaintext --item %s --action %s for the current protected session", itemName, action)
 	}
 	return fmt.Errorf("plaintext secret access is blocked in agent-safe mode; launch the agent through 'hasp agent launch' or 'hasp agent shell' so HASP can attach a broker-held approval grant")
 }

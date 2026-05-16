@@ -33,7 +33,7 @@ func BenchmarkToolsList(b *testing.B) {
 }
 
 func BenchmarkHaspRunTool(b *testing.B) {
-	projectRoot := setupBenchmarkMCPState(b)
+	state := setupBenchmarkMCPState(b)
 	request := request{
 		JSONRPC: "2.0",
 		ID:      1,
@@ -41,7 +41,7 @@ func BenchmarkHaspRunTool(b *testing.B) {
 		Params: mustMarshal(b, toolCall{
 			Name: "hasp_run",
 			Arguments: map[string]any{
-				"project_root":  projectRoot,
+				"project_root":  state.projectRoot,
 				"grant_project": "window",
 				"grant_secret":  "session",
 				"env":           map[string]any{"API_TOKEN": "secret_01"},
@@ -58,7 +58,7 @@ func BenchmarkHaspRunTool(b *testing.B) {
 }
 
 func BenchmarkHaspListTool(b *testing.B) {
-	projectRoot := setupBenchmarkMCPState(b)
+	state := setupBenchmarkMCPState(b)
 	request := request{
 		JSONRPC: "2.0",
 		ID:      1,
@@ -66,7 +66,7 @@ func BenchmarkHaspListTool(b *testing.B) {
 		Params: mustMarshal(b, toolCall{
 			Name: "hasp_list",
 			Arguments: map[string]any{
-				"project_root":  projectRoot,
+				"project_root":  state.projectRoot,
 				"grant_project": "window",
 			},
 		}),
@@ -80,7 +80,7 @@ func BenchmarkHaspListTool(b *testing.B) {
 }
 
 func BenchmarkHaspInjectTool(b *testing.B) {
-	projectRoot := setupBenchmarkMCPState(b)
+	state := setupBenchmarkMCPState(b)
 	request := request{
 		JSONRPC: "2.0",
 		ID:      1,
@@ -88,7 +88,7 @@ func BenchmarkHaspInjectTool(b *testing.B) {
 		Params: mustMarshal(b, toolCall{
 			Name: "hasp_inject",
 			Arguments: map[string]any{
-				"project_root":  projectRoot,
+				"project_root":  state.projectRoot,
 				"grant_project": "window",
 				"grant_secret":  "session",
 				"files":         map[string]any{"CERT_PATH": "file_01"},
@@ -105,7 +105,8 @@ func BenchmarkHaspInjectTool(b *testing.B) {
 }
 
 func BenchmarkHaspCheckTool(b *testing.B) {
-	projectRoot := setupBenchmarkMCPState(b)
+	state := setupBenchmarkMCPState(b)
+	projectRoot := state.projectRoot
 	for i := 0; i < 100; i++ {
 		path := filepath.Join(projectRoot, fmt.Sprintf("file-%03d.txt", i))
 		if err := os.WriteFile(path, []byte("safe content"), 0o600); err != nil {
@@ -119,7 +120,9 @@ func BenchmarkHaspCheckTool(b *testing.B) {
 		Params: mustMarshal(b, toolCall{
 			Name: "hasp_check",
 			Arguments: map[string]any{
-				"project_root": projectRoot,
+				"project_root":  projectRoot,
+				"session_token": state.sessionToken,
+				"grant_project": "window",
 			},
 		}),
 	}
@@ -149,7 +152,12 @@ func mustCall(b *testing.B, req request) toolCall {
 	return call
 }
 
-func setupBenchmarkMCPState(b *testing.B) string {
+type benchmarkMCPState struct {
+	projectRoot  string
+	sessionToken string
+}
+
+func setupBenchmarkMCPState(b *testing.B) benchmarkMCPState {
 	b.Helper()
 	baseDir := b.TempDir()
 	b.Setenv(paths.EnvHome, filepath.Join(baseDir, "home"))
@@ -216,7 +224,7 @@ func setupBenchmarkMCPState(b *testing.B) string {
 	if _, err := handle.GrantSecretUse(binding.ID, sessionReply.SessionToken, "cert_file", store.GrantSession, 0, false); err != nil {
 		b.Fatalf("grant file secret use: %v", err)
 	}
-	return projectRoot
+	return benchmarkMCPState{projectRoot: projectRoot, sessionToken: sessionReply.SessionToken}
 }
 
 func startBenchmarkDaemon(b *testing.B) *runtime.Manager {

@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+export HASP_TEAM_ID="${HASP_TEAM_ID:-TEAMID1234}"
 
 stop_scoped_daemon() {
   local bin_path="$1"

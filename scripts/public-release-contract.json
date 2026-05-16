@@ -1,7 +1,7 @@
 {
   "public_makefile_targets": {
     "verify-ci": {
-      "deps_exact": ["check-links", "check-tidy", "check-generated-docs", "check-telemetry-release-gate", "workflow-lint", "shellcheck", "test-scripts", "test", "lint"]
+      "deps_exact": ["check-links", "check-tidy", "check-generated-docs", "check-telemetry-release-gate", "workflow-lint", "shellcheck", "osv-scan", "test-scripts", "test", "lint"]
     },
     "release-gate": {
       "recipe_in_order": [
@@ -33,11 +33,11 @@
       "jobs": {
         "fork-pr-verify": {
           "runs_on_contains": "ubuntu-latest",
-          "run_contains": ["make check-links", "make check-generated-docs", "bash scripts/test-public-installer.sh", "bash scripts/test-package-public-release.sh", "make test", "make lint", "make coverage"]
+          "run_contains": ["make osv-scan", "make check-links", "make check-generated-docs", "bash scripts/test-public-installer.sh", "bash scripts/test-package-public-release.sh", "make test", "make lint", "make coverage"]
         },
         "merge-gate": {
           "runs_on_contains": "ubuntu-latest",
-          "run_contains": ["make check-links", "make check-generated-docs", "bash scripts/test-public-installer.sh", "bash scripts/test-package-public-release.sh", "make test", "make lint", "make coverage", "make conformance"]
+          "run_contains": ["make osv-scan", "make check-links", "make check-generated-docs", "bash scripts/test-public-installer.sh", "bash scripts/test-package-public-release.sh", "make test", "make lint", "make coverage", "make conformance"]
         },
         "darwin-audit-coverage": {
           "runs_on_contains": "macos-15",

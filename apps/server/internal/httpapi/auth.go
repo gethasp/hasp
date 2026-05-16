@@ -24,6 +24,7 @@ const (
 
 	DefaultAllowedDateSkew = 60 * time.Second
 	DefaultNonceTTL        = 5 * time.Minute
+	DefaultMaxBodyBytes    = 1 << 20
 )
 
 var (
@@ -36,17 +37,20 @@ var (
 	ErrDateSkewExceeded       = errors.New("request date skew exceeds limit")
 	ErrInvalidSignature       = errors.New("invalid HMAC signature")
 	ErrNonceReplay            = errors.New("nonce replay detected")
+	ErrRequestBodyTooLarge    = errors.New("request body exceeds HMAC validation limit")
 )
 
 type ValidatorOptions struct {
 	AllowedDateSkew time.Duration
 	NonceTTL        time.Duration
+	MaxBodyBytes    int64
 	Now             func() time.Time
 }
 
 type Validator struct {
 	key             []byte
 	allowedDateSkew time.Duration
+	maxBodyBytes    int64
 	now             func() time.Time
 	nonces          *nonceCache
 }
@@ -74,9 +78,14 @@ func NewValidator(key []byte, opts ValidatorOptions) (*Validator, error) {
 	if nonceTTL <= 0 {
 		nonceTTL = DefaultNonceTTL
 	}
+	maxBodyBytes := opts.MaxBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = DefaultMaxBodyBytes
+	}
 	return &Validator{
 		key:             append([]byte(nil), key...),
 		allowedDateSkew: allowedSkew,
+		maxBodyBytes:    maxBodyBytes,
 		now:             nowFn,
 		nonces: &nonceCache{
 			ttl:     nonceTTL,
@@ -92,11 +101,19 @@ func (v *Validator) Middleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := v.Validate(r); err != nil {
-			WriteErrorEnvelope(w, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
+			if errors.Is(err, ErrRequestBodyTooLarge) {
+				WritePublicErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large", http.StatusText(http.StatusRequestEntityTooLarge))
+				return
+			}
+			WritePublicErrorEnvelope(w, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func WritePublicErrorEnvelope(w http.ResponseWriter, status int, code string, title string) {
+	WriteErrorEnvelope(w, status, code, title, publicErrorDetail(status, title))
 }
 
 func WriteErrorEnvelope(w http.ResponseWriter, status int, code string, title string, detail string) {
@@ -110,6 +127,14 @@ func WriteErrorEnvelope(w http.ResponseWriter, status int, code string, title st
 			"detail": detail,
 		},
 	})
+}
+
+func publicErrorDetail(status int, title string) string {
+	detail := strings.TrimSpace(title)
+	if detail != "" {
+		return detail
+	}
+	return http.StatusText(status)
 }
 
 func (v *Validator) Validate(req *http.Request) error {
@@ -146,7 +171,7 @@ func (v *Validator) Validate(req *http.Request) error {
 		return err
 	}
 
-	bodyHash, err := requestBodyHash(req)
+	bodyHash, err := requestBodyHash(req, v.maxBodyBytes)
 	if err != nil {
 		return fmt.Errorf("hash request body: %w", err)
 	}
@@ -179,15 +204,25 @@ func parseAuthorizationHeader(value string) ([]byte, error) {
 	return decoded, nil
 }
 
-func requestBodyHash(req *http.Request) (string, error) {
+func requestBodyHash(req *http.Request, maxBytes int64) (string, error) {
 	if req.Body == nil {
 		sum := sha256.Sum256(nil)
 		return hex.EncodeToString(sum[:]), nil
 	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBodyBytes
+	}
+	if req.ContentLength > maxBytes {
+		return "", ErrRequestBodyTooLarge
+	}
 
-	body, err := io.ReadAll(req.Body)
+	body, err := io.ReadAll(io.LimitReader(req.Body, maxBytes+1))
 	if err != nil {
 		return "", err
+	}
+	if int64(len(body)) > maxBytes {
+		_ = req.Body.Close()
+		return "", ErrRequestBodyTooLarge
 	}
 	_ = req.Body.Close()
 	req.Body = io.NopCloser(bytes.NewReader(body))

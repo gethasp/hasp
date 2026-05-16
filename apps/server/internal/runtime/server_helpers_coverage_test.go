@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +29,33 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
+
+type hmacReadTrackingBody struct {
+	readCalls  int
+	remaining  int64
+	failOnRead bool
+}
+
+func (b *hmacReadTrackingBody) Read(p []byte) (int, error) {
+	b.readCalls++
+	if b.failOnRead {
+		return 0, errors.New("body read should not happen")
+	}
+	if b.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > b.remaining {
+		n = int(b.remaining)
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'a'
+	}
+	b.remaining -= int64(n)
+	return n, nil
+}
+
+func (b *hmacReadTrackingBody) Close() error { return nil }
 
 func TestServerHTTPParserHelperCoverage(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/leases?consumer_id=agent&limit=2&expiring_in=5m", nil)
@@ -91,6 +121,50 @@ func TestServerHTTPParserHelperCoverage(t *testing.T) {
 		if _, ok := approvalDetailIDFromPath(tc.path); ok != tc.ok {
 			t.Fatalf("approval detail path %q ok=%t", tc.path, ok)
 		}
+	}
+}
+
+func TestHMACValidatorMiddlewareRecordsOversizedRevealFailures(t *testing.T) {
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x42}, 32)
+
+	validator, err := httpapi.NewValidator(key, httpapi.ValidatorOptions{
+		AllowedDateSkew: httpapi.DefaultAllowedDateSkew,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	body := &hmacReadTrackingBody{remaining: (1 << 20) + 1, failOnRead: true}
+	req := httptest.NewRequest(http.MethodPost, "/v1/items/api/reveal/inline", nil)
+	req.Body = body
+	req.ContentLength = (1 << 20) + 1
+	req.Header.Set(httpapi.HeaderDate, now.UTC().Format(time.RFC3339Nano))
+	req.Header.Set(httpapi.HeaderNonce, "abcdefabcdefabcdefabcdefabcdefaf")
+	req.Header.Set("Authorization", httpapi.AuthorizationScheme+" sig="+base64.StdEncoding.EncodeToString(make([]byte, sha256.Size)))
+
+	rec := httptest.NewRecorder()
+	called := false
+	var recorded error
+	hmacValidatorMiddleware(validator, func(r *http.Request, err error) {
+		called = true
+		recorded = err
+	}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler should not run for oversized reveal request")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("oversized reveal status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !called || recorded == nil {
+		t.Fatalf("expected oversized reveal failure to be recorded, called=%t err=%v", called, recorded)
+	}
+	if errors.Is(recorded, httpapi.ErrInvalidSignature) {
+		t.Fatalf("oversized reveal should fail before signature validation: %v", recorded)
+	}
+	if body.readCalls != 0 {
+		t.Fatalf("oversized reveal should reject before reading body, read calls=%d", body.readCalls)
 	}
 }
 
@@ -1511,11 +1585,11 @@ func TestRuntimeStoreAndBrokerResidualBranches(t *testing.T) {
 	if err := broker.ListLeases(ListLeasesRequest{}, &ListLeasesResponse{}); err == nil {
 		t.Fatal("nil session list leases should fail")
 	}
-	if err := broker.ListApprovals(ListApprovalsRequest{}, &ListApprovalsResponse{}); err == nil {
-		t.Fatal("nil approval list should fail")
+	if err := broker.ListApprovals(ListApprovalsRequest{}, &ListApprovalsResponse{}); !errors.Is(err, errApprovalTrustedPathRequired) {
+		t.Fatalf("approval list should require trusted path, got %v", err)
 	}
-	if err := broker.DecideApproval(DecideApprovalRequest{}, &DecideApprovalResponse{}); err == nil {
-		t.Fatal("nil approval decide should fail")
+	if err := broker.DecideApproval(DecideApprovalRequest{}, &DecideApprovalResponse{}); !errors.Is(err, errApprovalTrustedPathRequired) {
+		t.Fatalf("approval decide should require trusted path, got %v", err)
 	}
 	broker.sessions = NewSessionStore()
 	if err := broker.RevokeLease(RevokeLeaseRequest{}, &RevokeLeaseResponse{}); err == nil {
@@ -1897,6 +1971,12 @@ func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue decision approval: %v", err)
 	}
+	if err := decisionBroker.ListApprovals(ListApprovalsRequest{Status: "pending"}, &ListApprovalsResponse{}); !errors.Is(err, errApprovalTrustedPathRequired) {
+		t.Fatalf("public approval list should require trusted path, got %v", err)
+	}
+	if err := decisionBroker.DecideApproval(DecideApprovalRequest{ApprovalID: approval.ID, Decision: "deny"}, &DecideApprovalResponse{}); !errors.Is(err, errApprovalTrustedPathRequired) {
+		t.Fatalf("public approval decide should require trusted path, got %v", err)
+	}
 	for _, req := range []DecideApprovalRequest{
 		{ApprovalID: approval.ID, Decision: "grant", Reason: "because", HoldDurationMS: 1500, AuthMethod: "touch-id"},
 		{ApprovalID: approval.ID, Decision: "grant", HoldDurationMS: 1499, AuthMethod: "touch-id"},
@@ -1904,14 +1984,14 @@ func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
 		{ApprovalID: approval.ID, Decision: "deny", GrantedTTLS: 60},
 		{ApprovalID: approval.ID, Decision: "maybe"},
 	} {
-		if err := decisionBroker.DecideApproval(req, &DecideApprovalResponse{}); err == nil {
+		if err := decisionBroker.decideApprovalTrusted(req, &DecideApprovalResponse{}); err == nil {
 			t.Fatalf("decision %+v should fail", req)
 		}
 	}
-	if err := decisionBroker.DecideApproval(DecideApprovalRequest{ApprovalID: approval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &DecideApprovalResponse{}); !errors.Is(err, errVaultLocked) {
+	if err := decisionBroker.decideApprovalTrusted(DecideApprovalRequest{ApprovalID: approval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &DecideApprovalResponse{}); !errors.Is(err, errVaultLocked) {
 		t.Fatalf("locked grant err=%v", err)
 	}
-	if err := decisionBroker.DecideApproval(DecideApprovalRequest{ApprovalID: "missing", Decision: "deny"}, &DecideApprovalResponse{}); err == nil {
+	if err := decisionBroker.decideApprovalTrusted(DecideApprovalRequest{ApprovalID: "missing", Decision: "deny"}, &DecideApprovalResponse{}); err == nil {
 		t.Fatal("missing approval decision should fail")
 	}
 	if _, err := decisionBroker.sessions.Open("host", home, time.Minute, false, "agent"); err != nil {
@@ -1924,7 +2004,7 @@ func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
 	grantApproval.RequestedScope = ""
 	decisionBroker.approvals.approvals[grantApproval.ID] = grantApproval
 	var decisionReply DecideApprovalResponse
-	if err := decisionBroker.DecideApproval(DecideApprovalRequest{ApprovalID: grantApproval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &decisionReply); err != nil || decisionReply.LeaseID == "" {
+	if err := decisionBroker.decideApprovalTrusted(DecideApprovalRequest{ApprovalID: grantApproval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &decisionReply); err != nil || decisionReply.LeaseID == "" {
 		t.Fatalf("grant decision reply=%+v err=%v", decisionReply, err)
 	}
 	errorApproval, err := decisionBroker.approvals.Queue(QueueApprovalInput{SecretID: "secret", RequesterConsumerID: "agent", TTL: time.Minute})
@@ -1933,7 +2013,7 @@ func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
 	}
 	oldRandomRead := randomRead
 	randomRead = func([]byte) (int, error) { return 0, errors.New("session entropy failed") }
-	if err := decisionBroker.DecideApproval(DecideApprovalRequest{ApprovalID: errorApproval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &DecideApprovalResponse{}); err == nil {
+	if err := decisionBroker.decideApprovalTrusted(DecideApprovalRequest{ApprovalID: errorApproval.ID, Decision: "grant", HoldDurationMS: 1500, AuthMethod: "touch-id"}, &DecideApprovalResponse{}); err == nil {
 		t.Fatal("grant decision should propagate session creation error")
 	}
 	randomRead = oldRandomRead

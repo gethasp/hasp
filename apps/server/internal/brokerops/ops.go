@@ -18,6 +18,7 @@ var (
 	resolveReferenceFn     = (*store.Handle).ResolveReference
 	getItemFn              = (*store.Handle).GetItem
 	authorizeFn            = (*store.Handle).Authorize
+	authorizeAndConsumeFn  = (*store.Handle).AuthorizeAndConsume
 	grantProjectLeaseFn    = (*store.Handle).GrantProjectLease
 	grantSecretUseFn       = (*store.Handle).GrantSecretUse
 	grantConvenienceFn     = (*store.Handle).GrantConvenience
@@ -148,20 +149,27 @@ func AuthorizeReference(
 	for range 3 {
 		decision := authorizeFn(handle, request)
 		if decision.Allowed {
-			return item, nil
+			var err error
+			decision, err = authorizeAndConsumeFn(handle, request)
+			if err != nil {
+				return store.Item{}, err
+			}
+			if decision.Allowed {
+				return item, nil
+			}
 		}
 		if !decision.RequiresPrompt {
 			return store.Item{}, fmt.Errorf("access denied: %s", decision.Reason)
 		}
-		switch decision.Reason {
-		case "project_lease_required", "project_and_convenience_approval_required":
+		switch decision.RequiredAction() {
+		case store.AccessRequirementProjectLease, store.AccessRequirementProjectAndConvenience:
 			if projectGrant == "" {
 				return store.Item{}, fmt.Errorf("project lease required for %s", operation)
 			}
 			if _, err := grantProjectLeaseFn(handle, bindingID, sessionToken, projectGrant, window); err != nil {
 				return store.Item{}, err
 			}
-		case "secret_session_grant_required", "access_secret_prompt_required":
+		case store.AccessRequirementSecretGrant:
 			if secretGrant == "" {
 				return store.Item{}, fmt.Errorf("secret approval required for %s", item.Name)
 			}
@@ -169,14 +177,14 @@ func AuthorizeReference(
 			if _, err := grantSecretUseFn(handle, bindingID, sessionToken, item.Name, secretGrant, window, relaxed); err != nil {
 				return store.Item{}, err
 			}
-		case "convenience_approval_required":
+		case store.AccessRequirementConvenience:
 			if convenienceGrant == "" {
 				return store.Item{}, fmt.Errorf("convenience approval required for %s", destinationPath)
 			}
 			if _, err := grantConvenienceFn(handle, bindingID, sessionToken, destinationPath, []string{reference}, "user", convenienceGrant, window); err != nil {
 				return store.Item{}, err
 			}
-		case "write_grant_required":
+		case store.AccessRequirementWriteGrant:
 			return store.Item{}, errors.New("capture write grant required")
 		default:
 			return store.Item{}, fmt.Errorf("unsupported approval path: %s", decision.Reason)
@@ -205,20 +213,27 @@ func AuthorizeItem(
 	for range 3 {
 		decision := authorizeFn(handle, request)
 		if decision.Allowed {
-			return item, nil
+			var err error
+			decision, err = authorizeAndConsumeFn(handle, request)
+			if err != nil {
+				return store.Item{}, err
+			}
+			if decision.Allowed {
+				return item, nil
+			}
 		}
 		if !decision.RequiresPrompt {
 			return store.Item{}, fmt.Errorf("access denied: %s", decision.Reason)
 		}
-		switch decision.Reason {
-		case "project_lease_required":
+		switch decision.RequiredAction() {
+		case store.AccessRequirementProjectLease:
 			if projectGrant == "" {
 				return store.Item{}, fmt.Errorf("project lease required for %s", operation)
 			}
 			if _, err := grantProjectLeaseFn(handle, bindingID, sessionToken, projectGrant, window); err != nil {
 				return store.Item{}, err
 			}
-		case "secret_session_grant_required", "access_secret_prompt_required":
+		case store.AccessRequirementSecretGrant:
 			if secretGrant == "" {
 				return store.Item{}, fmt.Errorf("secret approval required for %s", item.Name)
 			}
@@ -265,7 +280,7 @@ func AuthorizeCapture(
 	if !decision.RequiresPrompt {
 		return fmt.Errorf("access denied: %s", decision.Reason)
 	}
-	if decision.Reason == "project_lease_required" {
+	if decision.RequiredAction() == store.AccessRequirementProjectLease {
 		if projectGrant == "" {
 			return errors.New("project lease required for capture")
 		}
@@ -274,7 +289,7 @@ func AuthorizeCapture(
 		}
 		decision = authorizeFn(handle, request)
 	}
-	if decision.Reason != "write_grant_required" {
+	if decision.RequiredAction() != store.AccessRequirementWriteGrant {
 		return fmt.Errorf("unsupported capture approval path: %s", decision.Reason)
 	}
 	if !writeGrant {

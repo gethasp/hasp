@@ -20,6 +20,7 @@ done < <(
   {
     find ./apps/server -name go.mod -not -path '*/vendor/*' -print 2>/dev/null || true
     find ./packages -name go.mod -not -path '*/vendor/*' -print 2>/dev/null || true
+    find ./tools -mindepth 2 -maxdepth 2 -name go.mod -not -path '*/vendor/*' -print 2>/dev/null || true
   } | sort -u
 )
 if [[ "${#modules[@]}" -eq 0 ]]; then

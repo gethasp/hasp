@@ -387,6 +387,11 @@ func TestHaspCheckAndUnsupportedToolHelpers(t *testing.T) {
 	if _, err := handle.UpsertItem("api_token", store.ItemKindKV, []byte("abc123"), store.ItemMetadata{}); err != nil {
 		t.Fatalf("upsert item: %v", err)
 	}
+	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
+		t.Fatalf("upsert binding: %v", err)
+	}
+	t.Setenv(mcpEnvSessionToken, "session-token")
+	grantMCPProjectSession(t, handle, projectRoot, "session-token")
 	if err := os.WriteFile(filepath.Join(projectRoot, "leak.txt"), []byte("abc123"), 0o600); err != nil {
 		t.Fatalf("write leak file: %v", err)
 	}
@@ -442,6 +447,8 @@ func TestHaspCheckUsesSharedScannerMetadata(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
+	t.Setenv(mcpEnvSessionToken, "session-token")
+	grantMCPProjectSession(t, handle, projectRoot, "session-token")
 	mustGit(t, projectRoot, "init")
 	if err := os.WriteFile(filepath.Join(projectRoot, ".gitignore"), []byte("ignored.txt\n"), 0o600); err != nil {
 		t.Fatalf("write gitignore: %v", err)
@@ -516,6 +523,8 @@ func TestHaspCheckFallsBackOutsideGit(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
+	t.Setenv(mcpEnvSessionToken, "session-token")
+	grantMCPProjectSession(t, handle, projectRoot, "session-token")
 	if err := os.WriteFile(filepath.Join(projectRoot, "leak.txt"), []byte("abc123secret"), 0o600); err != nil {
 		t.Fatalf("write leak: %v", err)
 	}
@@ -1001,8 +1010,16 @@ func TestCallCheckAndExecuteResidualErrorBranches(t *testing.T) {
 	}}); err == nil {
 		t.Fatal("expected runner execution failure")
 	}
-	if parseScope("bogus") != store.GrantOnce {
-		t.Fatal("expected invalid parseScope to fall back to once")
+	if _, err := parseScope("bogus", store.GrantOnce); err == nil {
+		t.Fatal("expected invalid parseScope to fail closed")
+	}
+	if _, err := callExecute(context.Background(), handle, toolCall{Name: "hasp_run", Arguments: map[string]any{
+		"project_root":  projectRoot,
+		"grant_project": "bogus",
+		"env":           map[string]any{"API_TOKEN": "secret_01"},
+		"command":       []any{"true"},
+	}}); err == nil || !strings.Contains(err.Error(), "unsupported grant scope") {
+		t.Fatalf("expected invalid grant_project failure, got %v", err)
 	}
 	if got := stringArg(map[string]any{"project_root": 123}, "project_root", "fallback"); got != "fallback" {
 		t.Fatalf("expected stringArg fallback, got %q", got)
@@ -1051,6 +1068,7 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
+	grantMCPProjectSession(t, handle, projectRoot, "token")
 	ensureSessionFn = func(context.Context, string, string, string) (brokerops.Session, error) {
 		return brokerops.Session{Token: "token"}, nil
 	}
@@ -1072,7 +1090,7 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 	grantProjectLeaseMCPFn = origGrantProject
 
 	canonicalProjectRootMCPFn = func(context.Context, string) (string, error) { return "", errors.New("canonical fail") }
-	if _, err := callCheck(context.Background(), handle, toolCall{Name: "hasp_check", Arguments: map[string]any{"project_root": projectRoot}}); err == nil || !strings.Contains(err.Error(), "canonical fail") {
+	if _, err := callCheck(context.Background(), handle, toolCall{Name: "hasp_check", Arguments: map[string]any{"project_root": projectRoot, "session_token": "token"}}); err == nil || !strings.Contains(err.Error(), "canonical fail") {
 		t.Fatalf("expected callCheck canonical failure, got %v", err)
 	}
 	canonicalProjectRootMCPFn = origCanonical
@@ -1114,7 +1132,23 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 		t.Fatalf("expected callCapture capture failure, got %v", err)
 	}
 
-	if parseScope("once") != store.GrantOnce || parseScope("session") != store.GrantSession || parseScope("window") != store.GrantWindow {
+	once, err := parseScope("once", store.GrantWindow)
+	if err != nil || once != store.GrantOnce {
+		t.Fatalf("expected once scope, got %q err=%v", once, err)
+	}
+	sessionScope, err := parseScope("session", store.GrantOnce)
+	if err != nil || sessionScope != store.GrantSession {
+		t.Fatalf("expected session scope, got %q err=%v", sessionScope, err)
+	}
+	window, err := parseScope("window", store.GrantOnce)
+	if err != nil || window != store.GrantWindow {
+		t.Fatalf("expected window scope, got %q err=%v", window, err)
+	}
+	fallback, err := parseScope("", store.GrantSession)
+	if err != nil || fallback != store.GrantSession {
+		t.Fatalf("expected empty scope fallback, got %q err=%v", fallback, err)
+	}
+	if _, err := parseScope("later", store.GrantOnce); err == nil {
 		t.Fatal("expected parseScope to cover once, session, and window")
 	}
 }

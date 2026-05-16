@@ -10,6 +10,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -73,8 +74,14 @@ func callSecretUpsert(ctx context.Context, handle *store.Handle, call toolCall, 
 		if err != nil {
 			return nil, err
 		}
-		projectGrant := parseScope(stringArg(call.Arguments, "grant_project", ""))
-		secretGrant := parseScope(stringArg(call.Arguments, "grant_secret", ""))
+		projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+		if err != nil {
+			return nil, err
+		}
+		secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+		if err != nil {
+			return nil, err
+		}
 		grantWrite := boolArg(call.Arguments, "grant_write", false)
 		creatingNew := !exists
 		if err := brokerops.AuthorizeCapture(ctx, handle, binding.ID, session.Token, name, projectGrant, secretGrant, 15*time.Minute, grantWrite); err != nil {
@@ -177,6 +184,14 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 	if name == "" {
 		return nil, errors.New("name is required")
 	}
+	projectRoot := strings.TrimSpace(stringArg(call.Arguments, "project_root", defaultOptionalMCPProjectRoot()))
+	if projectRoot == "" {
+		return nil, errors.New("project_root is required")
+	}
+	_, binding, err := requireMCPProjectAuthorization(ctx, handle, call, projectRoot)
+	if err != nil {
+		return nil, err
+	}
 	item, err := getItemMCPFn(handle, name)
 	if err != nil {
 		if errors.Is(err, store.ErrItemNotFound) {
@@ -184,21 +199,14 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 		}
 		return nil, err
 	}
-	projectRoot := strings.TrimSpace(stringArg(call.Arguments, "project_root", defaultOptionalMCPProjectRoot()))
 	exposures := handle.ItemExposures(item.Name)
 	available := false
 	reference := ""
-	if projectRoot != "" {
-		root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
-		if err != nil {
-			return nil, err
-		}
-		for _, exposure := range exposures {
-			if exposure.ProjectRoot == root {
-				available = true
-				reference = exposure.Reference
-				break
-			}
+	for _, exposure := range exposures {
+		if exposure.ProjectRoot == binding.CanonicalRoot {
+			available = true
+			reference = exposure.Reference
+			break
 		}
 	}
 	return map[string]any{
@@ -313,29 +321,8 @@ func authorizeSecretMutationMCP(ctx context.Context, handle *store.Handle, call 
 }
 
 func ensureProjectBindingExplicitMCP(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
-	binding, visible, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, err
-	}
-	if binding.ID != "" {
-		return binding, visible, nil
-	}
-	defaults, err := loadProjectDefaultsMCP()
-	if err != nil {
-		return store.Binding{}, nil, err
-	}
-	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, err
-	}
-	if !pathLooksLikeGitRepoMCP(root) {
-		return store.Binding{}, nil, fmt.Errorf("project %q is not a git repo", projectRoot)
-	}
-	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepoMCP(root)
-	if _, err := upsertBindingMCPFn(handle, ctx, root, cloneAliasSetMCP(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
-		return store.Binding{}, nil, err
-	}
-	return resolveBindingViewMCPFn(handle, ctx, root)
+	binding, visible, _, err := projectcontext.EnsureExplicit(ctx, handle, projectRoot, mcpProjectContextDeps())
+	return binding, visible, err
 }
 
 func existingExposureReferenceMCP(exposures []store.ItemExposure, projectRoot string) string {

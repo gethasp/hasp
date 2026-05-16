@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/hooks"
+	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -324,14 +325,16 @@ func projectUnbindCommand(ctx context.Context, args []string, stdout io.Writer) 
 }
 
 func bindProject(ctx context.Context, handle *store.Handle, projectRoot string, aliases map[string]string, defaultPolicy store.SecretPolicy, installHooks bool) (store.Binding, error) {
-	binding, err := handle.UpsertBinding(ctx, projectRoot, aliases, defaultPolicy, installHooks)
-	if err != nil {
-		return store.Binding{}, err
+	return projectcontext.Bind(ctx, handle, projectRoot, aliases, defaultPolicy, installHooks, appProjectContextDeps())
+}
+
+func appProjectContextDeps() projectcontext.Deps {
+	return projectcontext.Deps{
+		ResolveBindingView: resolveBindingViewAppFn,
+		LoadDefaults:       loadProjectDefaults,
+		CanonicalRoot:      appCanonicalProjectRootFn,
+		IsGitRepo:          pathLooksLikeGitRepo,
+		InstallHooks:       installHooksFn,
+		UpsertBinding:      (*store.Handle).UpsertBinding,
 	}
-	if installHooks {
-		if err := installHooksFn(projectRoot); err != nil {
-			return store.Binding{}, err
-		}
-	}
-	return binding, nil
 }

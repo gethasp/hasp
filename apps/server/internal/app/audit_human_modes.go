@@ -12,7 +12,7 @@ import (
 
 // redactKeys holds the lowercase key substrings that trigger redaction.
 // Any Details key whose lowercase form contains one of these strings is redacted.
-var redactKeys = []string{"value", "secret_value", "plaintext", "secret", "env_value"}
+var redactKeys = []string{"value", "secret_value", "plaintext", "secret", "env_value", "token", "authorization", "credential"}
 
 // redactDetailsForHuman returns a copy of details with sensitive values replaced
 // by "[REDACTED]". Keys are matched case-insensitively against redactKeys.

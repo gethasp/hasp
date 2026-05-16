@@ -78,6 +78,7 @@ func TestSecretToolsLifecycleAndMetadataOnlyGet(t *testing.T) {
 	if _, err := handle.GrantProjectLease(binding.ID, "session-token", store.GrantSession, 0); err != nil {
 		t.Fatalf("grant project lease: %v", err)
 	}
+	t.Setenv(mcpEnvSessionToken, "session-token")
 	grantMutation := func(action store.SecretMutationAction) {
 		t.Helper()
 		if _, err := handle.GrantSecretMutation(binding.ID, "session-token", "API_TOKEN", action, "user", store.GrantOnce, store.DefaultMutationGrantTTL); err != nil {

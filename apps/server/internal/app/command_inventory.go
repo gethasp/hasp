@@ -110,7 +110,7 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "lease", summary: "list or revoke active broker leases", group: commandGroupUtility, helpTopic: []string{"lease"}, subcommands: []string{"list", "revoke"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return leaseCommand(ctx, args, stdout, s)
 		}},
-		{name: "approval", summary: "list or decide broker approval requests", group: commandGroupUtility, helpTopic: []string{"approval"}, subcommands: []string{"decide", "list"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
+		{name: "approval", summary: "list broker approval requests", group: commandGroupUtility, helpTopic: []string{"approval"}, subcommands: []string{"list"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return approvalCommand(ctx, args, stdout, s)
 		}},
 		{name: "access", summary: "inspect consumer-to-secret access grants", group: commandGroupUtility, helpTopic: []string{"access"}, subcommands: []string{"matrix"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {

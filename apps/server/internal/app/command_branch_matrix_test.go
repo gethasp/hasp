@@ -199,8 +199,9 @@ func TestSecretPlaintextPolicyHelpers(t *testing.T) {
 		t.Fatalf("open session: %v", err)
 	}
 	t.Setenv(envSessionToken, reply.SessionToken)
-	if err := enforceSecretPlaintextPolicy(context.Background(), handle, "API_TOKEN", store.PlaintextReveal); err == nil || !strings.Contains(err.Error(), "grant-plaintext --token "+reply.SessionToken) {
-		t.Fatalf("expected env session-token plaintext policy to require grant path, got %v", err)
+	err = enforceSecretPlaintextPolicy(context.Background(), handle, "API_TOKEN", store.PlaintextReveal)
+	if err == nil || !strings.Contains(err.Error(), "grant-plaintext --item API_TOKEN --action reveal") || strings.Contains(err.Error(), reply.SessionToken) {
+		t.Fatalf("expected env session-token plaintext policy to require token-safe grant guidance, got %v", err)
 	}
 	t.Setenv(envSessionToken, "")
 	t.Setenv(envAgentConsumer, "cursor")

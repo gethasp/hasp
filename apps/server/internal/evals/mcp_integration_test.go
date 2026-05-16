@@ -120,7 +120,11 @@ func TestMCPEndToEndEval(t *testing.T) {
 	checkResponses, err := runMCPBinaryRequests(t, env, []map[string]any{
 		{"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": map[string]any{
 			"name":      "hasp_check",
-			"arguments": map[string]any{"project_root": env.projectRoot},
+			"arguments": map[string]any{
+				"project_root":  env.projectRoot,
+				"session_token": sessionToken,
+				"grant_project": "window",
+			},
 		}},
 	})
 	if err != nil {

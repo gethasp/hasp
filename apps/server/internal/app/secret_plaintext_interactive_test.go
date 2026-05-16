@@ -89,8 +89,8 @@ func TestEnforceSecretPlaintextPolicyInteractiveTTYNoStillBlocks(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected block when operator declines interactive grant")
 	}
-	if !strings.Contains(err.Error(), "grant-plaintext --token "+sessionToken) {
-		t.Fatalf("expected fallback error to mention grant-plaintext command, got %v", err)
+	if !strings.Contains(err.Error(), "grant-plaintext --item API_TOKEN --action reveal") || strings.Contains(err.Error(), sessionToken) {
+		t.Fatalf("expected fallback error to mention token-safe grant-plaintext guidance, got %v", err)
 	}
 }
 

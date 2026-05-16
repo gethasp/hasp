@@ -61,8 +61,8 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 		return brokerops.Session{Token: "session-token"}, nil
 	}
 
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "missing"}}); err != nil {
-		t.Fatalf("callTool secret_get missing should be handled, got %v", err)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "missing"}}); err == nil || !strings.Contains(err.Error(), "project_root is required") {
+		t.Fatalf("expected secret_get without project root to fail closed, got %v", err)
 	}
 	if _, err := callTool(context.Background(), toolCall{Name: "unsupported_tool", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("expected unsupported tool error")
@@ -92,8 +92,8 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_update", Arguments: map[string]any{"name": "API_TOKEN", "value": "updated"}}); err != nil {
 		t.Fatalf("callTool secret_update: %v", err)
 	}
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "API_TOKEN"}}); err != nil {
-		t.Fatalf("callTool secret_get existing: %v", err)
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), "project_root is required") {
+		t.Fatalf("expected secret_get existing without project root to fail closed, got %v", err)
 	}
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_secret_delete", Arguments: map[string]any{"name": "API_TOKEN"}}); err == nil || !strings.Contains(err.Error(), "project_root and name are required") {
 		t.Fatalf("expected delete without project root to fail closed, got %v", err)
@@ -141,25 +141,6 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	}
 	upsertItemMCPFn = origUpsertItem
 
-	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "MISSING"}}); err != nil || got["exists"] != false {
-		t.Fatalf("expected missing get result, got %+v err=%v", got, err)
-	}
-	getItemMCPFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
-	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE"}}); err == nil || !strings.Contains(err.Error(), "get fail") {
-		t.Fatalf("expected get failure branch, got %v", err)
-	}
-	getItemMCPFn = origGetItem
-	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": gitRoot}}); err == nil && got["available_in_project"] != false {
-		t.Fatalf("expected non-exposed secret to be unavailable in project, got %+v", got)
-	}
-	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{}}); err == nil {
-		t.Fatal("expected missing get name failure")
-	}
-	canonicalProjectRootMCPFn = func(context.Context, string) (string, error) { return "", errors.New("canonical fail") }
-	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": "repo"}}); err == nil || !strings.Contains(err.Error(), "canonical fail") {
-		t.Fatalf("expected canonical failure for project-scoped get, got %v", err)
-	}
-	canonicalProjectRootMCPFn = origCanonical
 	if err := os.MkdirAll(gitRoot, 0o755); err != nil {
 		t.Fatalf("mkdir git root: %v", err)
 	}
@@ -173,6 +154,26 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	if _, err := handle.GrantProjectLease(mutationBinding.ID, "session-token", store.GrantSession, 0); err != nil {
 		t.Fatalf("grant mutation project lease: %v", err)
 	}
+
+	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "MISSING", "project_root": gitRoot, "session_token": "session-token"}}); err != nil || got["exists"] != false {
+		t.Fatalf("expected missing get result, got %+v err=%v", got, err)
+	}
+	getItemMCPFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
+	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": gitRoot, "session_token": "session-token"}}); err == nil || !strings.Contains(err.Error(), "get fail") {
+		t.Fatalf("expected get failure branch, got %v", err)
+	}
+	getItemMCPFn = origGetItem
+	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": gitRoot, "session_token": "session-token"}}); err == nil && got["available_in_project"] != false {
+		t.Fatalf("expected non-exposed secret to be unavailable in project, got %+v", got)
+	}
+	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{}}); err == nil {
+		t.Fatal("expected missing get name failure")
+	}
+	canonicalProjectRootMCPFn = func(context.Context, string) (string, error) { return "", errors.New("canonical fail") }
+	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": "repo", "session_token": "session-token"}}); err == nil || !strings.Contains(err.Error(), "canonical fail") {
+		t.Fatalf("expected canonical failure for project-scoped get, got %v", err)
+	}
+	canonicalProjectRootMCPFn = origCanonical
 	grantMutation := func(itemName string, action store.SecretMutationAction) {
 		t.Helper()
 		if _, err := handle.GrantSecretMutation(mutationBinding.ID, "session-token", itemName, action, "user", store.GrantOnce, store.DefaultMutationGrantTTL); err != nil {

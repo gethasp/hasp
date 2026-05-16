@@ -276,7 +276,7 @@ func TestMCPAutoAdoptResidualBranches(t *testing.T) {
 	}
 
 	loadCLIConfigMCPFn = func() (paths.CLIConfig, error) { return paths.CLIConfig{}, errors.New("load fail") }
-	if _, err := callCheck(context.Background(), handle, toolCall{Name: "hasp_check", Arguments: map[string]any{"project_root": projectRoot}}); err == nil || !strings.Contains(err.Error(), "load fail") {
+	if _, err := callCheck(context.Background(), handle, toolCall{Name: "hasp_check", Arguments: map[string]any{"project_root": projectRoot, "session_token": "token"}}); err == nil || !strings.Contains(err.Error(), "load fail") {
 		t.Fatalf("expected callCheck ensure-binding failure, got %v", err)
 	}
 }

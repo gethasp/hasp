@@ -107,7 +107,7 @@ func (h *Handle) UpsertBinding(ctx context.Context, projectPath string, aliases 
 		binding.Aliases[strings.TrimSpace(alias)] = strings.TrimSpace(itemName)
 	}
 	binding.DefaultCapturePolicy = normalizePolicy(defaultPolicy)
-	binding.HookInstalled = hookInstalled
+	binding.HookInstalled = binding.HookInstalled || hookInstalled
 	h.state.Bindings[root] = binding
 	err = h.persist()
 	if err == nil {

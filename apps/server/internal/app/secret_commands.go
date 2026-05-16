@@ -9,6 +9,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/app/secretops"
 	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
+	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -72,30 +73,7 @@ func existingExposureReference(exposures []store.ItemExposure, projectRoot strin
 }
 
 func ensureProjectBindingExplicit(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, bool, error) {
-	binding, visible, err := resolveBindingViewAppFn(handle, ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	if binding.ID != "" {
-		return binding, visible, false, nil
-	}
-	defaults, err := loadProjectDefaults()
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	root, err := appCanonicalProjectRootFn(ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	if !pathLooksLikeGitRepo(root) {
-		return store.Binding{}, nil, false, fmt.Errorf("project %q is not a git repo", projectRoot)
-	}
-	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepo(root)
-	if _, err := bindProject(ctx, handle, root, cloneAliasSet(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	binding, visible, err = resolveBindingViewAppFn(handle, ctx, root)
-	return binding, visible, true, err
+	return projectcontext.EnsureExplicit(ctx, handle, projectRoot, appProjectContextDeps())
 }
 
 func secretProjectContext(ctx context.Context, projectRoot string) (string, bool, error) {

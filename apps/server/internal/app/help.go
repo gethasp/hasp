@@ -63,7 +63,6 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "lease revoke", text: leaseRevokeHelpText},
 	{key: "approval", text: approvalHelpText},
 	{key: "approval list", text: approvalListHelpText},
-	{key: "approval decide", text: approvalDecideHelpText},
 	{key: "access", text: accessHelpText},
 	{key: "access matrix", text: accessMatrixHelpText},
 	{key: "policy", text: policyHelpText},
@@ -1194,11 +1193,10 @@ Examples
 
 const approvalHelpText = `hasp approval
 
-List or decide broker approval requests.
+List broker approval requests.
 
 Subcommands
   list      list approval requests by status or consumer
-  decide    grant or deny one pending approval
 
 Common flags
   --json   emit machine-readable result on stdout
@@ -1206,8 +1204,6 @@ Common flags
 Examples
   hasp approval list --json
   hasp approval list --status pending --consumer ci-runner
-  hasp approval decide <approval-id> --grant --ttl 15m --scope window --auth-method device-owner --hold-proof 1500ms
-  hasp approval decide <approval-id> --deny --reason not-now
 `
 
 const approvalListHelpText = `hasp approval list
@@ -1223,25 +1219,6 @@ Examples
   hasp approval list --json
   hasp approval list --status pending
   hasp approval list --consumer ci-runner
-`
-
-const approvalDecideHelpText = `hasp approval decide
-
-Grant or deny one pending approval request.
-
-Flags
-  --json           emit machine-readable result on stdout
-  --grant          grant the approval and create a lease
-  --deny           deny the approval without creating a lease
-  --ttl <dur>              granted lease lifetime for --grant
-  --scope <scope>          granted scope for --grant
-  --auth-method <method>   local auth proof for --grant: touch-id|device-owner
-  --hold-proof <duration>  hold duration proof for --grant, minimum 1500ms
-  --reason <text>          decision reason, usually for --deny
-
-Examples
-  hasp approval decide <approval-id> --grant --ttl 15m --scope window --auth-method device-owner --hold-proof 1500ms
-  hasp approval decide <approval-id> --deny --reason not-now
 `
 
 const accessHelpText = `hasp access

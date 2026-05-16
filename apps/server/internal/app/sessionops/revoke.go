@@ -73,10 +73,9 @@ func sessionRevoke(ctx context.Context, deps Deps, args []string, stdout io.Writ
 	if err := client.RevokeSession(ctx, *token); err != nil {
 		return err
 	}
-	payload := map[string]any{"token": *token, "outcome": "revoked"}
+	payload := map[string]any{"outcome": "revoked"}
 	return deps.RenderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return deps.RenderSimpleAction(ctx, w, "Session revoked", "Revoked the daemon-backed session.",
-			cliPair("Token", *token),
 			cliPair("Outcome", "revoked"),
 		)
 	})

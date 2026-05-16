@@ -14,7 +14,9 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
+	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
@@ -34,6 +36,7 @@ var (
 	authorizeReferenceMCPFn   = brokerops.AuthorizeReference
 	runnerExecuteMCPFn        = runner.Execute
 	loadCLIConfigMCPFn        = paths.LoadConfig
+	installHooksMCPFn         = hooks.Install
 )
 
 const (
@@ -128,15 +131,22 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 		return nil, err
 	}
 	if grantProject != "" {
-		if _, err := grantProjectLeaseMCPFn(handle, binding.ID, session.Token, parseScope(grantProject), 15*time.Minute); err != nil {
+		scope, err := parseScope(grantProject, store.GrantOnce)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := grantProjectLeaseMCPFn(handle, binding.ID, session.Token, scope, 15*time.Minute); err != nil {
 			return nil, err
 		}
 	}
-	decision := handle.Authorize(store.AccessRequest{
+	decision, err := handle.AuthorizeAndConsume(store.AccessRequest{
 		Operation:    store.OperationList,
 		BindingID:    binding.ID,
 		SessionToken: session.Token,
 	})
+	if err != nil {
+		return nil, err
+	}
 	if !decision.Allowed {
 		return nil, approvalRequired(decision.Reason)
 	}
@@ -145,7 +155,7 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 
 func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
-	if _, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot); err != nil {
+	if _, _, err := requireMCPProjectAuthorization(ctx, handle, call, projectRoot); err != nil {
 		return nil, err
 	}
 	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
@@ -161,6 +171,9 @@ func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[st
 
 func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	if _, _, err := requireMCPProjectAuthorization(ctx, handle, call, projectRoot); err != nil {
+		return nil, err
+	}
 	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 	if err != nil {
 		return nil, err
@@ -241,29 +254,31 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if len(command) == 0 {
 		return nil, errors.New("command is required")
 	}
-	projectGrant := parseScope(stringArg(call.Arguments, "grant_project", ""))
-	secretGrant := parseScope(stringArg(call.Arguments, "grant_secret", ""))
+	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+	if err != nil {
+		return nil, err
+	}
+	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+	if err != nil {
+		return nil, err
+	}
 	envRefs := stringMapArg(call.Arguments["env"])
 	fileRefs := stringMapArg(call.Arguments["files"])
 	target := strings.TrimSpace(stringArg(call.Arguments, "target", ""))
 	expansion := store.ManifestTargetExpansion{}
 	if target != "" {
-		if len(envRefs) > 0 || len(fileRefs) > 0 {
-			return nil, errors.New("target cannot be combined with explicit env or files mappings")
-		}
 		root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 		if err != nil {
 			return nil, err
 		}
-		expansion, err = store.ExpandManifestTarget(root, target)
+		expanded, err := brokerops.ExpandExecutionTarget(root, target, envRefs, fileRefs, command)
 		if err != nil {
 			return nil, err
 		}
-		if len(expansion.XCConfig) > 0 || len(expansion.Outputs) > 0 {
-			return nil, fmt.Errorf("target %q contains workspace-visible delivery; MCP run/inject refuses generated outputs", target)
-		}
-		envRefs = expansion.Env
-		fileRefs = expansion.Files
+		expansion = expanded.Expansion
+		envRefs = expanded.EnvRefs
+		fileRefs = expanded.FileRefs
+		command = expanded.Command
 	}
 	if call.Name == "hasp_inject" && len(fileRefs) == 0 {
 		return nil, errors.New("files are required for hasp_inject")
@@ -275,38 +290,36 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
 		return nil, err
 	}
-	items := make([]store.Item, 0, len(envRefs)+len(fileRefs))
-	env := map[string]string{}
-	files := map[string][]byte{}
-	for envName, reference := range envRefs {
-		item, err := authorizeReferenceMCPFn(ctx, handle, binding.ID, projectRoot, session.Token, reference, store.OperationRun, projectGrant, secretGrant, "", 15*time.Minute, "")
-		if err != nil {
-			return nil, err
-		}
-		env[envName] = string(item.Value)
-		items = append(items, item)
-	}
-	for envName, reference := range fileRefs {
-		item, err := authorizeReferenceMCPFn(ctx, handle, binding.ID, projectRoot, session.Token, reference, store.OperationInject, projectGrant, secretGrant, "", 15*time.Minute, "")
-		if err != nil {
-			return nil, err
-		}
-		files[envName] = item.Value
-		items = append(items, item)
-	}
-	stdoutCapture := newMCPToolOutputCapture(items)
-	stderrCapture := newMCPToolOutputCapture(items)
-	runResult, err := runnerExecuteMCPFn(ctx, runner.Input{
-		ProjectRoot: expansion.ExecutionRoot(projectRoot),
-		Command:     command,
-		Env:         env,
-		Files:       files,
-		Stdout:      stdoutCapture.Writer(),
-		Stderr:      stderrCapture.Writer(),
+	var stdoutCapture *mcpToolOutputCapture
+	var stderrCapture *mcpToolOutputCapture
+	execResult, err := brokerops.Execute(ctx, brokerops.ExecutionRequest{
+		Handle:       handle,
+		BindingID:    binding.ID,
+		ProjectRoot:  projectRoot,
+		SessionToken: session.Token,
+		Command:      command,
+		EnvRefs:      envRefs,
+		FileRefs:     fileRefs,
+		Expansion:    expansion,
+		ProjectGrant: projectGrant,
+		SecretGrant:  secretGrant,
+		Window:       15 * time.Minute,
+		ConfigureRunner: func(items []store.Item, input runner.Input) runner.Input {
+			stdoutCapture = newMCPToolOutputCapture(items)
+			stderrCapture = newMCPToolOutputCapture(items)
+			input.Stdout = stdoutCapture.Writer()
+			input.Stderr = stderrCapture.Writer()
+			return input
+		},
+		Deps: brokerops.ExecutionDeps{
+			AuthorizeReference: authorizeReferenceMCPFn,
+			RunnerExecute:      runnerExecuteMCPFn,
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
+	runResult := execResult.RunResult
 	stdoutCapture.WriteBuffered(runResult.Stdout)
 	stderrCapture.WriteBuffered(runResult.Stderr)
 	stdoutCapture.Close()
@@ -341,8 +354,14 @@ func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	kind := store.ItemKind(stringArg(call.Arguments, "kind", string(store.ItemKindKV)))
 	value := stringArg(call.Arguments, "value", "")
 	bind := boolArg(call.Arguments, "bind", false)
-	projectGrant := parseScope(stringArg(call.Arguments, "grant_project", ""))
-	secretGrant := parseScope(stringArg(call.Arguments, "grant_secret", ""))
+	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+	if err != nil {
+		return nil, err
+	}
+	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+	if err != nil {
+		return nil, err
+	}
 	grantWrite := boolArg(call.Arguments, "grant_write", false)
 	if name == "" {
 		return nil, errors.New("name is required")
@@ -540,32 +559,44 @@ func appendAuditApproval(bindingID string, itemName string) {
 }
 
 func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, error) {
-	binding, visible, err := resolveBindingViewMCPFn(handle, ctx, projectRoot)
+	binding, visible, _, err := projectcontext.Ensure(ctx, handle, projectRoot, mcpProjectContextDeps())
+	return binding, visible, err
+}
+
+func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, call toolCall, projectRoot string) (brokerops.Session, store.Binding, error) {
+	session := brokerops.Session{Token: defaultMCPSessionToken(call)}
+	if strings.TrimSpace(session.Token) == "" {
+		return brokerops.Session{}, store.Binding{}, approvalRequired("project_lease_required")
+	}
+	grantProject := stringArg(call.Arguments, "grant_project", "")
+	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
-		return store.Binding{}, nil, err
+		return brokerops.Session{}, store.Binding{}, err
 	}
-	if binding.ID != "" {
-		return binding, visible, nil
+	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
+		return brokerops.Session{}, store.Binding{}, err
 	}
-	defaults, err := loadProjectDefaultsMCP()
+	if grantProject != "" {
+		scope, err := parseScope(grantProject, store.GrantOnce)
+		if err != nil {
+			return brokerops.Session{}, store.Binding{}, err
+		}
+		if _, err := grantProjectLeaseMCPFn(handle, binding.ID, session.Token, scope, 15*time.Minute); err != nil {
+			return brokerops.Session{}, store.Binding{}, err
+		}
+	}
+	decision, err := handle.AuthorizeAndConsume(store.AccessRequest{
+		Operation:    store.OperationList,
+		BindingID:    binding.ID,
+		SessionToken: session.Token,
+	})
 	if err != nil {
-		return store.Binding{}, nil, err
+		return brokerops.Session{}, store.Binding{}, err
 	}
-	if !defaults.AutoProtectRepos {
-		return binding, visible, nil
+	if !decision.Allowed {
+		return brokerops.Session{}, store.Binding{}, approvalRequired(decision.Reason)
 	}
-	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, err
-	}
-	if !pathLooksLikeGitRepoMCP(root) {
-		return binding, visible, nil
-	}
-	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepoMCP(root)
-	if _, err := handle.UpsertBinding(ctx, root, cloneAliasSetMCP(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
-		return store.Binding{}, nil, err
-	}
-	return resolveBindingViewMCPFn(handle, ctx, root)
+	return session, binding, nil
 }
 
 func requireProjectBindingMCP(binding store.Binding, projectRoot string) error {
@@ -575,11 +606,7 @@ func requireProjectBindingMCP(binding store.Binding, projectRoot string) error {
 	return fmt.Errorf("project %q is not managed yet; run inside a git repo with auto-protect enabled or bind it explicitly", projectRoot)
 }
 
-type projectDefaultsMCP struct {
-	AutoProtectRepos bool
-	AutoInstallHooks bool
-	DefaultPolicy    store.SecretPolicy
-}
+type projectDefaultsMCP = projectcontext.Defaults
 
 func loadProjectDefaultsMCP() (projectDefaultsMCP, error) {
 	cfg, err := loadCLIConfigMCPFn()
@@ -621,14 +648,18 @@ func pathLooksLikeGitRepoMCP(root string) bool {
 }
 
 func cloneAliasSetMCP(input map[string]string) map[string]string {
-	if len(input) == 0 {
-		return map[string]string{}
+	return projectcontext.CloneAliases(input)
+}
+
+func mcpProjectContextDeps() projectcontext.Deps {
+	return projectcontext.Deps{
+		ResolveBindingView: resolveBindingViewMCPFn,
+		LoadDefaults:       loadProjectDefaultsMCP,
+		CanonicalRoot:      canonicalProjectRootMCPFn,
+		IsGitRepo:          pathLooksLikeGitRepoMCP,
+		InstallHooks:       installHooksMCPFn,
+		UpsertBinding:      upsertBindingMCPFn,
 	}
-	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
-	return out
 }
 
 func stringArg(values map[string]any, key string, fallback string) string {
@@ -681,16 +712,18 @@ func stringSliceArg(value any) []string {
 	return result
 }
 
-func parseScope(value string) store.GrantScope {
-	switch value {
+func parseScope(value string, fallback store.GrantScope) (store.GrantScope, error) {
+	switch strings.TrimSpace(value) {
+	case "":
+		return fallback, nil
 	case string(store.GrantOnce):
-		return store.GrantOnce
+		return store.GrantOnce, nil
 	case string(store.GrantSession):
-		return store.GrantSession
+		return store.GrantSession, nil
 	case string(store.GrantWindow):
-		return store.GrantWindow
+		return store.GrantWindow, nil
 	default:
-		return store.GrantOnce
+		return "", fmt.Errorf("unsupported grant scope %q", value)
 	}
 }
 

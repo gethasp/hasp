@@ -27,6 +27,37 @@ type failingReadCloser struct{}
 func (f failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("read fail") }
 func (f failingReadCloser) Close() error             { return nil }
 
+const daemonHMACBodyLimit = 1 << 20
+
+type readTrackingBody struct {
+	remaining  int64
+	readCalls  int
+	bytesRead  int64
+	failOnRead bool
+}
+
+func (b *readTrackingBody) Read(p []byte) (int, error) {
+	b.readCalls++
+	if b.failOnRead {
+		return 0, errors.New("body read should not happen")
+	}
+	if b.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > b.remaining {
+		n = int(b.remaining)
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'a'
+	}
+	b.remaining -= int64(n)
+	b.bytesRead += int64(n)
+	return n, nil
+}
+
+func (b *readTrackingBody) Close() error { return nil }
+
 func TestValidatorAcceptsSignedRequestAndRestoresBody(t *testing.T) {
 	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
 	key := bytes.Repeat([]byte{0x42}, 32)
@@ -68,6 +99,14 @@ func TestWriteErrorEnvelope(t *testing.T) {
 	}
 }
 
+func TestWritePublicErrorEnvelopeUsesGenericDetail(t *testing.T) {
+	rec := httptest.NewRecorder()
+	WritePublicErrorEnvelope(rec, http.StatusUnauthorized, "unauthorized", "Unauthorized")
+	if body := rec.Body.String(); !strings.Contains(body, `"detail":"Unauthorized"`) || strings.Contains(body, "missing HASP-Date header") {
+		t.Fatalf("body = %s", body)
+	}
+}
+
 func TestValidatorRejectsReplay(t *testing.T) {
 	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
 	key := bytes.Repeat([]byte{0x11}, 32)
@@ -90,6 +129,45 @@ func TestValidatorRejectsReplay(t *testing.T) {
 	err = validator.Validate(req2)
 	if !errors.Is(err, ErrNonceReplay) {
 		t.Fatalf("expected nonce replay rejection, got %v", err)
+	}
+}
+
+func TestValidatorMiddlewareRedactsFailureDetails(t *testing.T) {
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x21}, 32)
+
+	validator, err := NewValidator(key, ValidatorOptions{
+		AllowedDateSkew: DefaultAllowedDateSkew,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	validator.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next should not run")
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"detail":"Unauthorized"`) || strings.Contains(body, ErrMissingDateHeader.Error()) {
+		t.Fatalf("unauthorized body = %s", body)
+	}
+
+	oversizedBody := &readTrackingBody{remaining: daemonHMACBodyLimit + 1, failOnRead: true}
+	oversizedReq := requestWithValidLookingHeaders(t, now, "abcdefabcdefabcdefabcdefabcdefc0", http.MethodPost, "/v1/config/value", oversizedBody)
+	oversizedReq.ContentLength = daemonHMACBodyLimit + 1
+
+	rec = httptest.NewRecorder()
+	validator.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next should not run")
+	})).ServeHTTP(rec, oversizedReq)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized status = %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"detail":"Request Entity Too Large"`) || strings.Contains(body, ErrRequestBodyTooLarge.Error()) {
+		t.Fatalf("oversized body = %s", body)
 	}
 }
 
@@ -349,6 +427,94 @@ func TestValidatorRejectsBodyTamper(t *testing.T) {
 	}
 }
 
+func TestValidatorRejectsOversizedContentLengthBeforeReadingBody(t *testing.T) {
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x34}, 32)
+
+	validator, err := NewValidator(key, ValidatorOptions{
+		AllowedDateSkew: DefaultAllowedDateSkew,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	body := &readTrackingBody{remaining: daemonHMACBodyLimit + 1, failOnRead: true}
+	req := requestWithValidLookingHeaders(t, now, "abcdefabcdefabcdefabcdefabcdefaf", http.MethodPost, "/v1/config/value", body)
+	req.ContentLength = daemonHMACBodyLimit + 1
+
+	err = validator.Validate(req)
+	if err == nil {
+		t.Fatal("expected oversized content-length rejection")
+	}
+	if errors.Is(err, ErrInvalidSignature) {
+		t.Fatalf("oversized content-length should fail before signature validation: %v", err)
+	}
+	if body.readCalls != 0 {
+		t.Fatalf("oversized content-length should reject before reading body, read calls=%d", body.readCalls)
+	}
+}
+
+func TestValidatorRejectsUnknownLengthBodiesAfterBoundedHashing(t *testing.T) {
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x35}, 32)
+
+	validator, err := NewValidator(key, ValidatorOptions{
+		AllowedDateSkew: DefaultAllowedDateSkew,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	body := &readTrackingBody{remaining: 2 * daemonHMACBodyLimit}
+	req := requestWithValidLookingHeaders(t, now, "abcdefabcdefabcdefabcdefabcdefb0", http.MethodPost, "/v1/backups", body)
+	req.ContentLength = -1
+
+	err = validator.Validate(req)
+	if err == nil {
+		t.Fatal("expected oversized unknown-length body rejection")
+	}
+	if errors.Is(err, ErrInvalidSignature) {
+		t.Fatalf("oversized unknown-length body should fail before signature validation: %v", err)
+	}
+	if body.bytesRead > daemonHMACBodyLimit+1 {
+		t.Fatalf("unknown-length body should be bounded while hashing, read %d bytes", body.bytesRead)
+	}
+}
+
+func TestValidatorMiddlewarePreservesBoundarySizedBodiesForHandlers(t *testing.T) {
+	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
+	key := bytes.Repeat([]byte{0x36}, 32)
+
+	validator, err := NewValidator(key, ValidatorOptions{
+		AllowedDateSkew: DefaultAllowedDateSkew,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+
+	body := bytes.Repeat([]byte{'a'}, daemonHMACBodyLimit)
+	req := signedRequest(t, key, now, "abcdefabcdefabcdefabcdefabcdefb1", http.MethodPost, "/v1/backups", "", body)
+
+	rec := httptest.NewRecorder()
+	validator.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Fatalf("read handler body: %v", readErr)
+		}
+		if !bytes.Equal(gotBody, body) {
+			t.Fatalf("handler body length=%d want %d", len(gotBody), len(body))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("boundary-sized signed request status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestValidatorResidualBranches(t *testing.T) {
 	if _, err := NewValidator(nil, ValidatorOptions{}); err == nil {
 		t.Fatal("empty validator key should fail")
@@ -387,7 +553,7 @@ func TestValidatorResidualBranches(t *testing.T) {
 	}
 	nilBodyReq := httptest.NewRequest(http.MethodPost, "/", nil)
 	nilBodyReq.Body = nil
-	emptyHash, err := requestBodyHash(nilBodyReq)
+	emptyHash, err := requestBodyHash(nilBodyReq, DefaultMaxBodyBytes)
 	if err != nil {
 		t.Fatalf("nil request body hash: %v", err)
 	}
@@ -449,5 +615,16 @@ func signedRequest(t *testing.T, key []byte, when time.Time, nonce, method, path
 	req.Header.Set(HeaderDate, dateValue)
 	req.Header.Set(HeaderNonce, nonce)
 	req.Header.Set("Authorization", AuthorizationScheme+" sig="+base64.StdEncoding.EncodeToString(signature))
+	return req
+}
+
+func requestWithValidLookingHeaders(t *testing.T, when time.Time, nonce, method, path string, body io.ReadCloser) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(method, "http://localhost"+path, nil)
+	req.Body = body
+	req.Header.Set(HeaderDate, when.UTC().Format(time.RFC3339Nano))
+	req.Header.Set(HeaderNonce, nonce)
+	req.Header.Set("Authorization", AuthorizationScheme+" sig="+base64.StdEncoding.EncodeToString(make([]byte, sha256.Size)))
 	return req
 }

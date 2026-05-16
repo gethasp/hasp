@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "version": "v1.0.19",
+  "versionNumber": "1.0.19",
+  "createdAt": "2026-05-16T22:01:07.009Z",
+  "updatedLabel": "May 2026",
+  "sourceCommit": "90ae6bd450df8febe0df1acc67e11afd65787937",
+  "dirty": false,
+  "defaultRouteSlug": "overview",
+  "specs": [
+    {
+      "source": "public/README.md",
+      "slug": "overview",
+      "section": "Start",
+      "order": 10,
+      "title": "Overview",
+      "description": "What HASP is, what ships in the public repo, and what the local broker does."
+    },
+    {
+      "source": "public/QUICKSTART.md",
+      "slug": "quickstart",
+      "section": "Start",
+      "order": 20,
+      "title": "Quickstart",
+      "description": "The shortest safe path to a working local HASP install."
+    },
+    {
+      "source": "public/docs/mental-model.md",
+      "slug": "mental-model",
+      "section": "Start",
+      "order": 15,
+      "title": "Mental model",
+      "description": "How to think about vaults, repo boundaries, consumers, grants, sessions, audit, and redaction."
+    },
+    {
+      "source": "public/docs/agent-mental-model.md",
+      "slug": "agent-mental-model",
+      "section": "Start",
+      "order": 16,
+      "title": "Agent mental model",
+      "description": "How agents use HASP handles, MCP tools, grants, and brokered runs without reading raw secret values."
+    },
+    {
+      "source": "public/docs/value-free-manifests.md",
+      "slug": "value-free-manifests",
+      "section": "Start",
+      "order": 18,
+      "title": "Value-free manifests",
+      "description": "The committed .hasp.manifest.json contract for requirements, targets, examples, delivery, and safety rules."
+    },
+    {
+      "source": "public/docs/install.md",
+      "slug": "install",
+      "section": "Start",
+      "order": 30,
+      "title": "Install",
+      "description": "Homebrew install, upgrade, uninstall, packaged releases, and source builds."
+    },
+    {
+      "source": "public/docs/after-homebrew.md",
+      "slug": "after-homebrew",
+      "section": "Start",
+      "order": 40,
+      "title": "After Install",
+      "description": "The common first-run path after installing HASP."
+    },
+    {
+      "source": "public/docs/command-guide.md",
+      "slug": "command-guide",
+      "section": "Operate",
+      "order": 5,
+      "title": "Command guide",
+      "description": "What each HASP command does, when to use it, and how it compares to nearby commands."
+    },
+    {
+      "source": "public/docs/operator-guide.md",
+      "slug": "operator-guide",
+      "section": "Operate",
+      "order": 10,
+      "title": "Operator Guide",
+      "description": "Environment variables, repo guardrails, audit, backup, and safe local operation."
+    },
+    {
+      "source": "public/docs/telemetry.md",
+      "slug": "telemetry",
+      "section": "Operate",
+      "order": 12,
+      "title": "Telemetry",
+      "description": "Opt-in CLI telemetry consent, payload, retention, erasure, and privacy rules."
+    },
+    {
+      "source": "public/docs/repo-targets.md",
+      "slug": "repo-targets",
+      "section": "Operate",
+      "order": 15,
+      "title": "Repo targets",
+      "description": "Value-free repo requirements, target-scoped delivery, examples, and app/MCP target behavior."
+    },
+    {
+      "source": "public/docs/v1-production-guide.md",
+      "slug": "v1-production-guide",
+      "section": "Operate",
+      "order": 20,
+      "title": "V1 production guide",
+      "description": "Production-facing local broker, keychain, daemon, import, binding, and whole-program verification notes."
+    },
+    {
+      "source": "docs/agent-profiles/README.md",
+      "slug": "agent-profiles",
+      "section": "Agents",
+      "order": 10,
+      "title": "Agent Profiles",
+      "description": "First-class support profile expectations and the generic broker path."
+    },
+    {
+      "source": "docs/agent-profiles/codex-cli.md",
+      "slug": "agent-profiles/codex-cli",
+      "section": "Agents",
+      "order": 20,
+      "title": "Codex CLI",
+      "description": "Connect Codex CLI through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/claude-code.md",
+      "slug": "agent-profiles/claude-code",
+      "section": "Agents",
+      "order": 30,
+      "title": "Claude Code",
+      "description": "Connect Claude Code through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/cursor.md",
+      "slug": "agent-profiles/cursor",
+      "section": "Agents",
+      "order": 40,
+      "title": "Cursor",
+      "description": "Connect Cursor through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/aider.md",
+      "slug": "agent-profiles/aider",
+      "section": "Agents",
+      "order": 50,
+      "title": "Aider",
+      "description": "Connect Aider through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/hermes.md",
+      "slug": "agent-profiles/hermes",
+      "section": "Agents",
+      "order": 60,
+      "title": "Hermes",
+      "description": "Connect Hermes through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/openclaw.md",
+      "slug": "agent-profiles/openclaw",
+      "section": "Agents",
+      "order": 70,
+      "title": "OpenClaw",
+      "description": "Connect OpenClaw through HASP as a brokered MCP surface."
+    },
+    {
+      "source": "docs/agent-profiles/generic.md",
+      "slug": "agent-profiles/generic",
+      "section": "Agents",
+      "order": 80,
+      "title": "Generic Broker Path",
+      "description": "Use HASP with CLI- or MCP-capable agents that do not have first-class profiles yet."
+    },
+    {
+      "source": "public/CHANGELOG.md",
+      "slug": "changelog",
+      "section": "Release",
+      "order": 5,
+      "title": "Changelog",
+      "description": "Public release notes for shipped HASP versions."
+    },
+    {
+      "source": "public/docs/release-distribution.md",
+      "slug": "release-distribution",
+      "section": "Release",
+      "order": 10,
+      "title": "Release distribution",
+      "description": "Release assets, hosted mirrors, checksums, signatures, and Homebrew formula updates."
+    },
+    {
+      "source": "public/docs/install-and-release.md",
+      "slug": "install-and-release",
+      "section": "Release",
+      "order": 20,
+      "title": "Install and release",
+      "description": "Operator-facing release verification and install details."
+    },
+    {
+      "source": "public/docs/glossary.md",
+      "slug": "glossary",
+      "section": "Reference",
+      "order": 5,
+      "title": "Glossary",
+      "description": "HASP vocabulary used across CLI help, docs, audit events, and errors."
+    },
+    {
+      "source": "public/docs/cli-reference.md",
+      "slug": "cli-reference",
+      "section": "Reference",
+      "order": 10,
+      "title": "CLI reference",
+      "description": "Exact help output generated by the installed hasp binary."
+    },
+    {
+      "source": "public/docs/error-codes.md",
+      "slug": "error-codes",
+      "section": "Reference",
+      "order": 15,
+      "title": "Errors",
+      "description": "Error messages, stable exit buckets, JSON error codes, hints, and recovery guidance."
+    }
+  ],
+  "sourceFiles": [
+    "public/README.md",
+    "public/QUICKSTART.md",
+    "public/docs/mental-model.md",
+    "public/docs/agent-mental-model.md",
+    "public/docs/value-free-manifests.md",
+    "public/docs/install.md",
+    "public/docs/after-homebrew.md",
+    "public/docs/command-guide.md",
+    "public/docs/operator-guide.md",
+    "public/docs/telemetry.md",
+    "public/docs/repo-targets.md",
+    "public/docs/v1-production-guide.md",
+    "docs/agent-profiles/README.md",
+    "docs/agent-profiles/codex-cli.md",
+    "docs/agent-profiles/claude-code.md",
+    "docs/agent-profiles/cursor.md",
+    "docs/agent-profiles/aider.md",
+    "docs/agent-profiles/hermes.md",
+    "docs/agent-profiles/openclaw.md",
+    "docs/agent-profiles/generic.md",
+    "public/CHANGELOG.md",
+    "public/docs/release-distribution.md",
+    "public/docs/install-and-release.md",
+    "public/docs/glossary.md",
+    "public/docs/cli-reference.md",
+    "public/docs/error-codes.md"
+  ],
+  "sourceFileSha256": {
+    "public/README.md": "f46fe9fc11b359adeeb7e57841316e07933823318f199fa311cc320102c3f6d4",
+    "public/QUICKSTART.md": "877bf3620dacd3950e55aac1f1c56b012ddec49187669ba604c84b61c759edab",
+    "public/docs/mental-model.md": "b85f4e4eb068ed560ce9e7182e32be64b7df0d111157ba23ac7292dbec8c98c2",
+    "public/docs/agent-mental-model.md": "062fca2adb914e0656aea337db0737cbeb618492728483197dfa8485c54c3a8b",
+    "public/docs/value-free-manifests.md": "d3965241b71b7e9d018612e8c5c7ada69fc8a80ebd2db966d3c763712498d5f9",
+    "public/docs/install.md": "c67ba550be61fc072629203271795eb3a6b31e43b217e485c9bea8a08765c8b4",
+    "public/docs/after-homebrew.md": "48281986c6cc36010d097b0298ff2881828df6aa9c19192fcac9290808a05b9e",
+    "public/docs/command-guide.md": "40cf8f9f3b36a52449b8aa7e3a9cced0056931cef2088f6fe02147e7baf7bcf6",
+    "public/docs/operator-guide.md": "0111bcc9fe761806dd0d5b34f2e4c9c6c1a5aa6a6c341983790a44dc78e09355",
+    "public/docs/telemetry.md": "68adf2505dec3a08a06c152b4eaa197c1c869499677d22b62c96c71287daf5f5",
+    "public/docs/repo-targets.md": "15c0fa3db4f48fc0d4d0bef561814c7d281e09638ab7c9b38f4ff2e762b83e0a",
+    "public/docs/v1-production-guide.md": "dfff27d6111308ae98b530c9e41bfb9ca074d22b549e5566f1114751c3ef9418",
+    "docs/agent-profiles/README.md": "4936f78a961dc89ae248274d426d44a5988c8daa4df6db042e42a13660842844",
+    "docs/agent-profiles/codex-cli.md": "faaa5973b68e36e9da41691d29548ffba1719d59babffc9dd1753bc795090854",
+    "docs/agent-profiles/claude-code.md": "8a467d59b93ad97a63f02f106a6824cf67eb781acc6abdd6ff95fb4fb54113f2",
+    "docs/agent-profiles/cursor.md": "3e817ef9fee7b639be95660a47ec6c944ef4e1632986772e08cfc29c4589636c",
+    "docs/agent-profiles/aider.md": "a586717619896c4195b5ca58e1e048f80bd05a6c3fed033a75a2b1369818ad52",
+    "docs/agent-profiles/hermes.md": "3cce3f20d57a842fbe5a7487f5acbe290ec55da939d18b6605178950760789cb",
+    "docs/agent-profiles/openclaw.md": "8431c81fc33c9021e7ad0073074a151093e0721b461ddb5a640131a1155c1aef",
+    "docs/agent-profiles/generic.md": "46d0131d32c39aaec1ec6849543cd1171e81690b84df22f6dfe5840bc33815bf",
+    "public/CHANGELOG.md": "fcec94fb84494a01eed8e7b99eb81ff897f0218bfde8314541efc01baaed45e0",
+    "public/docs/release-distribution.md": "40b8bc4dc9cf77fc76fb00b339769687776753aa360822111c4166302e47ad9c",
+    "public/docs/install-and-release.md": "d1261777c9fa41028a57f7b11d98295551834026ce8555a2c409ecf6418dbc31",
+    "public/docs/glossary.md": "47988cc73f07cdb3a6e7c62a894877f85c09c41afd7ccb975b7b8e75395c214e",
+    "public/docs/cli-reference.md": "3be7fec5d9df4777e0820d10ce83eaf64786285c012d974100f6213182c678ab",
+    "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
+  }
+}

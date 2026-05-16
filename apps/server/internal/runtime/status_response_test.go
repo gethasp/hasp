@@ -234,6 +234,17 @@ func TestHTTPDashboardReturns503WhenVaultStateUnavailable(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("dashboard status = %d, want 503", resp.StatusCode)
 	}
+	var envelope map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode dashboard error envelope: %v", err)
+	}
+	errPayload, ok := envelope["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("dashboard error payload = %#v", envelope["error"])
+	}
+	if errPayload["detail"] != "Vault state unavailable" {
+		t.Fatalf("dashboard detail = %v, want Vault state unavailable", errPayload["detail"])
+	}
 }
 
 func TestHTTPLeasesListRevokeBulkAndAudit(t *testing.T) {
@@ -522,8 +533,8 @@ func TestHTTPPolicyGetPutConflictValidationAndSSE(t *testing.T) {
 		t.Fatalf("marshal conflicting policy: %v", err)
 	}
 	rejectedBody, rejectedStatus := signedHTTPJSONStatusWithHeaders(t, ctx, key, http.MethodPut, baseURL, conflictingBody, map[string]string{"If-Match": updated.Version})
-	if rejectedStatus != http.StatusUnprocessableEntity || !bytes.Contains(rejectedBody, []byte("ci-runner")) {
-		t.Fatalf("conflicting PUT status = %d body=%s, want 422 with detail", rejectedStatus, rejectedBody)
+	if rejectedStatus != http.StatusUnprocessableEntity || !bytes.Contains(rejectedBody, []byte(`"code":"policy_invalid"`)) || bytes.Contains(rejectedBody, []byte("ci-runner")) {
+		t.Fatalf("conflicting PUT status = %d body=%s, want 422 redacted policy_invalid envelope", rejectedStatus, rejectedBody)
 	}
 	finalBody := signedHTTPJSON(t, ctx, key, http.MethodGet, baseURL, nil)
 	var final PolicyResponse
@@ -715,12 +726,12 @@ func TestHTTPConfigGetPutValidationSecretKeysAndSSE(t *testing.T) {
 	}
 	before := normalizeJSONMap(t, body)
 	badBody, badStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPut, baseURL+"/reveal.scrub_seconds", []byte(`{"value":"slow"}`))
-	if badStatus != http.StatusUnprocessableEntity || !bytes.Contains(badBody, []byte("reveal.scrub_seconds")) {
-		t.Fatalf("invalid config status = %d body=%s, want 422 with key", badStatus, badBody)
+	if badStatus != http.StatusUnprocessableEntity || !bytes.Contains(badBody, []byte(`"code":"config_invalid"`)) || bytes.Contains(badBody, []byte("reveal.scrub_seconds")) {
+		t.Fatalf("invalid config status = %d body=%s, want 422 redacted config_invalid envelope", badStatus, badBody)
 	}
 	unknownTargetBody, unknownTargetStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPut, baseURL+"/integrations.disabled_targets", []byte(`{"value":["unknown-target"]}`))
-	if unknownTargetStatus != http.StatusUnprocessableEntity || !bytes.Contains(unknownTargetBody, []byte("integrations.disabled_targets")) {
-		t.Fatalf("unknown target status = %d body=%s, want 422 with key", unknownTargetStatus, unknownTargetBody)
+	if unknownTargetStatus != http.StatusUnprocessableEntity || !bytes.Contains(unknownTargetBody, []byte(`"code":"config_invalid"`)) || bytes.Contains(unknownTargetBody, []byte("unknown-target")) {
+		t.Fatalf("unknown target status = %d body=%s, want 422 redacted config_invalid envelope", unknownTargetStatus, unknownTargetBody)
 	}
 	trailingPathBody, trailingPathStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPut, baseURL+"/reveal.scrub_seconds/", []byte(`{"value":45}`))
 	if trailingPathStatus != http.StatusNotFound {
@@ -1321,7 +1332,7 @@ func TestConcurrentApprovalGrantDoesNotLeaveOrphanLease(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			var reply DecideApprovalResponse
-			_ = broker.DecideApproval(DecideApprovalRequest{
+			_ = broker.decideApprovalTrusted(DecideApprovalRequest{
 				ApprovalID:     approval.ID,
 				Decision:       "grant",
 				GrantedTTLS:    120,
@@ -1374,7 +1385,7 @@ func TestApprovalGrantRejectedWhenVaultLocked(t *testing.T) {
 		t.Fatalf("lock vault: %v", err)
 	}
 	var grantReply DecideApprovalResponse
-	err = broker.DecideApproval(DecideApprovalRequest{
+	err = broker.decideApprovalTrusted(DecideApprovalRequest{
 		ApprovalID:     approval.ID,
 		Decision:       "grant",
 		GrantedTTLS:    120,
@@ -1386,7 +1397,7 @@ func TestApprovalGrantRejectedWhenVaultLocked(t *testing.T) {
 		t.Fatalf("grant while locked error = %v, want errVaultLocked", err)
 	}
 	var approvalsReply ListApprovalsResponse
-	if err := broker.ListApprovals(ListApprovalsRequest{Status: "pending"}, &approvalsReply); err != nil {
+	if err := broker.listApprovalsTrusted(ListApprovalsRequest{Status: "pending"}, &approvalsReply); err != nil {
 		t.Fatalf("list approvals: %v", err)
 	}
 	if len(approvalsReply.Approvals) != 1 || approvalsReply.Approvals[0].ID != approval.ID {
@@ -1862,6 +1873,13 @@ func TestHTTPVaultStatusAndAuthErrorsUseJSONEnvelope(t *testing.T) {
 	}
 	if envelope["_schema"] != "v1" {
 		t.Fatalf("auth envelope schema = %v, want v1", envelope["_schema"])
+	}
+	errPayload, ok := envelope["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth envelope error payload = %#v", envelope["error"])
+	}
+	if errPayload["detail"] != "Unauthorized" {
+		t.Fatalf("auth detail = %v, want Unauthorized", errPayload["detail"])
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/v1/vault/status", httpSrv.Ports().V4), nil)
@@ -2470,8 +2488,8 @@ func TestHTTPBackupCreatesSignedFileUpdatesConfigAndPrunesRetention(t *testing.T
 	backupURL := fmt.Sprintf("http://127.0.0.1:%d/v1/backup", httpSrv.Ports().V4)
 	aliasURL := fmt.Sprintf("http://127.0.0.1:%d/v1/backups/export", httpSrv.Ports().V4)
 	aliasBody, aliasStatus := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, aliasURL, []byte(`{"destination_path":"/tmp/missing-passphrase.hasp-backup"}`))
-	if aliasStatus != http.StatusBadRequest || !bytes.Contains(aliasBody, []byte("passphrase")) {
-		t.Fatalf("backup alias status=%d body=%s, want 400 passphrase error", aliasStatus, aliasBody)
+	if aliasStatus != http.StatusBadRequest || !bytes.Contains(aliasBody, []byte(`"code":"backup_failed"`)) || bytes.Contains(aliasBody, []byte("passphrase is required")) {
+		t.Fatalf("backup alias status=%d body=%s, want 400 redacted backup_failed envelope", aliasStatus, aliasBody)
 	}
 	body := signedHTTPJSON(t, ctx, key, http.MethodPost, backupURL, []byte(fmt.Sprintf(`{"destination_path":%q,"passphrase":"backup-passphrase"}`, firstPath)))
 	var reply BackupResponse

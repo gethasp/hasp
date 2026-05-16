@@ -11,7 +11,9 @@ func catalog() []tool {
 			"grant_project": grantSchema(),
 		})},
 		{Name: "hasp_check", Description: "Scan the project for managed secret leaks", InputSchema: schema(map[string]any{
-			"project_root": stringSchema("Bound project root"),
+			"project_root":  stringSchema("Bound project root"),
+			"session_token": stringSchema("Optional daemon-backed session token"),
+			"grant_project": grantSchema(),
 		})},
 		{Name: "hasp_targets", Description: "List sanitized manifest targets for a project. Returns target names, refs, delivery kinds, and prerequisite status, never values or repo-controlled command argv.", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Bound project root"),

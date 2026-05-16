@@ -15,7 +15,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
-func TestApprovalListAndDecideCommandsUseApprovalSchema(t *testing.T) {
+func TestApprovalListUsesApprovalSchemaAndTopLevelDecideIsDisabled(t *testing.T) {
 	lockAppSeams(t)
 	service := newApprovalCommandTestRPC(t)
 	starter := service.starter
@@ -24,8 +24,7 @@ func TestApprovalListAndDecideCommandsUseApprovalSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue first approval: %v", err)
 	}
-	second, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/api/token", RequesterConsumerID: "human-cli", RequestedScope: "session", RequestedTTLS: 300})
-	if err != nil {
+	if _, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/api/token", RequesterConsumerID: "human-cli", RequestedScope: "session", RequestedTTLS: 300}); err != nil {
 		t.Fatalf("queue second approval: %v", err)
 	}
 
@@ -46,36 +45,12 @@ func TestApprovalListAndDecideCommandsUseApprovalSchema(t *testing.T) {
 		}
 	}
 
-	var grantOut bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"approval", "decide", first.ID, "--grant", "--ttl", "2m", "--scope", "window", "--auth-method", "device-owner", "--hold-proof", "1500ms", "--json"}, bytes.NewBuffer(nil), &grantOut, io.Discard, starter); err != nil {
-		t.Fatalf("approval decide grant: %v", err)
+	err = runWithStarter(context.Background(), []string{"approval", "decide", first.ID, "--grant", "--ttl", "2m", "--scope", "window", "--auth-method", "device-owner", "--hold-proof", "1500ms", "--json"}, bytes.NewBuffer(nil), io.Discard, io.Discard, starter)
+	if err == nil || !strings.Contains(err.Error(), "trusted local app approval path") {
+		t.Fatalf("approval decide top-level err = %v", err)
 	}
-	var grant runtime.DecideApprovalResponse
-	if err := json.Unmarshal(grantOut.Bytes(), &grant); err != nil {
-		t.Fatalf("decode grant reply: %v\n%s", err, grantOut.String())
-	}
-	if grant.Approval.Status != "granted" || grant.LeaseID == "" {
-		t.Fatalf("grant reply = %+v", grant)
-	}
-
-	third, err := service.store.Queue(runtime.QueueApprovalInput{SecretID: "prod/ops/token", RequesterConsumerID: "ops-cli", RequestedScope: "window", RequestedTTLS: 300})
-	if err != nil {
-		t.Fatalf("queue third approval: %v", err)
-	}
-	if err := runWithStarter(context.Background(), []string{"approval", "decide", third.ID, "--grant", "--ttl", "2m", "--scope", "window", "--json"}, bytes.NewBuffer(nil), io.Discard, io.Discard, starter); err == nil {
-		t.Fatal("approval decide grant without proof succeeded")
-	}
-
-	var denyOut bytes.Buffer
-	if err := runWithStarter(context.Background(), []string{"approval", "decide", second.ID, "--deny", "--reason", "not-now", "--json"}, bytes.NewBuffer(nil), &denyOut, io.Discard, starter); err != nil {
-		t.Fatalf("approval decide deny: %v", err)
-	}
-	var deny runtime.DecideApprovalResponse
-	if err := json.Unmarshal(denyOut.Bytes(), &deny); err != nil {
-		t.Fatalf("decode deny reply: %v\n%s", err, denyOut.String())
-	}
-	if deny.Approval.Status != "denied" || deny.LeaseID != "" {
-		t.Fatalf("deny reply = %+v", deny)
+	if approvals := service.store.Snapshot(); approvals[0].Status != "pending" || approvals[1].Status != "pending" {
+		t.Fatalf("top-level approval decide changed approvals: %+v", approvals)
 	}
 }
 

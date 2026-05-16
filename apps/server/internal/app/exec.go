@@ -184,18 +184,14 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		if len(envRefs) > 0 || len(fileRefs) > 0 {
 			return errors.New("--target cannot be combined with explicit --env or --file mappings")
 		}
-		targetExpansion, err = store.ExpandManifestTarget(*projectRoot, *targetName)
+		target, err := brokerops.ExpandExecutionTarget(*projectRoot, strings.TrimSpace(*targetName), map[string]string(envRefs), map[string]string(fileRefs), command)
 		if err != nil {
 			return err
 		}
-		if len(targetExpansion.XCConfig) > 0 || len(targetExpansion.Outputs) > 0 {
-			return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", *targetName)
-		}
-		envRefs = mappingFlag(targetExpansion.Env)
-		fileRefs = mappingFlag(targetExpansion.Files)
-		if len(command) == 0 && len(targetExpansion.Command) > 0 {
-			command = slices.Clone(targetExpansion.Command)
-		}
+		targetExpansion = target.Expansion
+		envRefs = mappingFlag(target.EnvRefs)
+		fileRefs = mappingFlag(target.FileRefs)
+		command = slices.Clone(target.Command)
 	}
 	if len(command) == 0 && !*dryRun {
 		return errors.New("usage: hasp run --project-root <path> [--target <name>|--env NAME=REF] [--file NAME=REF] [--session-token <token>] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-window 15m] [--explain [--dry-run]] -- <command>")
@@ -263,26 +259,6 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	if err := warnTargetDrift(stderr, handle, *projectRoot, targetExpansion); err != nil {
 		return err
 	}
-	items := make([]store.Item, 0, len(envRefs)+len(fileRefs))
-	env := map[string]string{}
-	files := map[string][]byte{}
-	for envName, reference := range envRefs {
-		item, err := deps.AuthorizeReference(ctx, handle, binding.ID, *projectRoot, session.Token, reference, store.OperationRun, projScope, secScope, store.GrantScope(""), effectiveWindow, "")
-		if err != nil {
-			return wrapAuthorizeReferenceError(err)
-		}
-		env[envName] = string(item.Value)
-		items = append(items, item)
-	}
-	for envName, reference := range fileRefs {
-		item, err := deps.AuthorizeReference(ctx, handle, binding.ID, *projectRoot, session.Token, reference, store.OperationInject, projScope, secScope, store.GrantScope(""), effectiveWindow, "")
-		if err != nil {
-			return wrapAuthorizeReferenceError(err)
-		}
-		files[envName] = item.Value
-		items = append(items, item)
-	}
-
 	// hasp-ymuy: when the caller's stdout is an interactive terminal, ask the
 	// runner for PTY allocation so the child's isatty() returns true. PTY
 	// children emit ANSI escape sequences that can split secrets across
@@ -292,27 +268,48 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	// receive a PTY because PTYs merge the two streams.
 	tty := stdoutIsTTYFn(stdout)
 	var swOut *redactor.StreamingWriter
-	if tty {
-		swOut = redactor.NewStreamingWriterANSIAware(stdout, items)
-	} else {
-		swOut = redactor.NewStreamingWriter(stdout, items)
-	}
-	swErr := redactor.NewStreamingWriter(stderr, items)
-
-	result, err := deps.RunnerExecute(ctx, runner.Input{
-		ProjectRoot: targetExpansion.ExecutionRoot(*projectRoot),
-		Command:     command,
-		Env:         env,
-		Files:       files,
-		Stdin:       deps.RunnerStdin,
-		Stdout:      swOut,
-		Stderr:      swErr,
-		TTY:         tty,
+	var swErr *redactor.StreamingWriter
+	execResult, err := brokerops.Execute(ctx, brokerops.ExecutionRequest{
+		Handle:           handle,
+		BindingID:        binding.ID,
+		ProjectRoot:      *projectRoot,
+		SessionToken:     session.Token,
+		Command:          command,
+		EnvRefs:          map[string]string(envRefs),
+		FileRefs:         map[string]string(fileRefs),
+		Expansion:        targetExpansion,
+		ProjectGrant:     projScope,
+		SecretGrant:      secScope,
+		Window:           effectiveWindow,
+		AuthorizeWrapErr: wrapAuthorizeReferenceError,
+		ConfigureRunner: func(items []store.Item, input runner.Input) runner.Input {
+			if tty {
+				swOut = redactor.NewStreamingWriterANSIAware(stdout, items)
+			} else {
+				swOut = redactor.NewStreamingWriter(stdout, items)
+			}
+			swErr = redactor.NewStreamingWriter(stderr, items)
+			input.Stdin = deps.RunnerStdin
+			input.Stdout = swOut
+			input.Stderr = swErr
+			input.TTY = tty
+			return input
+		},
+		Deps: brokerops.ExecutionDeps{
+			AuthorizeReference: deps.AuthorizeReference,
+			RunnerExecute:      deps.RunnerExecute,
+		},
 	})
 	// Flush streaming writers regardless of error so buffered bytes are
 	// not silently dropped.
-	flushErrOut := swOut.Flush()
-	flushErrErr := swErr.Flush()
+	var flushErrOut error
+	var flushErrErr error
+	if swOut != nil {
+		flushErrOut = swOut.Flush()
+	}
+	if swErr != nil {
+		flushErrErr = swErr.Flush()
+	}
 	if err != nil {
 		return err
 	}
@@ -337,6 +334,7 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		addTargetAuditFields(details, targetExpansion)
 		appendAudit(audit.EventRedact, "user", details)
 	}
+	result := execResult.RunResult
 	runAudit := map[string]any{"project_root": *projectRoot, "exit_code": result.ExitCode, "args": command}
 	addTargetAuditFields(runAudit, targetExpansion)
 	appendAudit(audit.EventRun, "user", runAudit)
@@ -483,56 +481,20 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 		}
 	}
 
-	lines := make([]string, 0, len(envRefs))
-	resolvedItems := make(map[string]store.Item, len(envRefs))
-	itemSet := make([]string, 0, len(envRefs))
-	for _, reference := range envRefs {
-		resolved, err := deps.ResolveReference(handle, ctx, *projectRoot, reference)
-		if err != nil {
-			return err
-		}
-		item, err := deps.GetItem(handle, resolved.ItemName)
-		if err != nil {
-			return err
-		}
-		resolvedItems[reference] = item
-		itemSet = append(itemSet, item.Name)
-	}
-	if len(itemSet) > 0 {
-		decision := handle.Authorize(store.AccessRequest{
-			Operation:       store.OperationWriteEnv,
-			BindingID:       binding.ID,
-			SessionToken:    session.Token,
-			DestinationPath: *outputPath,
-			Aliases:         itemSet,
-		})
-		if decision.RequiresPrompt {
-			switch decision.Reason {
-			case "project_and_convenience_approval_required":
-				if projScope == "" {
-					return errors.New("project lease required for write-env")
-				}
-				if _, err := deps.GrantProjectLease(handle, binding.ID, session.Token, projScope, effectiveWindow); err != nil {
-					return err
-				}
-				fallthrough
-			case "convenience_approval_required":
-				if convScope == "" {
-					return errors.New("convenience approval required for write-env")
-				}
-				if _, err := deps.GrantConvenience(handle, binding.ID, session.Token, *outputPath, itemSet, "user", convScope, effectiveWindow); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	for envName, reference := range envRefs {
-		item := resolvedItems[reference]
-		item, err := deps.AuthorizeItem(handle, binding.ID, session.Token, item, store.OperationRun, projScope, secScope, effectiveWindow)
-		if err != nil {
-			return err
-		}
-		lines = append(lines, envName+lineSeparator+string(item.Value))
+	lines, err := authorizeWriteEnvExport(ctx, handle, deps, writeEnvExportRequest{
+		ProjectRoot:   *projectRoot,
+		OutputPath:    *outputPath,
+		BindingID:     binding.ID,
+		SessionToken:  session.Token,
+		EnvRefs:       map[string]string(envRefs),
+		LineSeparator: lineSeparator,
+		ProjectScope:  projScope,
+		SecretScope:   secScope,
+		Convenience:   convScope,
+		Window:        effectiveWindow,
+	})
+	if err != nil {
+		return err
 	}
 	if *appendMode {
 		// Block-splice append: read existing, insert/replace hasp block.

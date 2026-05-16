@@ -113,8 +113,43 @@ type AccessRequest struct {
 	CreatingNew     bool
 }
 
+type AccessRequirement string
+
+const (
+	AccessRequirementNone                  AccessRequirement = ""
+	AccessRequirementProjectLease          AccessRequirement = "project_lease"
+	AccessRequirementProjectAndConvenience AccessRequirement = "project_and_convenience"
+	AccessRequirementConvenience           AccessRequirement = "convenience"
+	AccessRequirementSecretGrant           AccessRequirement = "secret_grant"
+	AccessRequirementWriteGrant            AccessRequirement = "write_grant"
+	AccessRequirementUnsupported           AccessRequirement = "unsupported"
+)
+
 type AccessDecision struct {
-	Allowed        bool   `json:"allowed"`
-	RequiresPrompt bool   `json:"requires_prompt"`
-	Reason         string `json:"reason"`
+	Allowed        bool              `json:"allowed"`
+	RequiresPrompt bool              `json:"requires_prompt"`
+	Reason         string            `json:"reason"`
+	Requirement    AccessRequirement `json:"requirement,omitempty"`
+}
+
+func (d AccessDecision) RequiredAction() AccessRequirement {
+	if d.Requirement != "" {
+		return d.Requirement
+	}
+	switch d.Reason {
+	case "project_lease_required":
+		return AccessRequirementProjectLease
+	case "project_and_convenience_approval_required":
+		return AccessRequirementProjectAndConvenience
+	case "convenience_approval_required":
+		return AccessRequirementConvenience
+	case "secret_session_grant_required", "access_secret_prompt_required":
+		return AccessRequirementSecretGrant
+	case "write_grant_required":
+		return AccessRequirementWriteGrant
+	case "unsupported_operation", "unknown_policy":
+		return AccessRequirementUnsupported
+	default:
+		return AccessRequirementNone
+	}
 }

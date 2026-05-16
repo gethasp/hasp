@@ -20,7 +20,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 
 	listing, err := callTargets(context.Background(), handle, toolCall{
 		Name:      "hasp_targets",
-		Arguments: map[string]any{"project_root": projectRoot},
+		Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"},
 	})
 	if err != nil {
 		t.Fatalf("hasp_targets: %v", err)
@@ -139,7 +139,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	lockMCPSeams(t)
 	handle, projectRoot := setupMCPTargetFixture(t)
 
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_targets", Arguments: map[string]any{"project_root": projectRoot}}); err != nil {
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_targets", Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"}}); err != nil {
 		t.Fatalf("dispatch hasp_targets: %v", err)
 	}
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_target_explain", Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
@@ -172,7 +172,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	origCanonical := canonicalProjectRootMCPFn
 	t.Cleanup(func() { canonicalProjectRootMCPFn = origCanonical })
 	canonicalProjectRootMCPFn = func(context.Context, string) (string, error) { return "", errors.New("canonical fail") }
-	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot}}); err == nil {
+	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"}}); err == nil {
 		t.Fatal("expected target listing canonical error")
 	}
 	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil {
@@ -185,7 +185,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 		t.Fatal("expected target execute canonical error")
 	}
 	canonicalProjectRootMCPFn = origCanonical
-	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": t.TempDir()}}); err == nil {
+	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": t.TempDir(), "session_token": "session-token"}}); err == nil {
 		t.Fatal("expected missing manifest error")
 	}
 	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "missing"}}); err == nil {
@@ -255,6 +255,7 @@ func setupMCPTargetFixture(t *testing.T) (*store.Handle, string) {
 	}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
+	grantMCPProjectSession(t, handle, projectRoot, "session-token")
 	manifest := `{
   "version": "v1",
   "references": [

@@ -16,14 +16,14 @@ import (
 
 func approvalCommand(ctx context.Context, args []string, stdout io.Writer, s starter) error {
 	if len(args) == 0 || isHelpArg(args[0]) {
-		_, err := fmt.Fprintln(stdout, "usage: hasp approval (list|decide) [options]")
+		_, err := fmt.Fprintln(stdout, "usage: hasp approval list [options]")
 		return err
 	}
 	switch args[0] {
 	case "list":
 		return approvalListCommand(ctx, args[1:], stdout, s)
 	case "decide":
-		return approvalDecideCommand(ctx, args[1:], stdout, s)
+		return errors.New("approval decisions require the trusted local app approval path")
 	default:
 		return fmt.Errorf("unknown approval subcommand %q", args[0])
 	}

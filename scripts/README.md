@@ -20,6 +20,7 @@ directory.
 - `check-go-mod-tidy.sh`: verifies `apps/server/go.mod` and `go.sum`.
 - `check-markdown-links.sh`: checks links in public Markdown files.
 - `conformance.sh`: runs the release-blocking conformance lane.
+- `run-osv-scanner.sh`: scans dependency manifests and lockfiles with OSV Scanner.
 - `run-go-tests.sh`: runs Go tests with the fast test KDF tag.
 - `run-go-analysis.sh`: runs lint, staticcheck, and vulncheck profiles.
 - `run-go-coverage.sh`: generates coverage output.

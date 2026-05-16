@@ -9,14 +9,11 @@ import (
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/paths"
+	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-type projectDefaults struct {
-	AutoProtectRepos bool
-	AutoInstallHooks bool
-	DefaultPolicy    store.SecretPolicy
-}
+type projectDefaults = projectcontext.Defaults
 
 var (
 	loadCLIConfigAppFn      = paths.LoadConfig
@@ -55,35 +52,7 @@ func loadProjectDefaults() (projectDefaults, error) {
 }
 
 func ensureProjectBinding(ctx context.Context, handle *store.Handle, projectRoot string) (store.Binding, []store.VisibleReference, bool, error) {
-	binding, visible, err := resolveBindingViewAppFn(handle, ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	if binding.ID != "" {
-		return binding, visible, false, nil
-	}
-
-	defaults, err := loadProjectDefaults()
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	if !defaults.AutoProtectRepos {
-		return binding, visible, false, nil
-	}
-
-	root, err := appCanonicalProjectRootFn(ctx, projectRoot)
-	if err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	if !pathLooksLikeGitRepo(root) {
-		return binding, visible, false, nil
-	}
-	installHooks := defaults.AutoInstallHooks && pathLooksLikeGitRepo(root)
-	if _, err := bindProject(ctx, handle, root, cloneAliasSet(binding.Aliases), defaults.DefaultPolicy, installHooks); err != nil {
-		return store.Binding{}, nil, false, err
-	}
-	binding, visible, err = resolveBindingViewAppFn(handle, ctx, root)
-	return binding, visible, true, err
+	return projectcontext.Ensure(ctx, handle, projectRoot, appProjectContextDeps())
 }
 
 func pathLooksLikeGitRepo(root string) bool {

@@ -410,6 +410,7 @@ func projectCells(input Input, matrixRange string, consumers []Consumer, secrets
 	}
 	pendingByCell := pendingApprovalsByCell(input.Approvals, secretByID)
 	auditByCell := latestAuditByCell(input.AuditEvents, secretByID, now, matrixRange)
+	expiringByCell := expiringLeasesByCell(input.Leases, secretByName, secretByID, now)
 	cells := make([]Cell, 0, len(consumers)*len(secrets))
 	for _, consumer := range consumers {
 		for _, secret := range secrets {
@@ -432,7 +433,7 @@ func projectCells(input Input, matrixRange string, consumers []Consumer, secrets
 				if strings.Contains(live.Scope, "session") {
 					state, glyph, label = "session", "clock", "session"
 				}
-				if expiringLease(input.Leases, consumer.ID, secret.ID, secretByName, secretByID, now) {
+				if expiringByCell[key] {
 					state, glyph, label = "expiring", "warn", "expiring"
 				}
 				cell = Cell{
@@ -454,6 +455,28 @@ func projectCells(input Input, matrixRange string, consumers []Consumer, secrets
 		}
 	}
 	return cells
+}
+
+func expiringLeasesByCell(input []leases.Lease, byName map[string]Secret, byID map[string]Secret, now time.Time) map[string]bool {
+	out := make(map[string]bool)
+	for _, lease := range input {
+		if strings.TrimSpace(lease.Status) != "active" {
+			continue
+		}
+		consumerID := strings.TrimSpace(lease.ConsumerID)
+		secretID := resolveSecretID(lease.SecretID, byName, byID)
+		if consumerID == "" || secretID == "" {
+			continue
+		}
+		if _, ok := byID[secretID]; !ok {
+			continue
+		}
+		remaining := lease.ExpiresAt.Sub(now)
+		if remaining > 0 && remaining < time.Minute {
+			out[consumerID+"\x00"+secretID] = true
+		}
+	}
+	return out
 }
 
 func pendingApprovalsByCell(input []approvals.Approval, secrets map[string]Secret) map[string]approvals.Approval {
@@ -488,22 +511,6 @@ func highestLiveGrant(grants []Grant) *Grant {
 		}
 	}
 	return best
-}
-
-func expiringLease(input []leases.Lease, consumerID, secretID string, byName map[string]Secret, byID map[string]Secret, now time.Time) bool {
-	for _, lease := range input {
-		if strings.TrimSpace(lease.Status) != "active" || strings.TrimSpace(lease.ConsumerID) != consumerID {
-			continue
-		}
-		if resolveSecretID(lease.SecretID, byName, byID) != secretID {
-			continue
-		}
-		remaining := lease.ExpiresAt.Sub(now)
-		if remaining > 0 && remaining < time.Minute {
-			return true
-		}
-	}
-	return false
 }
 
 func latestAuditByCell(events []audit.Event, secrets map[string]Secret, now time.Time, matrixRange string) map[string]Cell {

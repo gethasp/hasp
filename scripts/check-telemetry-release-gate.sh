@@ -9,6 +9,55 @@ fail() {
   exit 1
 }
 
+check_telemetry_worker_dependencies() {
+  local app_dir="apps/${HASP_PRIVATE_TELEMETRY_APP_NAME:-telemetry}"
+  local package_json="$app_dir/package.json"
+  [[ -f "$package_json" ]] || return 0
+
+  python3 - "$package_json" "$app_dir" <<'PY'
+import json
+import pathlib
+import sys
+
+package_path = pathlib.Path(sys.argv[1])
+app_dir = pathlib.Path(sys.argv[2])
+
+try:
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"invalid telemetry package.json: {exc}") from exc
+
+dependency_sections = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+)
+declared = {
+    section: sorted((package.get(section) or {}).keys())
+    for section in dependency_sections
+    if package.get(section)
+}
+if not declared:
+    raise SystemExit(0)
+
+lockfiles = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+)
+if not any((app_dir / name).is_file() for name in lockfiles):
+    details = ", ".join(
+        f"{section}: {', '.join(names)}" for section, names in declared.items()
+    )
+    raise SystemExit(
+        "telemetry Worker declares dependencies without a local lockfile: "
+        f"{details}"
+    )
+PY
+}
+
 run_live_endpoint_gate() {
   python3 <<'PY'
 import json
@@ -158,6 +207,8 @@ grep -q 'HASP_TELEMETRY_DISABLED' "$telemetry_doc" || fail "telemetry docs must 
 grep -q 'telemetry.gethasp.com/v1/cli/ping' "$telemetry_doc" || fail "telemetry docs must document the first-party endpoint"
 grep -q 'HASP_TELEMETRY_ENDPOINT' scripts/build.sh || fail "build script must make the endpoint explicit"
 grep -q 'telemetry.gethasp.com/v1/cli/ping' scripts/build.sh || fail "build script must pin the production endpoint"
+
+check_telemetry_worker_dependencies || fail "telemetry Worker dependencies must be locked before audit"
 
 telemetry_worker_src="apps/${HASP_PRIVATE_TELEMETRY_APP_NAME:-telemetry}/src"
 third_party_scan_paths=(apps/server/internal/telemetry apps/server/internal/app/telemetry_command.go)

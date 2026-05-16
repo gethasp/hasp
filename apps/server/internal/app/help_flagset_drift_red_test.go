@@ -45,7 +45,8 @@ var flagRegistrarMethods = map[string]struct{}{
 // have no `hasp help <path>` topic (hidden / internal-only commands).
 // New entries here are conscious carve-outs — add a one-line rationale.
 var commandsWithoutHelpTopic = map[string]string{
-	"__complete": "hidden completion entry point (hasp-czal)",
+	"__complete":      "hidden completion entry point (hasp-czal)",
+	"approval decide": "disabled public CLI path; approval decisions require the trusted local app approval route",
 }
 
 // flagsWithoutHelpEntry per command path lists registered flag names

@@ -42,8 +42,9 @@ case "$profile" in
   verify|ci|lint|all)
     install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4"
     install "honnef.co/go/tools/cmd/staticcheck@2025.1.1"
-    install "golang.org/x/vuln/cmd/govulncheck@v1.1.4"
+    install "golang.org/x/vuln/cmd/govulncheck@v1.3.0"
     install "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12"
+    install "github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8"
     require_shellcheck
     require_gnupg
     ;;

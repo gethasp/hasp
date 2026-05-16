@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap osv-scan install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -44,6 +44,10 @@ workflow-lint:
 ## shellcheck: Run shellcheck over release and maintenance scripts
 shellcheck:
 	@find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck -x -P scripts
+
+## osv-scan: Scan dependency manifests and lockfiles with OSV Scanner
+osv-scan:
+	@bash ./scripts/run-osv-scanner.sh
 
 ## test-scripts: Run regression coverage for exported repo verification scripts
 test-scripts:
@@ -97,7 +101,7 @@ vulncheck:
 lint-full: lint vulncheck
 
 ## verify-ci: Canonical fast CI gate
-verify-ci: check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts test lint
+verify-ci: check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck osv-scan test-scripts test lint
 
 ## verify: Default public verification gate
 verify: verify-ci release-smoke coverage vulncheck
