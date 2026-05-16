@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -31,6 +31,10 @@ check-generated-docs:
 ## check-telemetry-release-gate: Verify telemetry docs, endpoint pinning, and static privacy gates
 check-telemetry-release-gate:
 	@bash ./scripts/check-telemetry-release-gate.sh
+
+## check-telemetry-live-release-gate: Verify the production telemetry endpoint resolves, serves TLS, and accepts the release-gate payload
+check-telemetry-live-release-gate:
+	@HASP_TELEMETRY_LIVE_GATE=1 bash ./scripts/check-telemetry-release-gate.sh
 
 ## workflow-lint: Validate GitHub Actions workflows
 workflow-lint:
@@ -103,11 +107,15 @@ release-readiness:
 	@bash ./scripts/check-release-readiness.sh $(if $(FULL),--full,) $(TAG)
 
 ## release-preflight: Fast local preflight before publishing a release tag
-release-preflight: verify-ci evals
+release-preflight:
+	@$(MAKE) verify-ci
+	@$(MAKE) check-telemetry-live-release-gate
+	@$(MAKE) evals
 
 ## release-gate: Release-blocking gate with all tests and Go coverage reporting
 release-gate:
 	@$(MAKE) verify-ci
+	@$(MAKE) check-telemetry-live-release-gate
 	@$(MAKE) evals
 	@$(MAKE) vulncheck
 	@$(MAKE) test-integration
