@@ -179,7 +179,7 @@ There are two commands to know:
 - `hasp agent mcp <agent-id>` starts the same tool surface with profile-aware session setup.
 
 Use the profile-aware command for first-class agents such as Codex CLI, Claude
-Code, Cursor, Aider, Hermes, and OpenClaw. It opens or reuses a daemon-backed
+Code, Cursor, Aider, Pi, Hermes, and OpenClaw. It opens or reuses a daemon-backed
 session, labels the caller as `agent:<id>`, sets the project root when the
 profile has one, and enables agent-safe mode for protected workflows.
 

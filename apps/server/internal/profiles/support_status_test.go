@@ -21,8 +21,8 @@ func TestLoadSupportStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load support statuses: %v", err)
 	}
-	if len(statuses) != 6 {
-		t.Fatalf("support statuses = %d, want 6", len(statuses))
+	if len(statuses) != 7 {
+		t.Fatalf("support statuses = %d, want 7", len(statuses))
 	}
 	for _, status := range statuses {
 		if status.SupportTier != SupportTierFirstClassShipped {

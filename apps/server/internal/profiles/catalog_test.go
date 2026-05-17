@@ -21,8 +21,8 @@ func TestLoadProfilesCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load release gates: %v", err)
 	}
-	if len(profiles) != 6 {
-		t.Fatalf("profiles = %d, want 6", len(profiles))
+	if len(profiles) != 7 {
+		t.Fatalf("profiles = %d, want 7", len(profiles))
 	}
 	for _, profile := range profiles {
 		gate, ok := manifest.Profiles[profile.ID]

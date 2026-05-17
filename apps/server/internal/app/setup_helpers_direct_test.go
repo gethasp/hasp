@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -37,6 +38,9 @@ func TestSetupHelpersDirect(t *testing.T) {
 
 	if got := setupAgentBinary("codex-cli"); got != "codex" {
 		t.Fatalf("setupAgentBinary codex-cli = %q", got)
+	}
+	if got := setupAgentBinary("pi"); got != "pi" {
+		t.Fatalf("setupAgentBinary pi = %q", got)
 	}
 	if got := setupAgentBinary("other"); got != "other" {
 		t.Fatalf("setupAgentBinary passthrough = %q", got)
@@ -170,6 +174,55 @@ func TestSetupHelpersDirect(t *testing.T) {
 	}}, haspHome); err == nil || !strings.Contains(err.Error(), "unsupported setup config format") {
 		t.Fatalf("expected unsupported format failure, got %v", err)
 	}
+
+	t.Run("pi package config", func(t *testing.T) {
+		piDir := filepath.Join(homeDir, "custom-pi-agent")
+		t.Setenv("PI_CODING_AGENT_DIR", piDir)
+		spec := setupAgentSpec{}
+		for _, candidate := range setupSupportedAgents() {
+			if candidate.ID == "pi" {
+				spec = candidate
+				break
+			}
+		}
+		if spec.ID == "" {
+			t.Fatal("expected pi setup agent")
+		}
+		outcomes, err := setupWriteAgentConfigs([]setupAgentSpec{spec}, haspHome)
+		if err != nil {
+			t.Fatalf("setup pi agent config: %v", err)
+		}
+		if len(outcomes) != 1 || outcomes[0].ConfigPath != filepath.Join(piDir, "settings.json") || !outcomes[0].Changed {
+			t.Fatalf("unexpected pi setup outcome: %+v", outcomes)
+		}
+		settings, err := os.ReadFile(filepath.Join(piDir, "settings.json"))
+		if err != nil {
+			t.Fatalf("read pi settings: %v", err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(settings, &payload); err != nil {
+			t.Fatalf("decode pi settings: %v", err)
+		}
+		packages, ok := payload["packages"].([]any)
+		if !ok || len(packages) != 1 || packages[0] != setupPiPackagePath(haspHome) {
+			t.Fatalf("expected generated pi package in settings, got %+v", payload)
+		}
+		extensionPath := filepath.Join(setupPiPackagePath(haspHome), "extensions", "hasp", "index.js")
+		extension, err := os.ReadFile(extensionPath)
+		if err != nil {
+			t.Fatalf("read generated pi extension: %v", err)
+		}
+		if !bytes.Contains(extension, []byte("registerTool")) || !bytes.Contains(extension, []byte("tools/list")) || !bytes.Contains(extension, []byte("hasp-agent-pi")) {
+			t.Fatalf("generated pi extension missing expected bridge code: %s", string(extension))
+		}
+		rerun, err := setupWriteAgentConfigs([]setupAgentSpec{spec}, haspHome)
+		if err != nil {
+			t.Fatalf("rerun setup pi agent config: %v", err)
+		}
+		if len(rerun) != 1 || rerun[0].Changed {
+			t.Fatalf("expected idempotent pi settings write, got %+v", rerun)
+		}
+	})
 
 	notes := setupNotes(specs, true, setupOptions{BindImports: true}, "unavailable", "detail")
 	if len(notes) == 0 {

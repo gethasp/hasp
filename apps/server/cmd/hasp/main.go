@@ -26,7 +26,7 @@ const testDaemonParentPIDEnv = "HASP_TEST_DAEMON_PARENT_PID"
 func main() {
 	parentCtx, stopParent := contextWithTestDaemonParent(context.Background())
 	defer stopParent()
-	ctx, stop := signal.NotifyContext(parentCtx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(parentCtx, syscall.SIGTERM)
 	defer stop()
 	exitFn(run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

@@ -1,14 +1,23 @@
 {
-  "latest": "v1.0.20",
+  "latest": "v1.0.21",
   "versions": [
+    {
+      "id": "v1.0.21",
+      "label": "v1.0.21",
+      "version": "1.0.21",
+      "path": "/docs/v1.0.21/",
+      "snapshot": "v1.0.21/manifest.json",
+      "createdAt": "2026-05-17T16:40:09.674Z",
+      "sourceCommit": "e29506bacc1d2d968043e8a99aa2768d04c983b4"
+    },
     {
       "id": "v1.0.20",
       "label": "v1.0.20",
       "version": "1.0.20",
       "path": "/docs/v1.0.20/",
       "snapshot": "v1.0.20/manifest.json",
-      "createdAt": "2026-05-17T03:42:25.597Z",
-      "sourceCommit": "b79a86eb45080c5a0b083cacaa8bf6746fd3355d"
+      "createdAt": "2026-05-17T07:07:37.617Z",
+      "sourceCommit": "7a843f3c63ebc54d9f61a4701bd16ad763353829"
     },
     {
       "id": "v1.0.19",

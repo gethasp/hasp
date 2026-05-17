@@ -24,8 +24,8 @@ func TestBootstrapProfileSummaryEval(t *testing.T) {
 		t.Fatalf("expected required_doc_sections in bootstrap profiles output: %v", payload)
 	}
 	profilesValue, ok := payload["profiles"].([]any)
-	if !ok || len(profilesValue) != 6 {
-		t.Fatalf("expected six shipped profiles, got %v", payload["profiles"])
+	if !ok || len(profilesValue) != 7 {
+		t.Fatalf("expected seven shipped profiles, got %v", payload["profiles"])
 	}
 	firstProfile, ok := profilesValue[0].(map[string]any)
 	if !ok {

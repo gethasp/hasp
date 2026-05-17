@@ -168,6 +168,33 @@
           ]
         }
       ]
+    },
+    "pi": {
+      "eval_tests": [
+        "TestBootstrapProfileSummaryEval",
+        "TestProfileReleaseGateEval",
+        "TestMCPEndToEndEval"
+      ],
+      "benchmarks": [
+        {
+          "package": "./internal/profiles",
+          "functions": [
+            "BenchmarkLoadEmbeddedProfilesAndReleaseGates"
+          ]
+        },
+        {
+          "package": "./internal/mcp",
+          "functions": [
+            "BenchmarkHaspListTool"
+          ]
+        },
+        {
+          "package": "./internal/app",
+          "functions": [
+            "BenchmarkBootstrapCommand"
+          ]
+        }
+      ]
     }
   }
 }

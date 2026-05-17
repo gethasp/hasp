@@ -95,7 +95,7 @@ func TestReleaseGateHelpersAndFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	if len(catalog) != 6 {
+	if len(catalog) != 7 {
 		t.Fatalf("catalog len = %d", len(catalog))
 	}
 	if _, err := LoadProfile("missing"); err == nil {

@@ -132,6 +132,45 @@ func TestUpsertJSONMCPServerConfigPreservesExistingContent(t *testing.T) {
 	}
 }
 
+func TestPiSettingsPackageConfigPreservesExistingContent(t *testing.T) {
+	packagePath := filepath.Join(t.TempDir(), "hasp-home", "pi-package")
+	updated, err := upsertPiSettingsPackageConfig([]byte(`{"defaultModel":"sonnet","packages":["/existing/pkg"]}`), packagePath)
+	if err != nil {
+		t.Fatalf("upsert pi settings: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(updated, &payload); err != nil {
+		t.Fatalf("decode updated pi settings: %v", err)
+	}
+	if payload["defaultModel"] != "sonnet" {
+		t.Fatalf("expected unrelated pi setting preserved, got %+v", payload)
+	}
+	packages, ok := payload["packages"].([]any)
+	if !ok || len(packages) != 2 || packages[0] != "/existing/pkg" || packages[1] != packagePath {
+		t.Fatalf("expected package appended once, got %+v", payload["packages"])
+	}
+	second, err := upsertPiSettingsPackageConfig(updated, packagePath)
+	if err != nil {
+		t.Fatalf("second pi settings upsert: %v", err)
+	}
+	if !bytes.Equal(updated, second) {
+		t.Fatalf("expected idempotent pi settings upsert\nfirst: %s\nsecond: %s", updated, second)
+	}
+	removed, err := removePiSettingsPackageConfig(second, packagePath)
+	if err != nil {
+		t.Fatalf("remove pi settings package: %v", err)
+	}
+	if strings.Contains(string(removed), packagePath) || !strings.Contains(string(removed), "/existing/pkg") {
+		t.Fatalf("expected only hasp pi package removed, got %s", string(removed))
+	}
+	if _, err := upsertPiSettingsPackageConfig([]byte(`{"packages":true}`), packagePath); err == nil {
+		t.Fatal("expected non-array pi packages to fail")
+	}
+	if _, err := removePiSettingsPackageConfig([]byte(`{"packages":true}`), packagePath); err == nil {
+		t.Fatal("expected non-array pi packages removal to fail")
+	}
+}
+
 func TestSetupCommandNonInteractive(t *testing.T) {
 	lockAppSeams(t)
 

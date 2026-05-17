@@ -296,13 +296,13 @@ func TestAppConsumerLauncherAndRollbackHelpers(t *testing.T) {
 	storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) {
 		return store.AppConsumer{}, errors.New("lookup existing consumer fail")
 	}
-		if err := appConnectCommand(context.Background(), []string{"failingapp", "--cmd", "true", "--env", "OPENAI_API_KEY=API_TOKEN"}, io.Discard); err == nil || err.Error() != "lookup existing consumer fail" {
-			t.Fatalf("expected existing consumer lookup failure, got %v", err)
-		}
-		storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) {
-			return store.AppConsumer{}, store.ErrConsumerNotFound
-		}
-		promptFile, err := os.CreateTemp(t.TempDir(), "prompt-error")
+	if err := appConnectCommand(context.Background(), []string{"failingapp", "--cmd", "true", "--env", "OPENAI_API_KEY=API_TOKEN"}, io.Discard); err == nil || err.Error() != "lookup existing consumer fail" {
+		t.Fatalf("expected existing consumer lookup failure, got %v", err)
+	}
+	storeGetAppFn = func(*store.Handle, string) (store.AppConsumer, error) {
+		return store.AppConsumer{}, store.ErrConsumerNotFound
+	}
+	promptFile, err := os.CreateTemp(t.TempDir(), "prompt-error")
 	if err != nil {
 		t.Fatalf("create prompt error file: %v", err)
 	}
@@ -458,12 +458,25 @@ func TestAgentConsumerConfigRemovalHelpers(t *testing.T) {
 	if _, err := removeJSONMCPServerConfig([]byte(`{"mcpServers":"bad"}`)); err == nil {
 		t.Fatal("expected invalid mcpServers object failure")
 	}
+	piPackagePath := filepath.Join(t.TempDir(), "hasp-home", "pi-package")
+	piSettings := []byte(`{"packages":["/other/pkg","` + piPackagePath + `"],"defaultProvider":"google"}`)
+	if data, err := removePiSettingsPackageConfig(piSettings, piPackagePath); err != nil || strings.Contains(string(data), piPackagePath) || !strings.Contains(string(data), "/other/pkg") || !strings.Contains(string(data), "defaultProvider") {
+		t.Fatalf("expected pi package removal to preserve unrelated settings, got %q err=%v", string(data), err)
+	}
+	if data, err := removePiSettingsPackageConfig(nil, piPackagePath); err != nil || string(data) != "{}\n" {
+		t.Fatalf("expected empty pi removal result, got %q err=%v", string(data), err)
+	}
+	if _, err := removePiSettingsPackageConfig([]byte(`{"packages":false}`), piPackagePath); err == nil {
+		t.Fatal("expected invalid pi packages removal failure")
+	}
 
 	origRead := setupReadFileFn
 	origAtomic := agentAtomicWriteFn
+	origResolvePaths := appResolvePathsFn
 	defer func() {
 		setupReadFileFn = origRead
 		agentAtomicWriteFn = origAtomic
+		appResolvePathsFn = origResolvePaths
 	}()
 
 	if err := removeAgentConsumerConfig(setupAgentSpec{Format: "json"}, filepath.Join(t.TempDir(), "missing.json")); err != nil {
@@ -483,6 +496,24 @@ func TestAgentConsumerConfigRemovalHelpers(t *testing.T) {
 	if strings.Contains(string(tomlData), "[mcp_servers.hasp]") || !strings.Contains(string(tomlData), "[mcp_servers.other]") {
 		t.Fatalf("unexpected toml removal output: %q", string(tomlData))
 	}
+	piHome := t.TempDir()
+	piConfigPath := filepath.Join(t.TempDir(), "settings.json")
+	piGeneratedPackage := setupPiPackagePath(piHome)
+	if err := os.WriteFile(piConfigPath, []byte(`{"packages":["`+piGeneratedPackage+`","/other/pkg"]}`), 0o600); err != nil {
+		t.Fatalf("write pi settings: %v", err)
+	}
+	appResolvePathsFn = func() (paths.Paths, error) { return paths.Paths{HomeDir: piHome}, nil }
+	if err := removeAgentConsumerConfig(setupAgentSpec{Format: "pi-package"}, piConfigPath); err != nil {
+		t.Fatalf("expected pi config removal success, got %v", err)
+	}
+	piData, err := os.ReadFile(piConfigPath)
+	if err != nil {
+		t.Fatalf("read updated pi settings: %v", err)
+	}
+	if strings.Contains(string(piData), piGeneratedPackage) || !strings.Contains(string(piData), "/other/pkg") {
+		t.Fatalf("unexpected pi removal output: %q", string(piData))
+	}
+	appResolvePathsFn = origResolvePaths
 	setupReadFileFn = func(string) ([]byte, error) { return nil, errors.New("read fail") }
 	if err := removeAgentConsumerConfig(setupAgentSpec{Format: "json"}, "/tmp/config.json"); err == nil || err.Error() != "read fail" {
 		t.Fatalf("expected remove config read failure, got %v", err)

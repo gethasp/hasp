@@ -111,12 +111,13 @@ are in [apps/server/README.md](apps/server/README.md).
 - [telemetry.md](docs/telemetry.md) covers opt-in CLI telemetry, payloads,
   retention, erasure, and the hard runtime kill switch.
 - [value-free-manifests.md](docs/value-free-manifests.md) explains safe manifests.
-- [agent profiles](docs/agent-profiles/README.md) cover the six first-class
-  profiles (Codex CLI, Claude Code, Cursor, Aider, Hermes, OpenClaw) and the
-  generic broker path. `hasp agent connect <id>` writes the MCP config in
-  place for `claude-code`, `codex-cli`, and `cursor`; for `aider`, `hermes`,
-  and `openclaw` it installs the wrapper at `$HASP_HOME/bin/hasp-agent-<id>`
-  and you wire it into the agent per the matching profile doc.
+- [agent profiles](docs/agent-profiles/README.md) cover the seven first-class
+  profiles (Codex CLI, Claude Code, Cursor, Aider, Pi, Hermes, OpenClaw) and
+  the generic broker path. `hasp agent connect <id>` writes the MCP config in
+  place for `claude-code`, `codex-cli`, and `cursor`; for `pi` it registers a
+  generated package in Pi settings; for `aider`, `hermes`, and `openclaw` it
+  installs the wrapper at `$HASP_HOME/bin/hasp-agent-<id>` and you wire it into
+  the agent per the matching profile doc.
 
 The full docs index is [docs/README.md](docs/README.md).
 

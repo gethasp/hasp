@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "version": "v1.0.20",
   "versionNumber": "1.0.20",
-  "createdAt": "2026-05-17T03:42:25.597Z",
+  "createdAt": "2026-05-17T07:07:37.617Z",
   "updatedLabel": "May 2026",
-  "sourceCommit": "b79a86eb45080c5a0b083cacaa8bf6746fd3355d",
+  "sourceCommit": "7a843f3c63ebc54d9f61a4701bd16ad763353829",
   "dirty": false,
   "defaultRouteSlug": "overview",
   "specs": [
@@ -153,6 +153,14 @@
       "description": "Connect Hermes through HASP as a brokered MCP surface."
     },
     {
+      "source": "docs/agent-profiles/pi.md",
+      "slug": "agent-profiles/pi",
+      "section": "Agents",
+      "order": 65,
+      "title": "Pi",
+      "description": "Connect Pi through HASP as a generated package extension and brokered MCP surface."
+    },
+    {
       "source": "docs/agent-profiles/openclaw.md",
       "slug": "agent-profiles/openclaw",
       "section": "Agents",
@@ -236,6 +244,7 @@
     "docs/agent-profiles/cursor.md",
     "docs/agent-profiles/aider.md",
     "docs/agent-profiles/hermes.md",
+    "docs/agent-profiles/pi.md",
     "docs/agent-profiles/openclaw.md",
     "docs/agent-profiles/generic.md",
     "public/CHANGELOG.md",
@@ -246,10 +255,10 @@
     "public/docs/error-codes.md"
   ],
   "sourceFileSha256": {
-    "public/README.md": "f46fe9fc11b359adeeb7e57841316e07933823318f199fa311cc320102c3f6d4",
+    "public/README.md": "fb39de8f1dd250de1474589215e32148c6d4aa3d5d8b8050d6b7e8edf3fad1d6",
     "public/QUICKSTART.md": "877bf3620dacd3950e55aac1f1c56b012ddec49187669ba604c84b61c759edab",
     "public/docs/mental-model.md": "b85f4e4eb068ed560ce9e7182e32be64b7df0d111157ba23ac7292dbec8c98c2",
-    "public/docs/agent-mental-model.md": "062fca2adb914e0656aea337db0737cbeb618492728483197dfa8485c54c3a8b",
+    "public/docs/agent-mental-model.md": "b9e528269c313c33f4f5497d64ee9d57095a06fa3e2f2227add724b4890d5943",
     "public/docs/value-free-manifests.md": "d3965241b71b7e9d018612e8c5c7ada69fc8a80ebd2db966d3c763712498d5f9",
     "public/docs/install.md": "c67ba550be61fc072629203271795eb3a6b31e43b217e485c9bea8a08765c8b4",
     "public/docs/after-homebrew.md": "48281986c6cc36010d097b0298ff2881828df6aa9c19192fcac9290808a05b9e",
@@ -258,12 +267,13 @@
     "public/docs/telemetry.md": "68adf2505dec3a08a06c152b4eaa197c1c869499677d22b62c96c71287daf5f5",
     "public/docs/repo-targets.md": "15c0fa3db4f48fc0d4d0bef561814c7d281e09638ab7c9b38f4ff2e762b83e0a",
     "public/docs/v1-production-guide.md": "dfff27d6111308ae98b530c9e41bfb9ca074d22b549e5566f1114751c3ef9418",
-    "docs/agent-profiles/README.md": "4936f78a961dc89ae248274d426d44a5988c8daa4df6db042e42a13660842844",
+    "docs/agent-profiles/README.md": "07f04aa7c919d14ee5ebfea4dc64606c3ac3246eaa2a55331ee2e5568747d559",
     "docs/agent-profiles/codex-cli.md": "faaa5973b68e36e9da41691d29548ffba1719d59babffc9dd1753bc795090854",
     "docs/agent-profiles/claude-code.md": "8a467d59b93ad97a63f02f106a6824cf67eb781acc6abdd6ff95fb4fb54113f2",
     "docs/agent-profiles/cursor.md": "3e817ef9fee7b639be95660a47ec6c944ef4e1632986772e08cfc29c4589636c",
     "docs/agent-profiles/aider.md": "a586717619896c4195b5ca58e1e048f80bd05a6c3fed033a75a2b1369818ad52",
     "docs/agent-profiles/hermes.md": "3cce3f20d57a842fbe5a7487f5acbe290ec55da939d18b6605178950760789cb",
+    "docs/agent-profiles/pi.md": "e67947321c96aaec8fb191a38018e2f700de0fa4ad358381146fc8b783ac09d3",
     "docs/agent-profiles/openclaw.md": "8431c81fc33c9021e7ad0073074a151093e0721b461ddb5a640131a1155c1aef",
     "docs/agent-profiles/generic.md": "46d0131d32c39aaec1ec6849543cd1171e81690b84df22f6dfe5840bc33815bf",
     "public/CHANGELOG.md": "f3b7dfea07eea1b0e6d908b05b06e581374eb3745457cb8bf2da9af4989cb05d",

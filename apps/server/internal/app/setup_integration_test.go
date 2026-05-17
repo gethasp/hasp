@@ -269,7 +269,18 @@ func TestSetupCommandPersistsAndVerifiesEverySupportedAgentHarness(t *testing.T)
 					t.Fatalf("read config for %s: %v", agent.ID, err)
 				}
 				config := string(configBytes)
-				if !strings.Contains(config, wrapperPath) {
+				if agent.Format == "pi-package" {
+					if !strings.Contains(config, setupPiPackagePath(haspHome)) {
+						t.Fatalf("config for %s does not reference generated Pi package %s:\n%s", agent.ID, setupPiPackagePath(haspHome), config)
+					}
+					extensionBytes, err := os.ReadFile(filepath.Join(setupPiPackagePath(haspHome), "extensions", "hasp", "index.js"))
+					if err != nil {
+						t.Fatalf("read generated Pi extension for %s: %v", agent.ID, err)
+					}
+					if !strings.Contains(string(extensionBytes), wrapperPath) {
+						t.Fatalf("generated Pi extension for %s does not reference wrapper %s:\n%s", agent.ID, wrapperPath, string(extensionBytes))
+					}
+				} else if !strings.Contains(config, wrapperPath) {
 					t.Fatalf("config for %s does not reference wrapper %s:\n%s", agent.ID, wrapperPath, config)
 				}
 				if strings.Contains(config, "correct horse battery staple") {

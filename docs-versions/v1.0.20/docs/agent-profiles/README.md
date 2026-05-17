@@ -62,6 +62,7 @@ the whole agent process tree instead of only the HASP MCP server.
 - [Cursor](./cursor.md)
 - [Aider](./aider.md)
 - [Codex CLI](./codex-cli.md)
+- [Pi](./pi.md)
 - [OpenClaw](./openclaw.md)
 - [Hermes](./hermes.md)
 

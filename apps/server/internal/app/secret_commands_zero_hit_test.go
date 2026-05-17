@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -21,6 +22,7 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 	origGetwd := secretGetwdFn
 	origCanon := appCanonicalProjectRootFn
 	origResolveBinding := resolveBindingViewAppFn
+	origLoadConfig := loadCLIConfigAppFn
 	origUpsert := secretUpsertItemFn
 	origGetItem := secretGetItemFn
 	origDelete := secretDeleteItemFn
@@ -31,12 +33,14 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 		secretGetwdFn = origGetwd
 		appCanonicalProjectRootFn = origCanon
 		resolveBindingViewAppFn = origResolveBinding
+		loadCLIConfigAppFn = origLoadConfig
 		secretUpsertItemFn = origUpsert
 		secretGetItemFn = origGetItem
 		secretDeleteItemFn = origDelete
 		secretBindItemAliasFn = origBind
 		secretHideItemFn = origHide
 	}()
+	loadCLIConfigAppFn = func() (paths.CLIConfig, error) { return paths.CLIConfig{}, nil }
 
 	openVaultHandleFn = func(context.Context) (*store.Handle, error) { return nil, errors.New("vault fail") }
 	if err := secretAddCommand(context.Background(), []string{"KEY=value"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err == nil || err.Error() != "vault fail" {
@@ -188,6 +192,16 @@ func TestSecretCommandsZeroHitBranches(t *testing.T) {
 }
 
 func TestSecretCommandHelpersZeroHitBranches(t *testing.T) {
+	lockAppSeams(t)
+
+	origResolveBinding := resolveBindingViewAppFn
+	origLoadConfig := loadCLIConfigAppFn
+	defer func() {
+		resolveBindingViewAppFn = origResolveBinding
+		loadCLIConfigAppFn = origLoadConfig
+	}()
+	loadCLIConfigAppFn = func() (paths.CLIConfig, error) { return paths.CLIConfig{}, nil }
+
 	prompt := newSecretPrompt(errReader{err: errors.New("line fail")}, io.Discard, io.Discard)
 	if _, err := secretAddInputs(nil, prompt); err == nil || err.Error() != "line fail" {
 		t.Fatalf("expected add helper line failure, got %v", err)
@@ -252,9 +266,17 @@ func TestSecretCommandHelpersZeroHitBranches(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	installHooksFn = func(string) error { return errors.New("install hook fail") }
-	if _, _, _, err := ensureProjectBindingExplicit(context.Background(), handle, gitRoot); err == nil || err.Error() != "install hook fail" {
+	hookFailGitRoot := t.TempDir()
+	if out, err := run("git", "-C", hookFailGitRoot, "init"); err != nil {
+		t.Fatalf("git init hook fail root: %v: %s", err, out)
+	}
+	resolveBindingViewAppFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{}, nil, nil
+	}
+	if _, _, _, err := ensureProjectBindingExplicit(context.Background(), handle, hookFailGitRoot); err == nil || err.Error() != "install hook fail" {
 		t.Fatalf("expected explicit binding install hook failure, got %v", err)
 	}
+	resolveBindingViewAppFn = origResolveBinding
 	installHooksFn = origInstallHooks
 
 	if _, err := newSecretPrompt(bytes.NewBuffer(nil), io.Discard, errWriter{err: errors.New("masked prompt fail")}).secretValue("TOKEN"); err == nil || err.Error() != "masked prompt fail" {
