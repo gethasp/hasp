@@ -7,6 +7,8 @@ import (
 	"net"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestDarwinPeerCredentialFailureBranches(t *testing.T) {
@@ -66,5 +68,18 @@ func TestDarwinPeerCredentialFailureBranches(t *testing.T) {
 func TestDarwinProcessIdentityRejectsInvalidPID(t *testing.T) {
 	if got, err := realProcessIdentity(0); err != nil || got != "" {
 		t.Fatalf("realProcessIdentity(0) = %q, %v", got, err)
+	}
+	if got, err := realProcessParentPID(0); err != nil || got != 0 {
+		t.Fatalf("realProcessParentPID(0) = %d, %v", got, err)
+	}
+	if _, err := realProcessParentPID(1 << 30); err == nil {
+		t.Fatal("expected invalid pid parent lookup to fail")
+	}
+
+	origSysctl := sysctlKinfoProcFn
+	t.Cleanup(func() { sysctlKinfoProcFn = origSysctl })
+	sysctlKinfoProcFn = func(string, ...int) (*unix.KinfoProc, error) { return nil, nil }
+	if got, err := realProcessParentPID(123); err != nil || got != 0 {
+		t.Fatalf("nil kinfo parent pid = %d, %v", got, err)
 	}
 }

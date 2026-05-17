@@ -2890,7 +2890,8 @@ type brokerRPC struct {
 	// either the lookup failed or this brokerRPC was registered on the shared
 	// rpc.Server (legacy/template path). Privileged operations that depend on
 	// peer identity fail closed when peerPID is zero.
-	peerPID uint32
+	peerPID             uint32
+	backupSchedulerTick time.Duration
 }
 
 func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
@@ -3236,7 +3237,11 @@ func backupPassphraseAccount() string {
 }
 
 func (b *brokerRPC) runScheduledBackups(ctx context.Context) {
-	ticker := time.NewTicker(backupSchedulerTick)
+	tick := backupSchedulerTick
+	if b.backupSchedulerTick > 0 {
+		tick = b.backupSchedulerTick
+	}
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	for {
 		select {

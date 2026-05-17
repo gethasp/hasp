@@ -64,3 +64,9 @@ func TestWriteEnvConvenienceGrantUsesResolvedReferences(t *testing.T) {
 		t.Fatalf("write-env should preserve resolved reference context for convenience grants: %v", err)
 	}
 }
+
+func TestAuthorizeWriteEnvConvenienceSkipsEmptyReferenceSet(t *testing.T) {
+	if err := authorizeWriteEnvConvenience(nil, defaultExecDeps(), writeEnvExportRequest{}, nil); err != nil {
+		t.Fatalf("empty reference set should not require convenience grant: %v", err)
+	}
+}

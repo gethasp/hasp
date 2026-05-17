@@ -63,6 +63,7 @@ func TestAuditStateTransitions(t *testing.T) {
 		t.Fatalf("last verified at = %v, want %v", got, verifiedAt)
 	}
 	var nilState *AuditState
+	nilState.RecordAppendResult(errors.New("ignored"))
 	nilState.MarkDegradedAt(now)
 	nilState.MarkVerifyFailedAt(now)
 	nilState.MarkVerifiedAt(now)

@@ -2,6 +2,7 @@ package brokerops
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -152,6 +153,29 @@ func TestAuthorizeItemPerformsRequiredGrantActions(t *testing.T) {
 				t.Fatalf("actions = %#v, want %#v", actions, tt.wantActions)
 			}
 		})
+	}
+}
+
+func TestAuthorizeReferenceAndItemPropagateConsumeErrors(t *testing.T) {
+	actions := installAuthorizationActionSeams(t, []store.AccessDecision{{Allowed: true}}, store.PolicySession)
+	origConsume := authorizeAndConsumeFn
+	authorizeAndConsumeFn = func(*store.Handle, store.AccessRequest) (store.AccessDecision, error) {
+		return store.AccessDecision{}, errors.New("consume failed")
+	}
+	t.Cleanup(func() { authorizeAndConsumeFn = origConsume })
+	handle := newBrokeropsHandle(t)
+	if _, err := AuthorizeReference(context.Background(), handle, "binding", t.TempDir(), "token", "secret_01", store.OperationRun, "", "", "", time.Minute, ""); err == nil || !strings.Contains(err.Error(), "consume failed") {
+		t.Fatalf("expected reference consume failure, got %v actions=%v", err, *actions)
+	}
+
+	authorizeFn = func(*store.Handle, store.AccessRequest) store.AccessDecision {
+		return store.AccessDecision{Allowed: true}
+	}
+	authorizeAndConsumeFn = func(*store.Handle, store.AccessRequest) (store.AccessDecision, error) {
+		return store.AccessDecision{}, errors.New("consume failed")
+	}
+	if _, err := AuthorizeItem(handle, "binding", "token", store.Item{Name: "api_token", Metadata: store.ItemMetadata{Policy: store.PolicySession}}, store.OperationRun, "", "", time.Minute); err == nil || !strings.Contains(err.Error(), "consume failed") {
+		t.Fatalf("expected item consume failure, got %v actions=%v", err, *actions)
 	}
 }
 

@@ -106,6 +106,26 @@ func TestLoadOrCreateHMACKeyUsesExistingKey(t *testing.T) {
 	}
 }
 
+func TestHMACKeyOperationsAcceptNilContext(t *testing.T) {
+	keyring := &memoryHMACKeyring{}
+	//lint:ignore SA1012 intentionally covers the nil-context fallback
+	key, err := LoadOrCreateHMACKey(nil, keyring) //nolint:staticcheck // intentionally covers the nil-context fallback
+	if err != nil {
+		t.Fatalf("load with nil context: %v", err)
+	}
+	if len(key) != sha256.Size {
+		t.Fatalf("key length = %d", len(key))
+	}
+	//lint:ignore SA1012 intentionally covers the nil-context fallback
+	rotated, err := ReinitializeHMACKey(nil, keyring) //nolint:staticcheck // intentionally covers the nil-context fallback
+	if err != nil {
+		t.Fatalf("reinitialize with nil context: %v", err)
+	}
+	if len(rotated) != sha256.Size {
+		t.Fatalf("rotated key length = %d", len(rotated))
+	}
+}
+
 func TestLoadOrCreateHMACKeyCreatesMissingKey(t *testing.T) {
 	account, err := HMACKeyAccount()
 	if err != nil {

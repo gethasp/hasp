@@ -166,6 +166,21 @@ func TestHMACValidatorMiddlewareRecordsOversizedRevealFailures(t *testing.T) {
 	if body.readCalls != 0 {
 		t.Fatalf("oversized reveal should reject before reading body, read calls=%d", body.readCalls)
 	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/items", nil)
+	body = &hmacReadTrackingBody{remaining: (1 << 20) + 1, failOnRead: true}
+	req.Body = body
+	req.ContentLength = (1 << 20) + 1
+	req.Header.Set(httpapi.HeaderDate, now.UTC().Format(time.RFC3339Nano))
+	req.Header.Set(httpapi.HeaderNonce, "abcdefabcdefabcdefabcdefabcdefb0")
+	req.Header.Set("Authorization", httpapi.AuthorizationScheme+" sig="+base64.StdEncoding.EncodeToString(make([]byte, sha256.Size)))
+	rec = httptest.NewRecorder()
+	hmacValidatorMiddleware(validator, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler should not run for oversized request")
+	})).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized non-reveal status = %d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestServerIntegrationPathAndJSONHelperCoverage(t *testing.T) {
@@ -1900,9 +1915,7 @@ func TestRuntimeBrokerVaultBackupsAndIntegrationsCoverage(t *testing.T) {
 	if err := broker.runScheduledBackupOnce(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatalf("not due scheduled backup: %v", err)
 	}
-	oldTick := backupSchedulerTick
-	backupSchedulerTick = time.Millisecond
-	t.Cleanup(func() { backupSchedulerTick = oldTick })
+	broker.backupSchedulerTick = time.Millisecond
 	tickCtx, cancelTick := context.WithCancel(context.Background())
 	tickDone := make(chan struct{})
 	go func() {

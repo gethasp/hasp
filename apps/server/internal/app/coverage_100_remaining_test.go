@@ -139,6 +139,9 @@ func TestCoverage100RemainingCommandBranches(t *testing.T) {
 	if err := setupResolveTelemetryOption(&opts, newSetupPrompter(errReader{err: errors.New("prompt read fail")}, io.Discard)); err == nil {
 		t.Fatal("expected telemetry prompt failure")
 	}
+	if err := setupConvenienceUnlockRequiredError(""); err == nil || !strings.Contains(err.Error(), "required but is unavailable") {
+		t.Fatalf("expected blank convenience detail error, got %v", err)
+	}
 
 	service := &doctorIntegrationRPC{reply: runtime.IntegrationDoctorResponse{
 		OK:           true,
@@ -367,6 +370,8 @@ func TestCoverage100RunSetupRemainingBranches(t *testing.T) {
 	origStoreUpsert := storeUpsertAgentFn
 	origVerifyHarness := setupVerifyHarnessFn
 	origVerifyProof := setupVerifyBrokeredProofFn
+	origEnableConvenience := setupEnableConvenienceUnlockFn
+	origVerifyConvenience := setupVerifyConvenienceUnlockFn
 	t.Cleanup(func() {
 		newVaultStoreFn = origNewStore
 		setupUserHomeDirFn = origHome
@@ -377,6 +382,8 @@ func TestCoverage100RunSetupRemainingBranches(t *testing.T) {
 		storeUpsertAgentFn = origStoreUpsert
 		setupVerifyHarnessFn = origVerifyHarness
 		setupVerifyBrokeredProofFn = origVerifyProof
+		setupEnableConvenienceUnlockFn = origEnableConvenience
+		setupVerifyConvenienceUnlockFn = origVerifyConvenience
 	})
 
 	keyring := &memorySetupKeyring{}
@@ -447,9 +454,26 @@ func TestCoverage100RunSetupRemainingBranches(t *testing.T) {
 	interactive.HaspHome = filepath.Join(homeDir, ".hasp-interactive")
 	interactive.AutoProtectRepos = setupOptionalBool{set: true, value: false}
 	interactive.Telemetry = setupOptionalBool{}
+	interactive.ImportPath = filepath.Join(t.TempDir(), "skip-before-prepare.env")
+	interactive.BindImports = true
+	if _, err := runSetup(context.Background(), interactive, bytes.NewReader(nil), errWriter{err: errors.New("telemetry stage fail")}); err == nil {
+		t.Fatal("expected runSetup telemetry resolution failure")
+	} else if !strings.Contains(err.Error(), "telemetry stage fail") {
+		t.Fatalf("expected telemetry stage failure, got %v", err)
+	}
 	if _, err := runSetup(context.Background(), interactive, errReader{err: errors.New("telemetry prompt fail")}, io.Discard); err == nil {
 		t.Fatal("expected runSetup telemetry resolution failure")
 	} else if !strings.Contains(err.Error(), "telemetry prompt fail") {
 		t.Fatalf("expected telemetry prompt failure, got %v", err)
+	}
+
+	t.Setenv("HASP_TELEMETRY_TEST_STATE", filepath.Join(t.TempDir(), "telemetry-required.json"))
+	requiredConvenience := base
+	requiredConvenience.HaspHome = filepath.Join(homeDir, ".hasp-required-convenience")
+	requiredConvenience.EnableConvenienceUnlock = setupOptionalBool{set: true, value: true, source: "always"}
+	setupEnableConvenienceUnlockFn = func(context.Context, *store.Handle) error { return nil }
+	setupVerifyConvenienceUnlockFn = func(context.Context, *store.Store) error { return store.ErrKeyringUnavailable }
+	if _, err := runSetup(context.Background(), requiredConvenience, bytes.NewReader(nil), io.Discard); err == nil || !strings.Contains(err.Error(), "convenience unlock was required") {
+		t.Fatalf("expected required convenience unlock failure, got %v", err)
 	}
 }

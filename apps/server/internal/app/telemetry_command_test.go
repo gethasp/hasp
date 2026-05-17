@@ -287,6 +287,23 @@ func TestTelemetryCommandErrorBranches(t *testing.T) {
 	}
 }
 
+func TestTelemetryForgetReportsErasureSendFailure(t *testing.T) {
+	withAppTelemetryState(t)
+	telemetry.Endpoint = telemetry.TrustedEndpoint
+	if _, err := telemetry.DefaultStore().Enable(time.Now().UTC()); err != nil {
+		t.Fatalf("enable telemetry: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if err := telemetryForgetCommand(ctx, nil, &stdout, &stderr); err != nil {
+		t.Fatalf("forget telemetry: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "telemetry erasure request failed") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestSetupTelemetryOptionDefaultsAndPrompt(t *testing.T) {
 	opts := setupOptions{NonInteractive: true}
 	if err := setupResolveTelemetryOption(&opts, newSetupPrompter(strings.NewReader(""), &bytes.Buffer{})); err != nil {

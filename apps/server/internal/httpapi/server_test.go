@@ -61,7 +61,8 @@ func TestNewServerAndServerHelperErrorBranches(t *testing.T) {
 	_ = clientConn.Close()
 	_ = serverConn.Close()
 	_ = peerServer.Close()
-	if err := (&Server{httpServer: &http.Server{}}).Serve(context.Background()); err == nil {
+	//lint:ignore SA1012 intentionally covers the nil-context fallback
+	if err := (&Server{httpServer: &http.Server{}}).Serve(nil); err == nil { //nolint:staticcheck // intentionally covers the nil-context fallback
 		t.Fatal("expected no listeners error")
 	}
 	if err := (&Server{httpServer: &http.Server{}, listeners: []net.Listener{fakeListener{addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1}}}}).Serve(context.Background()); err == nil {

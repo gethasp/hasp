@@ -3,9 +3,14 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
 func TestProcessLineageAndParentPID(t *testing.T) {
@@ -87,5 +92,51 @@ func TestProcessLineageAdditionalBranches(t *testing.T) {
 	lineage, err = processLineage(70)
 	if err != nil || len(lineage) != 2 || lineage[0] != 70 || lineage[1] != 69 {
 		t.Fatalf("expected cycle break lineage, got %+v err=%v", lineage, err)
+	}
+}
+
+func TestRealVerifyDaemonPIDRejectsInvalidInputs(t *testing.T) {
+	if realVerifyDaemonPID("", 1) {
+		t.Fatal("empty socket path should not verify")
+	}
+	if realVerifyDaemonPID("/tmp/missing-hasp.sock", 0) {
+		t.Fatal("zero pid should not verify")
+	}
+	if realVerifyDaemonPID("/tmp/missing-hasp.sock", 12345) {
+		t.Fatal("missing socket should not verify")
+	}
+}
+
+func TestRealVerifyDaemonPIDRejectsPeerPIDMismatch(t *testing.T) {
+	lockRuntimeSeams(t)
+	home := t.TempDir()
+	socket := filepath.Join("/tmp", "hasp-verify-mismatch-"+time.Now().UTC().Format("150405.000000000")+".sock")
+	t.Setenv(paths.EnvHome, home)
+	t.Setenv(paths.EnvSocket, socket)
+	t.Cleanup(func() { _ = os.Remove(socket) })
+
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- manager.RunDaemon(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("daemon exited: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for daemon shutdown")
+		}
+	})
+	if err := waitForSocket(manager.SocketPath(), 2*time.Second); err != nil {
+		t.Fatalf("wait for socket: %v", err)
+	}
+	if realVerifyDaemonPID(manager.SocketPath(), os.Getpid()+1) {
+		t.Fatal("peer PID mismatch should not verify daemon pid")
 	}
 }

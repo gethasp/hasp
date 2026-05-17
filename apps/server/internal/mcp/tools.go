@@ -34,7 +34,9 @@ var (
 	captureMCPFn              = (*store.Handle).Capture
 	canonicalProjectRootMCPFn = store.CanonicalProjectRoot
 	authorizeReferenceMCPFn   = brokerops.AuthorizeReference
+	authorizeAndConsumeMCPFn  = (*store.Handle).AuthorizeAndConsume
 	runnerExecuteMCPFn        = runner.Execute
+	reposcanScanMCPFn         = reposcan.Scan
 	loadCLIConfigMCPFn        = paths.LoadConfig
 	installHooksMCPFn         = hooks.Install
 )
@@ -139,7 +141,7 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 			return nil, err
 		}
 	}
-	decision, err := handle.AuthorizeAndConsume(store.AccessRequest{
+	decision, err := authorizeAndConsumeMCPFn(handle, store.AccessRequest{
 		Operation:    store.OperationList,
 		BindingID:    binding.ID,
 		SessionToken: session.Token,
@@ -162,7 +164,7 @@ func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[st
 	if err != nil {
 		return nil, err
 	}
-	result, err := reposcan.Scan(ctx, root, handle.ListItems(), reposcan.DefaultMaxFileBytes, reposcan.DefaultDeps())
+	result, err := reposcanScanMCPFn(ctx, root, handle.ListItems(), reposcan.DefaultMaxFileBytes, reposcan.DefaultDeps())
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +587,7 @@ func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, c
 			return brokerops.Session{}, store.Binding{}, err
 		}
 	}
-	decision, err := handle.AuthorizeAndConsume(store.AccessRequest{
+	decision, err := authorizeAndConsumeMCPFn(handle, store.AccessRequest{
 		Operation:    store.OperationList,
 		BindingID:    binding.ID,
 		SessionToken: session.Token,

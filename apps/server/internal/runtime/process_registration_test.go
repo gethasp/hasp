@@ -331,3 +331,39 @@ func TestClientRegisterProcessFalseReplyBranch(t *testing.T) {
 		t.Fatal("expected false reply registration failure")
 	}
 }
+
+func TestResolveProcessDropsMissingRevokedAndExpiredSessionsAfterIdentityMatch(t *testing.T) {
+	lockRuntimeSeams(t)
+	origParentPID := processParentPID
+	t.Cleanup(func() { processParentPID = origParentPID })
+	processParentPID = func(int) (int, error) { return 0, nil }
+
+	now := time.Date(2026, 5, 16, 1, 0, 0, 0, time.UTC)
+	store := NewSessionStore()
+	store.now = func() time.Time { return now }
+	store.processIdentity = func(int) (string, error) { return "identity", nil }
+
+	store.processes[10] = processBinding{token: "missing", identity: "identity"}
+	if _, _, ok := store.ResolveProcess(10); ok {
+		t.Fatal("missing session should not resolve")
+	}
+
+	revokedAt := now.Add(-time.Minute)
+	store.sessions["revoked"] = Session{Token: "revoked", ExpiresAt: now.Add(time.Hour), RevokedAt: &revokedAt}
+	store.processes[11] = processBinding{token: "revoked", identity: "identity"}
+	if _, _, ok := store.ResolveProcess(11); ok {
+		t.Fatal("revoked session should not resolve")
+	}
+
+	store.sessions["expired"] = Session{Token: "expired", ExpiresAt: now.Add(-time.Minute)}
+	store.processes[12] = processBinding{token: "expired", identity: "identity"}
+	if _, _, ok := store.ResolveProcess(12); ok {
+		t.Fatal("expired session should not resolve")
+	}
+
+	store.sessions["blank-identity"] = Session{Token: "blank-identity", ExpiresAt: now.Add(time.Hour)}
+	store.processes[13] = processBinding{token: "blank-identity"}
+	if _, _, ok := store.ResolveProcess(13); ok {
+		t.Fatal("blank process identity binding should not resolve")
+	}
+}

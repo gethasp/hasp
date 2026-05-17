@@ -107,6 +107,12 @@ func TestWritePublicErrorEnvelopeUsesGenericDetail(t *testing.T) {
 	}
 }
 
+func TestPublicErrorDetailFallsBackToStatusText(t *testing.T) {
+	if got := publicErrorDetail(http.StatusTeapot, " "); got != http.StatusText(http.StatusTeapot) {
+		t.Fatalf("detail = %q", got)
+	}
+}
+
 func TestValidatorRejectsReplay(t *testing.T) {
 	now := time.Date(2026, 5, 9, 22, 0, 0, 0, time.UTC)
 	key := bytes.Repeat([]byte{0x11}, 32)
@@ -560,6 +566,10 @@ func TestValidatorResidualBranches(t *testing.T) {
 	sum := sha256.Sum256(nil)
 	if emptyHash != hex.EncodeToString(sum[:]) {
 		t.Fatalf("nil body hash = %q", emptyHash)
+	}
+	defaultedReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("body"))
+	if _, err := requestBodyHash(defaultedReq, 0); err != nil {
+		t.Fatalf("default max request body hash: %v", err)
 	}
 	cache := nonceCache{
 		entries: map[string]time.Time{"old": now.Add(-2 * time.Minute)},
