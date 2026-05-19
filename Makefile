@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap osv-scan install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate check-mcp-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap osv-scan install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -35,6 +35,10 @@ check-telemetry-release-gate:
 ## check-telemetry-live-release-gate: Verify the production telemetry endpoint resolves, serves TLS, and accepts the release-gate payload
 check-telemetry-live-release-gate:
 	@HASP_TELEMETRY_LIVE_GATE=1 bash ./scripts/check-telemetry-release-gate.sh
+
+## check-mcp-release-gate: Verify MCP stdio and managed agent startup remain release-ready
+check-mcp-release-gate:
+	@bash ./scripts/check-mcp-release-gate.sh --build
 
 ## workflow-lint: Validate GitHub Actions workflows
 workflow-lint:
@@ -113,12 +117,14 @@ release-readiness:
 ## release-preflight: Fast local preflight before publishing a release tag
 release-preflight:
 	@$(MAKE) verify-ci
+	@$(MAKE) check-mcp-release-gate
 	@$(MAKE) check-telemetry-live-release-gate
 	@$(MAKE) evals
 
 ## release-gate: Release-blocking gate with all tests and Go coverage reporting
 release-gate:
 	@$(MAKE) verify-ci
+	@$(MAKE) check-mcp-release-gate
 	@$(MAKE) check-telemetry-live-release-gate
 	@$(MAKE) evals
 	@$(MAKE) vulncheck

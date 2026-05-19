@@ -49,8 +49,13 @@ func TestMain(m *testing.M) {
 	// t.Setenv("HASP_HOME", t.TempDir()) to get their own isolated dir.
 	os.Setenv("HASP_TEST_HELPER_DAEMON", "1")
 	dir, err := os.MkdirTemp("", "hasp-test-home-*")
+	userDir, userErr := os.MkdirTemp("", "hasp-test-user-home-*")
 	if err == nil {
 		os.Setenv("HASP_HOME", dir)
+	}
+	if userErr == nil {
+		os.Setenv("HOME", userDir)
+		os.Setenv("XDG_CONFIG_HOME", filepath.Join(userDir, ".config"))
 	}
 	// Signal the paths guard that this is a test context so it refuses any
 	// remaining fallback to the real user home even if HASP_HOME is unset.
@@ -58,6 +63,9 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if dir != "" {
 		os.RemoveAll(dir)
+	}
+	if userDir != "" {
+		os.RemoveAll(userDir)
 	}
 	restoreEnvelopeDurability()
 	cleanupTempRoot()

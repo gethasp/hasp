@@ -36,6 +36,16 @@ esac
 export HASP_BUILD_DATE="$release_build_date"
 export HASP_TELEMETRY_ENDPOINT="${HASP_TELEMETRY_ENDPOINT:-https://telemetry.gethasp.com/v1/cli/ping}"
 
+if [[ ",${HASP_GO_BUILD_TAGS:-}," == *,hasp_test_fastkdf,* || " ${HASP_GO_BUILD_TAGS:-} " == *" hasp_test_fastkdf "* ]]; then
+  printf 'HASP_GO_BUILD_TAGS must not include hasp_test_fastkdf for release artifacts\n' >&2
+  exit 1
+fi
+
+if [[ "$os_name" == "darwin" && "${CGO_ENABLED:-$(go env CGO_ENABLED)}" == "0" ]]; then
+  printf 'darwin release artifacts require CGO_ENABLED=1 so daemon HMAC keychain support is native\n' >&2
+  exit 1
+fi
+
 verify_upgrade_trust_roots() {
   if [[ "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" == "1" ]]; then
     return 0
@@ -63,6 +73,27 @@ verify_upgrade_trust_roots() {
   fi
 }
 
+verify_darwin_hmac_keychain_build() {
+  if [[ "$os_name" != "darwin" ]]; then
+    return 0
+  fi
+  local binary="$artifact_dir/bin/hasp"
+  if ! command -v strings >/dev/null 2>&1; then
+    printf 'strings is required to verify darwin release keychain support\n' >&2
+    exit 1
+  fi
+  local forbidden
+  for forbidden in \
+    "native keychain reads require cgo" \
+    "native keychain deletes require cgo" \
+    "designated-requirement keychain ACLs require cgo"; do
+    if strings -a "$binary" | grep -Fq "$forbidden"; then
+      printf 'packaged darwin binary contains stubbed HMAC keychain path (%s); refusing release artifact\n' "$forbidden" >&2
+      exit 1
+    fi
+  done
+}
+
 if [[ -z "${HASP_UPGRADE_TRUST_ROOTS_HEX:-}" && "${HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS:-0}" != "1" ]]; then
   printf 'missing HASP_UPGRADE_TRUST_ROOTS_HEX; release binaries must embed hasp upgrade trust roots (set HASP_ALLOW_MISSING_UPGRADE_TRUST_ROOTS=1 only for explicit dev packaging)\n' >&2
   exit 1
@@ -73,6 +104,7 @@ fi
 
 bash ./scripts/build.sh -o "$artifact_dir/bin/hasp"
 verify_upgrade_trust_roots
+verify_darwin_hmac_keychain_build
 /bin/cp -f "$repo_root/LICENSE" "$artifact_dir/LICENSE"
 bash ./scripts/generate-supply-chain-artifacts.sh "$artifact_dir" >/dev/null
 

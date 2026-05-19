@@ -308,6 +308,7 @@ fi
 
 bash ./scripts/hasp-install-release.sh --verify "$tarball" "$install_root" >/dev/null
 installed_bin="$install_root/bin/hasp"
+bash ./scripts/check-mcp-release-gate.sh --bin "$installed_bin"
 
 export HASP_HOME="$temp_home"
 export HASP_MASTER_PASSWORD="release-smoke-password"

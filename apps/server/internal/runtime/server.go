@@ -201,6 +201,11 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 	}
 	deadline := time.Now().Add(daemonStartupTimeout())
 	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		client, err := Dial(ctx, m.paths.SocketPath)
 		if err == nil {
 			ok := verifyDaemon(ctx, client, m.paths.SocketPath)
@@ -209,7 +214,11 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 				return nil
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	return errors.New("timed out waiting for hasp daemon")
 }

@@ -56,8 +56,14 @@ if grep -Fq "\$repo_root/dist/release" "$ROOT/scripts/package-public-release.sh"
 fi
 grep -Fq "HASP_RELEASE_ROOT=\"\$target_release_root\"" "$ROOT/scripts/package-public-release.sh"
 grep -Fq "HASP_PACKAGE_RELEASE_UNSIGNED=1" "$ROOT/scripts/package-public-release.sh"
+grep -Fq "CGO_ENABLED=1" "$ROOT/scripts/package-public-release.sh"
 # shellcheck disable=SC2016
 grep -Fq 'bash ./scripts/build.sh -o "$artifact_dir/bin/hasp"' "$ROOT/scripts/package-release.sh"
+grep -Fq 'HASP_GO_BUILD_TAGS must not include hasp_test_fastkdf for release artifacts' "$ROOT/scripts/package-release.sh"
+grep -Fq 'darwin release artifacts require CGO_ENABLED=1' "$ROOT/scripts/package-release.sh"
+grep -Fq 'stubbed HMAC keychain path' "$ROOT/scripts/package-release.sh"
+# shellcheck disable=SC2016
+grep -Fq 'bash ./scripts/check-mcp-release-gate.sh --bin "$installed_bin"' "$ROOT/scripts/release-smoke.sh"
 # shellcheck disable=SC2016
 if grep -Fq '$repo_root/bin/hasp' "$ROOT/scripts/package-release.sh"; then
   printf 'package-release must build directly into the artifact tree, not shared bin/hasp\n' >&2
@@ -67,6 +73,14 @@ if [[ -f "$ROOT/scripts/reproducible-build.sh" ]] && grep -Fq 'buildVersion=' "$
   printf 'reproducible-build must use the canonical runtime.Version ldflag path through build.sh\n' >&2
   exit 1
 fi
+
+assert_fails "release artifacts must reject fastkdf build tags" env \
+  HASP_GO_BUILD_TAGS=hasp_test_fastkdf \
+  bash "$ROOT/scripts/package-release.sh"
+assert_fails "darwin release artifacts must reject CGO_ENABLED=0" env \
+  HASP_TARGET_OS=darwin \
+  CGO_ENABLED=0 \
+  bash "$ROOT/scripts/package-release.sh"
 
 version="$(<"$ROOT/VERSION")"
 release_dir="$tmp_dir/public-release"

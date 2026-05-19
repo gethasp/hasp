@@ -75,6 +75,11 @@ package_one_target() {
 
   export GOOS="$goos"
   export GOARCH="$goarch"
+  if [[ "$goos" == "darwin" ]]; then
+    export CGO_ENABLED=1
+  else
+    export CGO_ENABLED=0
+  fi
   export HASP_RELEASE_ROOT="$target_release_root"
   export HASP_PACKAGE_RELEASE_UNSIGNED=1
 

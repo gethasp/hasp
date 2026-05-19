@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -32,10 +33,36 @@ func agentMCPHandler(ctx context.Context, deps Deps, args []string, stdin io.Rea
 	if err := setMCPEnv(deps, &restores, secrettypes.EnvAgentConsumer, name); err != nil {
 		return deps.AgentServeMCP(ctx, stdin, stdout)
 	}
-	if err := prepareAgentMCPEnv(ctx, deps, name, &restores); err != nil {
+	preflightCtx, cancelPreflight := agentMCPPreflightContext(ctx)
+	defer cancelPreflight()
+	if err := prepareAgentMCPEnv(preflightCtx, deps, name, &restores); err != nil {
 		return deps.AgentServeMCP(ctx, stdin, stdout)
 	}
 	return deps.AgentServeMCP(ctx, stdin, stdout)
+}
+
+const defaultAgentMCPPreflightTimeout = 250 * time.Millisecond
+
+var agentMCPPreflightTimeoutFn = agentMCPPreflightTimeout
+
+func agentMCPPreflightContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := agentMCPPreflightTimeoutFn()
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func agentMCPPreflightTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("HASP_AGENT_MCP_PREFLIGHT_TIMEOUT"))
+	if raw == "" {
+		return defaultAgentMCPPreflightTimeout
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultAgentMCPPreflightTimeout
+	}
+	return parsed
 }
 
 func prepareAgentMCPEnv(ctx context.Context, deps Deps, name string, restores *[]func()) error {

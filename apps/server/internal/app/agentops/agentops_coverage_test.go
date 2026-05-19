@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/cmddispatch"
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
@@ -482,6 +483,24 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			}
 			if got := strings.TrimSpace(os.Getenv(secrettypes.EnvAgentConsumer)); got != "before" {
 				t.Fatalf("expected consumer env restored, got %q", got)
+			}
+		})
+
+		t.Run("preflight timeout still serves handshake", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			origTimeout := agentMCPPreflightTimeoutFn
+			agentMCPPreflightTimeoutFn = func() time.Duration { return time.Nanosecond }
+			t.Cleanup(func() { agentMCPPreflightTimeoutFn = origTimeout })
+			deps.OpenVault = func(ctx context.Context) (*store.Handle, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "codex-cli"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp should tolerate pre-handshake timeout: %v", err)
+			}
+			if out.String() != "ok" {
+				t.Fatalf("expected MCP server to run after preflight timeout, got %q", out.String())
 			}
 		})
 
