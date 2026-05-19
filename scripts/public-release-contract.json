@@ -68,7 +68,10 @@
         },
         "build-public-release": {
           "runs_on_contains": "macos-15",
-          "run_contains": ["bash ./scripts/package-public-release.sh \"${GITHUB_REF_NAME}\""]
+          "run_contains": [
+            "bash ./scripts/bootstrap_go_tools.sh release-smoke",
+            "bash ./scripts/package-public-release.sh \"${GITHUB_REF_NAME}\""
+          ]
         },
         "github-release": {
           "needs_include": ["published-release-live-smoke"]

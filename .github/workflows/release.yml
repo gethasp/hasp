@@ -130,7 +130,7 @@ jobs:
           go-version: '1.26.3'
           cache: false
       - name: Bootstrap Go tools
-        run: bash ./scripts/bootstrap_go_tools.sh verify
+        run: bash ./scripts/bootstrap_go_tools.sh release-smoke
       - name: Validate release tag matches VERSION
         run: test "v$(cat VERSION)" = "${GITHUB_REF_NAME}"
       - name: Verify release tag commit is on main
