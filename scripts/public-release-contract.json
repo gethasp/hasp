@@ -66,6 +66,10 @@
             "bash ./scripts/verify-live-release.sh --skip-github-release --brew-install \"${GITHUB_REF_NAME}\""
           ]
         },
+        "build-public-release": {
+          "runs_on_contains": "macos-15",
+          "run_contains": ["bash ./scripts/package-public-release.sh \"${GITHUB_REF_NAME}\""]
+        },
         "github-release": {
           "needs_include": ["published-release-live-smoke"]
         }

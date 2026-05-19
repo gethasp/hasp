@@ -117,7 +117,9 @@ check_remote_tag_absent "$source_remote" "$source_remote"
 check_remote_tag_absent "$public_remote" "$public_remote"
 
 say "Core app delta"
-HASP_RELEASE_CORE_CANDIDATE_REF=HEAD bash "$root/scripts/check-release-core-change.sh" "$release_tag"
+HASP_RELEASE_CORE_CANDIDATE_REF=HEAD \
+  HASP_RELEASE_IGNORE_UNPUBLISHED_TAGS="${HASP_RELEASE_IGNORE_UNPUBLISHED_TAGS:-1}" \
+  bash "$root/scripts/check-release-core-change.sh" "$release_tag"
 
 docs_app_rel="apps/${HASP_PRIVATE_DOCS_APP_NAME:-web}"
 docs_app_dir="$root/$docs_app_rel"

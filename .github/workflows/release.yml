@@ -120,7 +120,7 @@ jobs:
     needs:
       - release-targets
       - release-preflight
-    runs-on: ubicloud-standard-2
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -138,6 +138,8 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - name: Validate release contains core CLI changes
+        env:
+          HASP_RELEASE_IGNORE_UNPUBLISHED_TAGS: "1"
         run: bash ./scripts/check-release-core-change.sh "${GITHUB_REF_NAME}"
       - name: Import release signing key
         env:

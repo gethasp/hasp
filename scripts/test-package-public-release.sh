@@ -82,6 +82,12 @@ assert_fails "darwin release artifacts must reject CGO_ENABLED=0" env \
   CGO_ENABLED=0 \
   bash "$ROOT/scripts/package-release.sh"
 
+host_os="$(go env GOOS)"
+if [[ "$host_os" != "darwin" ]]; then
+  printf 'skipping full public release package build on %s; darwin artifacts require macOS cgo keychain support\n' "$host_os"
+  exit 0
+fi
+
 version="$(<"$ROOT/VERSION")"
 release_dir="$tmp_dir/public-release"
 upgrade_signing_key="$tmp_dir/upgrade-signing-key"

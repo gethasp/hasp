@@ -35,10 +35,41 @@ fi
 candidate_ref="${HASP_RELEASE_CORE_CANDIDATE_REF:-HEAD}"
 candidate_commit="$(git rev-parse --verify "${candidate_ref}^{commit}")"
 previous_tag="${HASP_RELEASE_PREVIOUS_TAG:-}"
+published_release_tag() {
+  local tag="$1"
+  if [[ "${HASP_RELEASE_IGNORE_UNPUBLISHED_TAGS:-0}" != "1" ]]; then
+    return 0
+  fi
+  local version="${tag#v}"
+  local base_url="${HASP_RELEASE_METADATA_BASE_URL:-https://downloads.gethasp.com/hasp/releases}"
+  local metadata
+  metadata="$(mktemp)"
+  if ! curl -fsS --max-time 10 "${base_url%/}/$tag/release-metadata.json" -o "$metadata"; then
+    /bin/rm -f "$metadata"
+    return 1
+  fi
+  python3 - "$metadata" "$version" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    metadata = json.load(handle)
+raise SystemExit(0 if metadata.get("version") == sys.argv[2] else 1)
+PY
+  local status=$?
+  /bin/rm -f "$metadata"
+  return "$status"
+}
 if [[ -z "$previous_tag" ]]; then
   previous_tag="$(
     git tag --merged "$candidate_commit" --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname |
-      awk -v current="$release_tag" '$0 != current { print; exit }'
+      while read -r tag; do
+        [[ "$tag" != "$release_tag" ]] || continue
+        if published_release_tag "$tag"; then
+          printf '%s\n' "$tag"
+          break
+        fi
+      done
   )"
 fi
 
