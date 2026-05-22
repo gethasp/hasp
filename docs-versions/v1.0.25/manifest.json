@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "version": "v1.0.25",
   "versionNumber": "1.0.25",
-  "createdAt": "2026-05-22T21:57:39.184Z",
+  "createdAt": "2026-05-22T22:20:38.127Z",
   "updatedLabel": "May 2026",
-  "sourceCommit": "be038dc10eae7d98d94c2a93349d7e519934e9a9",
+  "sourceCommit": "9ec99f581ea8c61d22db48759b2ce54eece514a5",
   "dirty": false,
   "defaultRouteSlug": "overview",
   "specs": [
@@ -280,7 +280,7 @@
     "public/docs/release-distribution.md": "40b8bc4dc9cf77fc76fb00b339769687776753aa360822111c4166302e47ad9c",
     "public/docs/install-and-release.md": "d1261777c9fa41028a57f7b11d98295551834026ce8555a2c409ecf6418dbc31",
     "public/docs/glossary.md": "47988cc73f07cdb3a6e7c62a894877f85c09c41afd7ccb975b7b8e75395c214e",
-    "public/docs/cli-reference.md": "acf55ecbc574592604f9e3ace1589e8ab4a06c910e511d4636919ac1207dd775",
+    "public/docs/cli-reference.md": "a54395916e4c71572ed38624b3302f8e87c18469eac236873aa2e9b05c0c88b2",
     "public/docs/error-codes.md": "faf8929fa6dac3a31a8065b6ea59aedebc484f67d02686e58cf2ba0d3d28bb36"
   }
 }

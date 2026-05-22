@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,6 +259,45 @@ func TestCheckpointFailsWhenAuditFileCannotBeOpened(t *testing.T) {
 
 	if _, _, err := log.Checkpoint(); err == nil || !strings.Contains(err.Error(), "open audit log") {
 		t.Fatalf("expected open audit log failure, got %v", err)
+	}
+}
+
+func TestAppendReturnsAuditLockFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+
+	originalLockFile := auditLockFile
+	auditLockFile = func(string) (func(), error) {
+		return nil, errors.New("lock unavailable")
+	}
+	t.Cleanup(func() {
+		auditLockFile = originalLockFile
+	})
+
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	if _, err := log.Append(EventRun, "tester", nil); err == nil || !strings.Contains(err.Error(), "lock unavailable") {
+		t.Fatalf("expected lock failure, got %v", err)
+	}
+}
+
+func TestCheckpointFailsWhenAuditFileCannotBeStatted(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+
+	blockingFile := filepath.Join(baseDir, "blocking-file")
+	if err := os.WriteFile(blockingFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write blocking file: %v", err)
+	}
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	log.path = filepath.Join(blockingFile, "audit.jsonl")
+	if _, _, err := log.Checkpoint(); err == nil || !strings.Contains(err.Error(), "stat audit log") {
+		t.Fatalf("expected stat audit log failure, got %v", err)
 	}
 }
 
