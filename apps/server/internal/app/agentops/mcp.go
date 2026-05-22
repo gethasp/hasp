@@ -91,6 +91,16 @@ func prepareAgentMCPEnv(ctx context.Context, deps Deps, name string, restores *[
 	} else if err != nil {
 		return err
 	}
+	if strings.TrimSpace(consumer.ProjectRoot) == "" {
+		consumer.ProjectRoot = strings.TrimSpace(os.Getenv(secrettypes.EnvAgentProjectRoot))
+	}
+	if strings.TrimSpace(consumer.ProjectRoot) == "" && deps.ResolveProjectRoot != nil {
+		if cwd, werr := os.Getwd(); werr == nil {
+			if root, inRepo, rerr := deps.ResolveProjectRoot(ctx, cwd); rerr == nil && inRepo {
+				consumer.ProjectRoot = root
+			}
+		}
+	}
 	if err := setMCPEnv(deps, restores, secrettypes.EnvAgentConsumer, consumer.Name); err != nil {
 		return err
 	}

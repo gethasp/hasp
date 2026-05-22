@@ -191,6 +191,49 @@ func TestLocalDebugHMACKeyUsesHASPHomeFile(t *testing.T) {
 	}
 }
 
+func TestAdHocDarwinCLIUsesLocalHMACFileWhenRequirementsDoNotMatch(t *testing.T) {
+	restoreTeamID := setHMACTeamIDForTest("TEAMID1234")
+	t.Cleanup(restoreTeamID)
+	oldRuntimeOS := hmacRuntimeOS
+	oldSelfMatches := hmacSelfMatchesDesignatedRequirements
+	t.Cleanup(func() {
+		hmacRuntimeOS = oldRuntimeOS
+		hmacSelfMatchesDesignatedRequirements = oldSelfMatches
+	})
+	hmacRuntimeOS = "darwin"
+	var checkedRequirements []string
+	hmacSelfMatchesDesignatedRequirements = func(requirements []string) bool {
+		checkedRequirements = append([]string(nil), requirements...)
+		return false
+	}
+	home := t.TempDir()
+	t.Setenv("HASP_HOME", home)
+	keyring := &nativeMemoryHMACKeyring{
+		nativeErr: errors.New("native keychain should not be used"),
+	}
+
+	key, err := LoadProvisionedHMACKey(keyring)
+	if err != nil {
+		t.Fatalf("load ad-hoc CLI HMAC key: %v", err)
+	}
+	if len(key) != sha256.Size {
+		t.Fatalf("key length = %d, want %d", len(key), sha256.Size)
+	}
+	if keyring.nativeGets != 0 || keyring.genericGets != 0 || len(keyring.requirements) != 0 {
+		t.Fatalf("keyring was used: native=%d generic=%d requirements=%#v", keyring.nativeGets, keyring.genericGets, keyring.requirements)
+	}
+	if len(checkedRequirements) != 2 || !strings.Contains(checkedRequirements[0], "TEAMID1234") || !strings.Contains(checkedRequirements[1], "TEAMID1234") {
+		t.Fatalf("checked requirements = %#v, want app+daemon TEAMID1234 requirements", checkedRequirements)
+	}
+	loaded, err := LoadOrCreateHMACKey(context.Background(), keyring)
+	if err != nil {
+		t.Fatalf("load or create ad-hoc CLI HMAC key: %v", err)
+	}
+	if string(loaded) != string(key) {
+		t.Fatal("loaded ad-hoc CLI HMAC key does not match created key")
+	}
+}
+
 func TestLoadOrCreateHMACKeyUsesDesignatedRequirementKeyring(t *testing.T) {
 	restoreTeamID := setHMACTeamIDForTest("TEAM123")
 	defer restoreTeamID()

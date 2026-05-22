@@ -2867,21 +2867,29 @@ func installAuditHMACKey(log *audit.Log, key []byte) error {
 	if err != nil {
 		return fmt.Errorf("verify audit HMAC key: %w", err)
 	}
-	trustedKeyedEvent := false
-	for _, event := range events {
-		if event.Scheme == audit.SchemeHMACSHA256V1 {
-			trustedKeyedEvent = true
-			break
-		}
-	}
-	if !trustedKeyedEvent {
+	if !hasKeyedAuditEventBefore(events, nil) {
 		return errors.New("audit HMAC key cannot be adopted before an existing keyed audit chain is present")
 	}
-	if err := verifier.WithKey(key).Verify(); err != nil {
+	report, err := verifier.WithKey(key).VerifyDetailed()
+	if err != nil {
 		return fmt.Errorf("audit HMAC key does not verify existing audit chain: %w", err)
+	}
+	if !report.OK {
+		if !hasKeyedAuditEventBefore(events, report.FirstCorruptionAt) {
+			return fmt.Errorf("audit HMAC key does not verify existing audit chain: %w", report.Err)
+		}
 	}
 	log.WithKey(key)
 	return nil
+}
+
+func hasKeyedAuditEventBefore(events []audit.Event, before *int64) bool {
+	for _, event := range events {
+		if event.Scheme == audit.SchemeHMACSHA256V1 && (before == nil || event.Sequence < *before) {
+			return true
+		}
+	}
+	return false
 }
 
 type brokerRPC struct {

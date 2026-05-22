@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -122,5 +123,57 @@ func TestInstallAuditHMACKeyRejectsUntrustedInputs(t *testing.T) {
 	}
 	if err := installAuditHMACKey(log, bytes.Repeat([]byte{3}, 32)); err == nil || !strings.Contains(err.Error(), "verify audit HMAC key") {
 		t.Fatalf("expected audit events error, got %v", err)
+	}
+}
+
+func TestInstallAuditHMACKeyAcceptsKeyedPrefixBeforeExistingCorruption(t *testing.T) {
+	t.Setenv("HASP_HOME", t.TempDir())
+	key := bytes.Repeat([]byte{7}, 32)
+
+	seed, err := audit.New()
+	if err != nil {
+		t.Fatalf("new seed audit log: %v", err)
+	}
+	first, err := seed.WithKey(key).Append(audit.EventInit, "tester", map[string]any{"phase": "seed"})
+	if err != nil {
+		t.Fatalf("append keyed seed: %v", err)
+	}
+	duplicate, err := json.Marshal(first)
+	if err != nil {
+		t.Fatalf("marshal duplicate: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HASP_HOME"), "audit.jsonl"), append(duplicate, '\n'), 0o600); err != nil {
+		t.Fatalf("overwrite audit log with duplicate: %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(os.Getenv("HASP_HOME"), "audit.jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open audit log append: %v", err)
+	}
+	if _, err := f.Write(append(duplicate, '\n')); err != nil {
+		_ = f.Close()
+		t.Fatalf("append duplicate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close audit log: %v", err)
+	}
+
+	candidate, err := audit.New()
+	if err != nil {
+		t.Fatalf("new candidate audit log: %v", err)
+	}
+	if err := installAuditHMACKey(candidate, key); err != nil {
+		t.Fatalf("key that verifies intact prefix should be accepted: %v", err)
+	}
+	if got := candidate.HMACKey(); !bytes.Equal(got, key) {
+		t.Fatalf("installed key = %x, want %x", got, key)
+	}
+
+	wrongCandidate, err := audit.New()
+	if err != nil {
+		t.Fatalf("new wrong-key candidate audit log: %v", err)
+	}
+	wrongKey := bytes.Repeat([]byte{8}, 32)
+	if err := installAuditHMACKey(wrongCandidate, wrongKey); err == nil || !strings.Contains(err.Error(), "does not verify existing audit chain") {
+		t.Fatalf("wrong key should still be rejected, got %v", err)
 	}
 }

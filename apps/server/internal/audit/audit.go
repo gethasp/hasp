@@ -90,6 +90,7 @@ type auditWriter interface {
 var (
 	auditMkdirAll  = os.MkdirAll
 	auditFileState = auditFileStateFromInfo
+	auditLockFile  = lockAuditFile
 	openAuditFile  = func(path string) (auditWriter, error) {
 		return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	}
@@ -134,6 +135,15 @@ func (l *Log) Append(eventType string, actor string, details map[string]any) (Ev
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if err := auditMkdirAll(filepath.Dir(l.path), 0o700); err != nil {
+		return Event{}, fmt.Errorf("create audit dir: %w", err)
+	}
+	unlock, err := auditLockFile(l.path)
+	if err != nil {
+		return Event{}, err
+	}
+	defer unlock()
+
 	last, sequence, err := l.readLastLocked()
 	if err != nil {
 		return Event{}, err
@@ -150,9 +160,6 @@ func (l *Log) Append(eventType string, actor string, details map[string]any) (Ev
 	}
 	event.Scheme, event.Hash = hashEvent(event, l.key)
 
-	if err := auditMkdirAll(filepath.Dir(l.path), 0o700); err != nil {
-		return Event{}, fmt.Errorf("create audit dir: %w", err)
-	}
 	file, err := openAuditFile(l.path)
 	if err != nil {
 		return Event{}, fmt.Errorf("open audit log: %w", err)

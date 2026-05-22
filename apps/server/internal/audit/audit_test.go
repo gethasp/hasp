@@ -351,3 +351,48 @@ func TestLogConcurrentAppendAndCheckpoint(t *testing.T) {
 		t.Fatalf("verify concurrent log: %v", err)
 	}
 }
+
+func TestMultipleLogsConcurrentAppend(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+
+	var wg sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			log, err := New()
+			if err != nil {
+				t.Errorf("new audit log worker=%d: %v", worker, err)
+				return
+			}
+			for i := 0; i < 25; i++ {
+				if _, err := log.Append(EventRun, "tester", map[string]any{"worker": worker, "n": i}); err != nil {
+					t.Errorf("append worker=%d n=%d: %v", worker, i, err)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(events) != 200 {
+		t.Fatalf("event count = %d, want 200", len(events))
+	}
+	for i, event := range events {
+		if event.Sequence != int64(i+1) {
+			t.Fatalf("event %d sequence = %d", i, event.Sequence)
+		}
+	}
+	if err := log.Verify(); err != nil {
+		t.Fatalf("verify multi-log concurrent append: %v", err)
+	}
+}

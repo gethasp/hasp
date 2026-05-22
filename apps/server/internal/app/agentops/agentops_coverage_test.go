@@ -449,6 +449,54 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			}
 		})
 
+		t.Run("existing rootless consumer uses project root environment", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			t.Setenv(secrettypes.EnvAgentProjectRoot, "/workspace/brd")
+			deps.StoreGetAgent = func(_ *store.Handle, name string) (store.AgentConsumer, error) {
+				return store.AgentConsumer{Name: name, AgentID: name, ConfigPath: "/tmp/" + name + ".json"}, nil
+			}
+			var built store.AgentConsumer
+			deps.AgentBuildExecutionEnv = func(_ context.Context, _ *store.Handle, consumer store.AgentConsumer, _ Starter, _ string) ([]string, error) {
+				built = consumer
+				return []string{secrettypes.EnvSessionToken + "=token"}, nil
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "claude-code"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp rootless consumer: %v", err)
+			}
+			if built.ProjectRoot != "/workspace/brd" {
+				t.Fatalf("project root = %q, want env fallback", built.ProjectRoot)
+			}
+		})
+
+		t.Run("existing rootless consumer uses current repository", func(t *testing.T) {
+			deps := fullAgentDeps(t)
+			cwd := t.TempDir()
+			t.Chdir(cwd)
+			wantRoot := "/canonical/current"
+			deps.StoreGetAgent = func(_ *store.Handle, name string) (store.AgentConsumer, error) {
+				return store.AgentConsumer{Name: name, AgentID: name, ConfigPath: "/tmp/" + name + ".json"}, nil
+			}
+			deps.ResolveProjectRoot = func(_ context.Context, root string) (string, bool, error) {
+				if root != cwd {
+					t.Fatalf("ResolveProjectRoot root = %q, want cwd %q", root, cwd)
+				}
+				return wantRoot, true, nil
+			}
+			var built store.AgentConsumer
+			deps.AgentBuildExecutionEnv = func(_ context.Context, _ *store.Handle, consumer store.AgentConsumer, _ Starter, _ string) ([]string, error) {
+				built = consumer
+				return []string{secrettypes.EnvSessionToken + "=token"}, nil
+			}
+			var out bytes.Buffer
+			if err := AgentCommand(ctx, deps, []string{"mcp", "claude-code"}, strings.NewReader("ok"), &out, io.Discard); err != nil {
+				t.Fatalf("mcp cwd fallback: %v", err)
+			}
+			if built.ProjectRoot != wantRoot {
+				t.Fatalf("project root = %q, want cwd fallback %q", built.ProjectRoot, wantRoot)
+			}
+		})
+
 		t.Run("unlock unavailable still serves pre-handshake MCP", func(t *testing.T) {
 			deps := fullAgentDeps(t)
 			deps.OpenVault = func(context.Context) (*store.Handle, error) {

@@ -32,13 +32,14 @@ var HMACTeamID = ""
 var ErrHMACSecretNotProvisioned = errors.New("HMAC secret not provisioned")
 
 var (
-	currentUserFn  = user.Current
-	hmacRandomFn   = rand.Read
-	userHomeDirFn  = os.UserHomeDir
-	hmacRuntimeOS  = runtime.GOOS
-	hmacReadFile   = os.ReadFile
-	hmacMkdirAll   = os.MkdirAll
-	hmacWriteFile  = os.WriteFile
+	currentUserFn                         = user.Current
+	hmacRandomFn                          = rand.Read
+	userHomeDirFn                         = os.UserHomeDir
+	hmacRuntimeOS                         = runtime.GOOS
+	hmacReadFile                          = os.ReadFile
+	hmacMkdirAll                          = os.MkdirAll
+	hmacWriteFile                         = os.WriteFile
+	hmacSelfMatchesDesignatedRequirements = selfMatchesAnyDesignatedRequirement
 )
 
 var currentUsername = func() string {
@@ -155,6 +156,13 @@ func LoadHMACKey(keyring store.Keyring) ([]byte, error) {
 }
 
 func LoadProvisionedHMACKey(keyring store.Keyring) ([]byte, error) {
+	if usesLocalDebugHMACKey() {
+		key, err := loadOrCreateLocalDebugHMACKey()
+		if err != nil {
+			return nil, fmt.Errorf("read HTTP HMAC key: %w", err)
+		}
+		return key, nil
+	}
 	key, err := LoadHMACKey(keyring)
 	if err == nil {
 		return key, nil
@@ -239,7 +247,32 @@ func isGoTestProcess() bool {
 }
 
 func usesLocalDebugHMACKey() bool {
-	return hmacRuntimeOS == "darwin" && strings.TrimSpace(HMACTeamID) == "TEAM123456"
+	if hmacRuntimeOS != "darwin" {
+		return false
+	}
+	if strings.TrimSpace(HMACTeamID) == "TEAM123456" {
+		return true
+	}
+	requirements, err := HMACKeyDesignatedRequirements()
+	if err != nil {
+		return false
+	}
+	return !hmacSelfMatchesDesignatedRequirements(requirements)
+}
+
+func selfMatchesAnyDesignatedRequirement(requirements []string) bool {
+	if isGoTestProcess() {
+		return true
+	}
+	for _, requirement := range requirements {
+		if strings.TrimSpace(requirement) == "" {
+			continue
+		}
+		if err := verifyPIDRequirement(os.Getpid(), requirement); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func loadOrCreateLocalDebugHMACKey() ([]byte, error) {
