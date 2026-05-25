@@ -136,6 +136,52 @@ func TestSecretCommandsLifecycleInRepo(t *testing.T) {
 	}
 }
 
+func TestSecretExposeAcceptsProjectRootAfterName(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "--expose=never", "GEMINI_RAI_KEY"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("secret add: %v", err)
+	}
+
+	var exposeOut bytes.Buffer
+	if err := Run(context.Background(), []string{"secret", "expose", "GEMINI_RAI_KEY", "--project-root", projectRoot, "--json"}, bytes.NewBuffer(nil), &exposeOut, &exposeOut); err != nil {
+		t.Fatalf("secret expose with trailing flags: %v\noutput: %s", err, exposeOut.String())
+	}
+
+	var payload struct {
+		Exposed []struct {
+			Name        string `json:"name"`
+			ProjectRoot string `json:"project_root"`
+			Reference   string `json:"reference"`
+		} `json:"exposed"`
+	}
+	if err := json.Unmarshal(exposeOut.Bytes(), &payload); err != nil {
+		t.Fatalf("decode expose output: %v\n%s", err, exposeOut.String())
+	}
+	if len(payload.Exposed) != 1 {
+		t.Fatalf("expected one exposed secret, got %+v", payload.Exposed)
+	}
+	expectedRoot, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatalf("canonical project root: %v", err)
+	}
+	if payload.Exposed[0].Name != "GEMINI_RAI_KEY" || payload.Exposed[0].ProjectRoot != expectedRoot || payload.Exposed[0].Reference == "" {
+		t.Fatalf("unexpected exposure payload: %+v", payload.Exposed[0])
+	}
+}
+
 func TestSecretAddOutsideRepoAndCollisionPolicies(t *testing.T) {
 	lockAppSeams(t)
 

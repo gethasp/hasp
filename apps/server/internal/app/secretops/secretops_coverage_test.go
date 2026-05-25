@@ -291,7 +291,16 @@ func TestSecretCommandFallbacksAndHelpers(t *testing.T) {
 		t.Fatalf("cmddispatch help output %q", out.String())
 	}
 
-	if got := reorderFlagsBeforePositionals([]string{"ALPHA", "--reveal", "--newline"}); strings.Join(got, " ") != "--reveal --newline ALPHA" {
+	getFS := flag.NewFlagSet("secret get", flag.ContinueOnError)
+	getFS.Bool("reveal", false, "")
+	getFS.Bool("newline", false, "")
+	if got := reorderFlagsBeforePositionals(getFS, []string{"ALPHA", "--reveal", "--newline"}); strings.Join(got, " ") != "--reveal --newline ALPHA" {
+		t.Fatalf("reorder = %v", got)
+	}
+	exposeFS := flag.NewFlagSet("secret expose", flag.ContinueOnError)
+	exposeFS.String("project-root", "", "")
+	exposeFS.Bool("json", false, "")
+	if got := reorderFlagsBeforePositionals(exposeFS, []string{"ALPHA", "--project-root", "/repo", "--json"}); strings.Join(got, " ") != "--project-root /repo --json ALPHA" {
 		t.Fatalf("reorder = %v", got)
 	}
 	if d := levenshtein("kitten", "sitting"); d != 3 {

@@ -21,20 +21,57 @@ func newFlagSet(deps Deps, name string, eh flag.ErrorHandling) *flag.FlagSet {
 	return defaultNewFlagSet(name, eh)
 }
 
-// reorderFlagsBeforePositionals moves --flag style arguments before positional
-// arguments so that Go's flag package (which stops at the first non-flag arg)
-// can parse flags that appear anywhere in the argument list.
-func reorderFlagsBeforePositionals(args []string) []string {
+// reorderFlagsBeforePositionals moves known --flag style arguments before
+// positional arguments so that Go's flag package (which stops at the first
+// non-flag arg) can parse flags that appear anywhere in the argument list.
+func reorderFlagsBeforePositionals(fs *flag.FlagSet, args []string) []string {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-		} else {
-			positionals = append(positionals, a)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		if fs == nil {
+			continue
+		}
+		name, hasInlineValue := flagTokenName(arg)
+		registered := fs.Lookup(name)
+		if registered == nil || hasInlineValue || flagIsBool(registered) {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
 		}
 	}
 	return append(flags, positionals...)
+}
+
+func flagTokenName(arg string) (string, bool) {
+	trimmed := strings.TrimLeft(arg, "-")
+	if eq := strings.IndexByte(trimmed, '='); eq >= 0 {
+		return trimmed[:eq], true
+	}
+	return trimmed, false
+}
+
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
+func flagIsBool(f *flag.Flag) bool {
+	if f == nil {
+		return false
+	}
+	bf, ok := f.Value.(boolFlag)
+	return ok && bf.IsBoolFlag()
 }
 
 // levenshtein returns the edit distance between two strings using iterative DP.

@@ -41,7 +41,7 @@ func secretGetWithMode(ctx context.Context, deps Deps, args []string, mode strin
 	newlineFlag := fs.Bool("newline", false, "")
 	noNewlineFlag := fs.Bool("no-newline", false, "")
 	// Allow flags to appear after positional args (e.g. "NAME --reveal").
-	args = reorderFlagsBeforePositionals(args)
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ func secretExposeCommand(ctx context.Context, deps Deps, args []string, stdin io
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", "", "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,6 +82,7 @@ func secretHideCommand(ctx context.Context, deps Deps, args []string, stdin io.R
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", "", "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
