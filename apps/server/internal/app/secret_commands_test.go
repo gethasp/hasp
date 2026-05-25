@@ -182,6 +182,39 @@ func TestSecretExposeAcceptsProjectRootAfterName(t *testing.T) {
 	}
 }
 
+func TestSecretAddAcceptsFlagsAfterName(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	nonRepo := t.TempDir()
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	origGetwd := secretGetwdFn
+	defer func() { secretGetwdFn = origGetwd }()
+	secretGetwdFn = func() (string, error) { return nonRepo, nil }
+
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+
+	var addOut bytes.Buffer
+	if err := Run(context.Background(), []string{"secret", "add", "TRAILING_FLAG_KEY", "--from-stdin", "--expose=never", "--json"}, bytes.NewBufferString("abc123\n"), &addOut, &addOut); err != nil {
+		t.Fatalf("secret add with trailing flags: %v\noutput: %s", err, addOut.String())
+	}
+
+	var payload struct {
+		Added []struct {
+			Name string `json:"name"`
+		} `json:"added"`
+	}
+	if err := json.Unmarshal(addOut.Bytes(), &payload); err != nil {
+		t.Fatalf("decode add output: %v\n%s", err, addOut.String())
+	}
+	if len(payload.Added) != 1 || payload.Added[0].Name != "TRAILING_FLAG_KEY" {
+		t.Fatalf("unexpected add payload: %+v", payload.Added)
+	}
+}
+
 func TestSecretAddOutsideRepoAndCollisionPolicies(t *testing.T) {
 	lockAppSeams(t)
 

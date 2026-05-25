@@ -175,6 +175,7 @@ func secretDeleteCommand(ctx context.Context, deps Deps, args []string, stdin io
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	assumeYes := fs.Bool("yes", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

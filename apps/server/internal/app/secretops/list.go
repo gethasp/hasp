@@ -19,6 +19,7 @@ func secretListCommand(ctx context.Context, deps Deps, args []string, stdout io.
 	fs := newFlagSet(deps, "secret list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -48,6 +49,7 @@ func secretSearchCommand(ctx context.Context, deps Deps, args []string, stdout i
 	fs := newFlagSet(deps, "secret search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,6 +89,7 @@ func secretDiffCommand(ctx context.Context, deps Deps, args []string, stdout io.
 	fs := newFlagSet(deps, "secret diff", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

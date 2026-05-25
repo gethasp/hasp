@@ -24,6 +24,7 @@ func secretAddCommand(ctx context.Context, deps Deps, args []string, stdin io.Re
 	fromFile := fs.String("from-file", "", "")
 	kindFlag := fs.String("kind", string(store.ItemKindKV), "")
 	exposeFlag := fs.String("expose", "ask", "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -207,6 +208,7 @@ func secretUpdateCommand(ctx context.Context, deps Deps, args []string, stdin io
 	fs := newFlagSet(deps, "secret update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -256,6 +258,7 @@ func secretRotateCommand(ctx context.Context, deps Deps, args []string, stdin io
 	fs := newFlagSet(deps, "secret rotate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
+	args = reorderFlagsBeforePositionals(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
