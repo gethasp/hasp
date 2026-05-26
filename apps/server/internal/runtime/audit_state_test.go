@@ -89,6 +89,12 @@ func TestInstallAuditHMACKeyRejectsUntrustedInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new audit log: %v", err)
 	}
+	if err := installAuditHMACKey(nil, bytes.Repeat([]byte{1}, 32)); err != nil {
+		t.Fatalf("nil audit log should be ignored, got %v", err)
+	}
+	if err := installAuditHMACKey(log, nil); err != nil {
+		t.Fatalf("empty audit key should be ignored, got %v", err)
+	}
 	if err := installAuditHMACKey(log, []byte("short")); err == nil || !strings.Contains(err.Error(), "32 bytes") {
 		t.Fatalf("expected short key rejection, got %v", err)
 	}

@@ -3,7 +3,7 @@
   "name": "Pi",
   "transport": "pi-package-extension",
   "command": ["hasp", "agent", "mcp", "pi"],
-  "project_binding_recipe": "Bind the repo once. HASP installs a generated Pi package under HASP_HOME and registers it in Pi's settings.json so Pi can call the brokered MCP tools without raw secret values in its config.",
+  "project_binding_recipe": "Bind the repo once, then explicitly expose each existing vault item the repo needs. HASP installs a generated Pi package under HASP_HOME and registers it in Pi's settings.json so Pi can call the brokered MCP tools without raw secret values in its config.",
   "approval_path": "Prefer hasp setup or hasp agent connect pi, then let the generated Pi package call the managed wrapper and use project/session or window grants inside the broker; hasp session grant-plaintext remains the operator path when plaintext is explicitly required.",
   "safe_inject_path": "Use hasp_run or hasp_inject through the Pi extension tools, preferably with named refs like @OPENAI_API_KEY instead of recalling secret_01 or revealing plaintext.",
   "write_env_path": "Use hasp write-env only for explicit convenience materialization after the operator approves that repo-visible destination.",

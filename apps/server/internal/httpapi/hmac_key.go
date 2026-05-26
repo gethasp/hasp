@@ -40,6 +40,7 @@ var (
 	hmacMkdirAll                          = os.MkdirAll
 	hmacWriteFile                         = os.WriteFile
 	hmacSelfMatchesDesignatedRequirements = selfMatchesAnyDesignatedRequirement
+	hmacIsGoTestProcess                   = isGoTestProcess
 )
 
 var currentUsername = func() string {
@@ -261,7 +262,7 @@ func usesLocalDebugHMACKey() bool {
 }
 
 func selfMatchesAnyDesignatedRequirement(requirements []string) bool {
-	if isGoTestProcess() {
+	if hmacIsGoTestProcess() {
 		return true
 	}
 	for _, requirement := range requirements {

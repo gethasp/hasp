@@ -631,6 +631,57 @@ func TestHMACKeyOSAndRandomFailureBranches(t *testing.T) {
 	}
 }
 
+func TestHMACKeyLocalDebugAndRequirementEdges(t *testing.T) {
+	oldRuntimeOS := hmacRuntimeOS
+	oldSelfMatches := hmacSelfMatchesDesignatedRequirements
+	oldIsTest := hmacIsGoTestProcess
+	oldVerify := verifyPIDRequirement
+	t.Cleanup(func() {
+		hmacRuntimeOS = oldRuntimeOS
+		hmacSelfMatchesDesignatedRequirements = oldSelfMatches
+		hmacIsGoTestProcess = oldIsTest
+		verifyPIDRequirement = oldVerify
+	})
+
+	hmacRuntimeOS = "linux"
+	if usesLocalDebugHMACKey() {
+		t.Fatal("non-darwin runtime should not use local debug HMAC key")
+	}
+	hmacRuntimeOS = "darwin"
+	restoreTeam := setHMACTeamIDForTest("TEAM123456")
+	if !usesLocalDebugHMACKey() {
+		t.Fatal("test team ID should use local debug HMAC key")
+	}
+	restoreTeam()
+
+	restoreTeam = setHMACTeamIDForTest("")
+	if usesLocalDebugHMACKey() {
+		t.Fatal("missing team ID should fail closed without local debug key")
+	}
+	restoreTeam()
+
+	restoreTeam = setHMACTeamIDForTest("TEAM123")
+	hmacSelfMatchesDesignatedRequirements = func([]string) bool { return false }
+	if !usesLocalDebugHMACKey() {
+		t.Fatal("designated requirement mismatch should use local debug key")
+	}
+	hmacSelfMatchesDesignatedRequirements = func([]string) bool { return true }
+	if usesLocalDebugHMACKey() {
+		t.Fatal("designated requirement match should use native key")
+	}
+	restoreTeam()
+
+	hmacIsGoTestProcess = func() bool { return false }
+	verifyPIDRequirement = func(int, string) error { return errors.New("no match") }
+	if selfMatchesAnyDesignatedRequirement([]string{"", "anchor apple"}) {
+		t.Fatal("failed requirements should not match")
+	}
+	verifyPIDRequirement = func(int, string) error { return nil }
+	if !selfMatchesAnyDesignatedRequirement([]string{"", "anchor apple"}) {
+		t.Fatal("successful requirement should match")
+	}
+}
+
 func TestHMACKeyLocalDebugSeamsCoverResidualBranches(t *testing.T) {
 	oldRuntimeOS := hmacRuntimeOS
 	oldReadFile := hmacReadFile

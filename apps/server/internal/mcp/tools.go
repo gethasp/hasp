@@ -566,11 +566,15 @@ func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectR
 }
 
 func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, call toolCall, projectRoot string) (brokerops.Session, store.Binding, error) {
+	grantProject := stringArg(call.Arguments, "grant_project", "")
 	session := brokerops.Session{Token: defaultMCPSessionToken(call)}
 	if strings.TrimSpace(session.Token) == "" {
-		return brokerops.Session{}, store.Binding{}, approvalRequired("project_lease_required")
+		ensured, err := ensureSessionFn(ctx, projectRoot, "", defaultMCPHostLabel(call))
+		if err != nil {
+			return brokerops.Session{}, store.Binding{}, err
+		}
+		session = ensured
 	}
-	grantProject := stringArg(call.Arguments, "grant_project", "")
 	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
 		return brokerops.Session{}, store.Binding{}, err
@@ -730,7 +734,14 @@ func parseScope(value string, fallback store.GrantScope) (store.GrantScope, erro
 }
 
 func approvalRequired(reason string) error {
-	return fmt.Errorf("approval required: %s", reason)
+	switch reason {
+	case "project_lease_required":
+		return fmt.Errorf("approval required: %s; retry with grant_project=once|session|window to authorize the current MCP session for this project", reason)
+	case "secret_session_grant_required", "access_secret_prompt_required":
+		return fmt.Errorf("approval required: %s; retry with grant_secret=once|session|window when the tool supports secret grants", reason)
+	default:
+		return fmt.Errorf("approval required: %s", reason)
+	}
 }
 
 func fmtUnsupportedTool(name string) error {

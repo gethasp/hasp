@@ -409,6 +409,9 @@ func TestHaspCheckAndUnsupportedToolHelpers(t *testing.T) {
 	if err := approvalRequired("reason"); err == nil || !strings.Contains(err.Error(), "reason") {
 		t.Fatalf("expected approvalRequired helper error, got %v", err)
 	}
+	if err := approvalRequired("secret_session_grant_required"); err == nil || !strings.Contains(err.Error(), "grant_secret") {
+		t.Fatalf("expected secret grant recovery hint, got %v", err)
+	}
 	if err := fmtUnsupportedTool("bogus"); err == nil || !strings.Contains(err.Error(), "bogus") {
 		t.Fatalf("expected fmtUnsupportedTool helper error, got %v", err)
 	}

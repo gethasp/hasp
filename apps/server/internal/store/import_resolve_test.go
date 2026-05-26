@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,102 @@ func TestResolveReferencesFailsForUnknownReference(t *testing.T) {
 	}
 	if _, err := handle.ResolveReferences(context.Background(), t.TempDir(), []string{"missing"}); err == nil || !errors.Is(err, ErrReferenceNotFound) {
 		t.Fatalf("expected reference-not-found, got %v", err)
+	}
+}
+
+func TestResolveReferenceDistinguishesNamedReferenceThatIsNotExposed(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	projectRoot := t.TempDir()
+	if _, err := handle.UpsertItem("GEMINI_RAI_KEY", ItemKindKV, []byte("gemini-raw-secret-value"), ItemMetadata{}); err != nil {
+		t.Fatalf("upsert GEMINI_RAI_KEY: %v", err)
+	}
+
+	_, err = handle.ResolveReference(context.Background(), projectRoot, "@GEMINI_RAI_KEY")
+	if err == nil {
+		t.Fatal("expected named reference to fail when item is not exposed to the project")
+	}
+	if !errors.Is(err, ErrReferenceNotExposed) {
+		t.Fatalf("expected not-exposed sentinel, got %v", err)
+	}
+	if !errors.Is(err, ErrReferenceNotFound) {
+		t.Fatalf("expected not-exposed error to remain reference-not-found compatible, got %v", err)
+	}
+
+	var refErr *ReferenceNotExposedError
+	if !errors.As(err, &refErr) {
+		t.Fatalf("expected typed not-exposed error, got %T", err)
+	}
+	if refErr.Reference != "@GEMINI_RAI_KEY" || refErr.ItemName != "GEMINI_RAI_KEY" {
+		t.Fatalf("unexpected not-exposed metadata: %+v", refErr)
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, "@GEMINI_RAI_KEY") {
+		t.Fatalf("expected safe reference metadata in error, got %q", got)
+	}
+	if strings.Contains(err.Error(), "gemini-raw-secret-value") {
+		t.Fatalf("error must not include raw secret value: %q", err)
+	}
+	if strings.Contains(err.Error(), projectRoot) {
+		t.Fatalf("error must not include project root: %q", err)
+	}
+}
+
+func TestResolveReferencesPreservesNamedReferenceNotExposedDetails(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	projectRoot := t.TempDir()
+	if _, err := handle.UpsertItem("GEMINI_RAI_KEY", ItemKindKV, []byte("gemini-raw-secret-value"), ItemMetadata{}); err != nil {
+		t.Fatalf("upsert GEMINI_RAI_KEY: %v", err)
+	}
+
+	_, err = handle.ResolveReferences(context.Background(), projectRoot, []string{"@GEMINI_RAI_KEY"})
+	if err == nil {
+		t.Fatal("expected batch resolve to fail for a named reference that is not exposed")
+	}
+	if !errors.Is(err, ErrReferenceNotExposed) {
+		t.Fatalf("expected not-exposed sentinel, got %v", err)
+	}
+
+	var refErr *ReferenceNotExposedError
+	if !errors.As(err, &refErr) {
+		t.Fatalf("expected typed not-exposed error, got %T", err)
+	}
+	if refErr.Reference != "@GEMINI_RAI_KEY" || refErr.ItemName != "GEMINI_RAI_KEY" {
+		t.Fatalf("unexpected not-exposed metadata: %+v", refErr)
+	}
+}
+
+func TestReferenceNotExposedErrorMessageEdges(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *ReferenceNotExposedError
+		want string
+	}{
+		{name: "nil", err: nil, want: ErrReferenceNotExposed.Error()},
+		{name: "item", err: &ReferenceNotExposedError{ItemName: "TOKEN"}, want: `item "TOKEN"`},
+		{name: "mismatch", err: &ReferenceNotExposedError{Reference: "@ALIAS", ItemName: "TOKEN"}, want: `reference "@ALIAS" item "TOKEN"`},
+		{name: "empty", err: &ReferenceNotExposedError{}, want: ErrReferenceNotExposed.Error()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); !strings.Contains(got, tc.want) {
+				t.Fatalf("Error() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -160,6 +257,9 @@ func TestResolveReferenceCoversBlankAmbiguousAndMissingTarget(t *testing.T) {
 	if _, err := handle.ResolveReference(context.Background(), projectRoot, ""); !errors.Is(err, ErrReferenceNotFound) {
 		t.Fatalf("expected blank reference not found, got %v", err)
 	}
+	if _, err := handle.ResolveReference(context.Background(), projectRoot, "@"); !errors.Is(err, ErrReferenceNotFound) || errors.Is(err, ErrReferenceNotExposed) {
+		t.Fatalf("expected malformed named reference to remain plain not-found, got %v", err)
+	}
 	resolved, err := handle.ResolveReference(context.Background(), projectRoot, "api_token")
 	if err != nil {
 		t.Fatalf("expected alias-style reference to resolve, got %v", err)
@@ -174,7 +274,7 @@ func TestResolveReferenceCoversBlankAmbiguousAndMissingTarget(t *testing.T) {
 	if named.Alias != "api_token" || named.NamedReference != "@db_url" {
 		t.Fatalf("expected named reference to reuse alias api_token, got %+v", named)
 	}
-	if _, err := handle.ResolveReference(context.Background(), projectRoot, "@missing_item"); !errors.Is(err, ErrReferenceNotFound) {
+	if _, err := handle.ResolveReference(context.Background(), projectRoot, "@missing_item"); !errors.Is(err, ErrReferenceNotFound) || errors.Is(err, ErrReferenceNotExposed) {
 		t.Fatalf("expected missing named reference to fail, got %v", err)
 	}
 	namedMissingRoot := t.TempDir()

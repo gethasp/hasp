@@ -619,6 +619,9 @@ Expose one vault item to one repo boundary and create the repo-scoped reference
 that brokered commands use.
 
 Use expose when a repo needs a secret by reference, not by raw value.
+Project binding alone does not expose existing vault items. This command updates
+only project-binding metadata so @NAME resolves in that repo; it does not print
+plaintext or write the secret into repo files.
 
 Flags
   --project-root <path>   repo root to bind the secret to
@@ -814,6 +817,9 @@ serves MCP on stdin/stdout.
 
 Use this as the generated config path instead of raw ` + "`hasp mcp`" + ` for
 first-class agent profiles.
+The default MCP catalog is safe-by-default: it can inspect project-scoped
+metadata and deliver brokered refs, but it does not auto-expose secrets or
+mutate vault/project state.
 
 Examples
   hasp agent mcp claude-code
@@ -1127,6 +1133,10 @@ Grant one-time secret delete/expose/hide authority for an agent-safe session.
 Use this as an explicit local operator step before enabling MCP destructive
 secret tools. The MCP request still names the item and action, but only this
 persisted, one-time grant authorizes the mutation.
+Normal MCP setups should not need this command. Trusted local harnesses must
+both set HASP_MCP_ENABLE_UNSAFE_SECRET_WRITE_TOOLS=1 and grant the matching
+mutation before hasp_secret_expose, hasp_secret_hide, or hasp_secret_delete can
+succeed.
 
 Flags
   --token <token>              agent-safe session token to grant against

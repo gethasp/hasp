@@ -303,6 +303,12 @@ func TestSecretCommandFallbacksAndHelpers(t *testing.T) {
 	if got := reorderFlagsBeforePositionals(exposeFS, []string{"ALPHA", "--project-root", "/repo", "--json"}); strings.Join(got, " ") != "--project-root /repo --json ALPHA" {
 		t.Fatalf("reorder = %v", got)
 	}
+	if got := reorderFlagsBeforePositionals(nil, []string{"ALPHA", "--flag", "VALUE", "--", "--literal"}); strings.Join(got, " ") != "--flag ALPHA VALUE -- --literal" {
+		t.Fatalf("nil flagset reorder = %v", got)
+	}
+	if flagIsBool(nil) {
+		t.Fatal("nil flag should not be bool")
+	}
 	if d := levenshtein("kitten", "sitting"); d != 3 {
 		t.Fatalf("levenshtein = %d", d)
 	}

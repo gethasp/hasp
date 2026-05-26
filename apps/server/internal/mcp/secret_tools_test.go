@@ -96,8 +96,27 @@ func TestSecretToolsLifecycleAndMetadataOnlyGet(t *testing.T) {
 	if got["exists"] != true || got["available_in_project"] != true || got["reference"] != "secret_01" {
 		t.Fatalf("unexpected secret get result %+v", got)
 	}
+	gotProjectRoot, ok := got["project_root"].(string)
+	if !ok {
+		t.Fatalf("expected project_root string in secret get result, got %+v", got)
+	}
+	wantProjectRoot, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatalf("resolve expected project root: %v", err)
+	}
+	resolvedGotProjectRoot, err := filepath.EvalSymlinks(gotProjectRoot)
+	if err != nil {
+		t.Fatalf("resolve returned project root: %v", err)
+	}
+	if resolvedGotProjectRoot != wantProjectRoot {
+		t.Fatalf("expected canonical project root %q in secret get result, got %+v", wantProjectRoot, got)
+	}
 	if got["named_reference"] != "@API_TOKEN" {
 		t.Fatalf("expected named reference metadata, got %+v", got)
+	}
+	recovery, ok := got["recovery"].(map[string]any)
+	if !ok || recovery["status"] != "available" || recovery["mutation_protected"] != false {
+		t.Fatalf("expected available recovery metadata, got %+v", got["recovery"])
 	}
 	if _, ok := got["value"]; ok {
 		t.Fatalf("metadata-only secret get leaked raw value: %+v", got)
@@ -158,6 +177,24 @@ func TestSecretToolsLifecycleAndMetadataOnlyGet(t *testing.T) {
 	if got["available_in_project"] != false || got["reference"] != "" {
 		t.Fatalf("expected hidden secret to be unavailable in repo, got %+v", got)
 	}
+	recovery, ok = got["recovery"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hidden secret metadata to include structured recovery metadata, got %+v", got)
+	}
+	if recovery["status"] != "not_exposed_in_project" || recovery["mutation_protected"] != true || recovery["unsafe_mcp_tool_required"] != true {
+		t.Fatalf("unexpected hidden-secret recovery metadata %+v", recovery)
+	}
+	args, ok := recovery["cli_args"].([]string)
+	if !ok || len(args) != 6 || strings.Join(args[:5], " ") != "hasp secret expose API_TOKEN --project-root" {
+		t.Fatalf("unexpected hidden-secret recovery args %+v", recovery["cli_args"])
+	}
+	resolvedArgProjectRoot, err := filepath.EvalSymlinks(args[5])
+	if err != nil {
+		t.Fatalf("resolve recovery project root: %v", err)
+	}
+	if resolvedArgProjectRoot != wantProjectRoot {
+		t.Fatalf("expected recovery project root %q, got args %+v", wantProjectRoot, args)
+	}
 
 	grantMutation(store.SecretMutationExpose)
 	exposed, err := callSecretExpose(context.Background(), handle, toolCall{Name: "hasp_secret_expose", Arguments: map[string]any{
@@ -199,6 +236,10 @@ func TestSecretToolsLifecycleAndMetadataOnlyGet(t *testing.T) {
 	}
 	if got["named_reference"] != "@API_TOKEN" {
 		t.Fatalf("expected missing lookup to keep named reference hint, got %+v", got)
+	}
+	recovery, ok = got["recovery"].(map[string]any)
+	if !ok || recovery["status"] != "missing_in_vault" || recovery["mutation_protected"] != true {
+		t.Fatalf("expected missing-secret recovery metadata, got %+v", got["recovery"])
 	}
 
 	auditData, err := os.ReadFile(filepath.Join(homeDir, "audit.jsonl"))

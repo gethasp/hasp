@@ -39,6 +39,25 @@ func TestCatalogDoesNotExposeRawSecretWriteToolsByDefault(t *testing.T) {
 	}
 }
 
+func TestSecretGetSchemaAdvertisesRecoverableAuthorizationFields(t *testing.T) {
+	for _, tool := range catalog() {
+		if tool.Name != "hasp_secret_get" {
+			continue
+		}
+		props, _ := tool.InputSchema["properties"].(map[string]any)
+		for _, field := range []string{"project_root", "session_token", "grant_project", "host_label", "name"} {
+			if _, ok := props[field]; !ok {
+				t.Fatalf("hasp_secret_get schema missing %q in %+v", field, props)
+			}
+		}
+		if _, ok := props["value"]; ok {
+			t.Fatalf("metadata-only hasp_secret_get schema exposed raw value property")
+		}
+		return
+	}
+	t.Fatal("hasp_secret_get missing from catalog")
+}
+
 func TestCatalogCanExposeUnsafeSecretWriteToolsForTrustedHarness(t *testing.T) {
 	t.Setenv(mcpEnvUnsafeWriteTools, "1")
 	seen := map[string]bool{

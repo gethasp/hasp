@@ -88,20 +88,30 @@ func TestCoverageMCPGrantParseAndAuthorizationEdges(t *testing.T) {
 
 func TestCoverageRequireMCPProjectAuthorizationEdges(t *testing.T) {
 	lockMCPSeams(t)
+	origEnsureSession := ensureSessionFn
 	origAuthorizeAndConsume := authorizeAndConsumeMCPFn
 	origGrantProject := grantProjectLeaseMCPFn
 	t.Cleanup(func() {
+		ensureSessionFn = origEnsureSession
 		authorizeAndConsumeMCPFn = origAuthorizeAndConsume
 		grantProjectLeaseMCPFn = origGrantProject
 	})
 
 	handle, projectRoot := newMCPCoverageHandle(t)
+	ensureCalls := 0
+	ensureSessionFn = func(context.Context, string, string, string) (brokerops.Session, error) {
+		ensureCalls++
+		return brokerops.Session{Token: "session-token"}, nil
+	}
 	authorizeAndConsumeMCPFn = func(*store.Handle, store.AccessRequest) (store.AccessDecision, error) {
 		return store.AccessDecision{Allowed: true}, nil
 	}
 
-	if _, _, err := requireMCPProjectAuthorization(context.Background(), handle, toolCall{Arguments: map[string]any{"session_token": "session-token", "grant_project": "later"}}, projectRoot); err == nil {
+	if _, _, err := requireMCPProjectAuthorization(context.Background(), handle, toolCall{Arguments: map[string]any{"grant_project": "later"}}, projectRoot); err == nil {
 		t.Fatal("expected invalid grant_project scope")
+	}
+	if ensureCalls == 0 {
+		t.Fatal("expected metadata authorization to establish an MCP session instead of failing before recovery metadata")
 	}
 
 	grantProjectLeaseMCPFn = func(*store.Handle, string, string, store.GrantScope, time.Duration) (store.ProjectLease, error) {

@@ -21,6 +21,7 @@ import (
 )
 
 type fakeAgentStarter struct{}
+type testAgentMCPContextKey struct{}
 
 func (fakeAgentStarter) EnsureDaemon(context.Context) error { return nil }
 func (fakeAgentStarter) Connect(context.Context) (*runtime.Client, error) {
@@ -549,6 +550,24 @@ func TestAgentHandlersAdditionalCoverageBranches(t *testing.T) {
 			}
 			if out.String() != "ok" {
 				t.Fatalf("expected MCP server to run after preflight timeout, got %q", out.String())
+			}
+		})
+
+		t.Run("preflight timeout parsing edges", func(t *testing.T) {
+			t.Setenv("HASP_AGENT_MCP_PREFLIGHT_TIMEOUT", "")
+			if agentMCPPreflightTimeout() != defaultAgentMCPPreflightTimeout {
+				t.Fatalf("empty timeout should use default")
+			}
+			t.Setenv("HASP_AGENT_MCP_PREFLIGHT_TIMEOUT", "bad")
+			if agentMCPPreflightTimeout() != defaultAgentMCPPreflightTimeout {
+				t.Fatalf("invalid timeout should use default")
+			}
+			t.Setenv("HASP_AGENT_MCP_PREFLIGHT_TIMEOUT", "0")
+			ctx2 := context.WithValue(ctx, testAgentMCPContextKey{}, "sentinel")
+			gotCtx, cancel := agentMCPPreflightContext(ctx2)
+			defer cancel()
+			if gotCtx != ctx2 {
+				t.Fatal("non-positive timeout should return original context")
 			}
 		})
 

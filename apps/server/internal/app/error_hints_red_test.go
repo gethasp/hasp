@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,11 +157,63 @@ func TestErrorHintsReferenceNotFound(t *testing.T) {
 	assertHint(t, "reference-not-found", err)
 }
 
+func TestErrorHintsNamedReferenceNotExposed(t *testing.T) {
+	_, projectRoot := setupHintsVault(t)
+
+	deps := defaultExecDeps()
+	deps.AuthorizeReference = func(
+		_ context.Context,
+		_ *store.Handle,
+		_, _, _, ref string,
+		_ store.Operation,
+		_, _, _ store.GrantScope,
+		_ time.Duration,
+		_ string,
+	) (store.Item, error) {
+		return store.Item{}, &store.ReferenceNotExposedError{Reference: ref, ItemName: "GEMINI_RAI_KEY"}
+	}
+
+	err := executeCommandWithDeps(
+		context.Background(),
+		[]string{
+			"--project-root", projectRoot,
+			"--env", "KEY=@GEMINI_RAI_KEY",
+			"--", "true",
+		},
+		io.Discard, io.Discard,
+		false,
+		&fakeStarter{},
+		deps,
+	)
+
+	assertHint(t, "reference-not-exposed", err)
+	var ae *appError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected appError, got %T", err)
+	}
+	if !strings.Contains(ae.Hint, "hasp secret expose --project-root . GEMINI_RAI_KEY") {
+		t.Fatalf("expected exact expose hint, got %q", ae.Hint)
+	}
+}
+
+func TestWrapAuthorizeReferenceErrorEdges(t *testing.T) {
+	err := wrapAuthorizeReferenceError(&store.ReferenceNotExposedError{Reference: "@TOKEN"})
+	var ae *appError
+	if !errors.As(err, &ae) || !strings.Contains(ae.Hint, "TOKEN") {
+		t.Fatalf("expected not-exposed reference fallback hint, got %T %v", err, err)
+	}
+	plain := errors.New("plain failure")
+	if got := wrapAuthorizeReferenceError(plain); got != plain {
+		t.Fatalf("plain error should pass through unchanged, got %v", got)
+	}
+}
+
 // TestErrorHintsDaemonStopSignalLeaked verifies that when daemon stop fails
 // because the process is already gone the error:
-//   a) does NOT propagate the raw "signal daemon: os: process already finished" string,
-//   b) is an *appError (or at minimum wraps a clean message), and
-//   c) carries no leaked Go internals in its message.
+//
+//	a) does NOT propagate the raw "signal daemon: os: process already finished" string,
+//	b) is an *appError (or at minimum wraps a clean message), and
+//	c) carries no leaked Go internals in its message.
 //
 // The bead says the fix should normalise this to "daemon was not running" so
 // this test confirms the normalised form is present.

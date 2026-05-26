@@ -104,9 +104,11 @@ func catalog() []tool {
 	}
 	tools = append(tools,
 		tool{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
-			"project_root": stringSchema("Optional repo root to check availability in"),
-			"host_label":   stringSchema("Optional caller label"),
-			"name":         stringSchema("Secret name"),
+			"project_root":  stringSchema("Optional repo root to check availability in"),
+			"session_token": stringSchema("Optional daemon-backed session token; omitted callers get or reuse a local MCP session"),
+			"grant_project": grantSchema(),
+			"host_label":    stringSchema("Optional caller label"),
+			"name":          stringSchema("Secret name"),
 		}, "name")},
 		tool{Name: "hasp_redact", Description: "Redact managed values from supplied text", InputSchema: schema(map[string]any{
 			"text": stringSchema("Text to redact"),

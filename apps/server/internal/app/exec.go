@@ -878,6 +878,18 @@ func pathInsideProjectForWrite(path string, root string, deps execDeps) bool {
 // envelopes with actionable hints. Plain errors that don't match are
 // returned unchanged so callers further up the stack can still inspect them.
 func wrapAuthorizeReferenceError(err error) error {
+	var notExposed *store.ReferenceNotExposedError
+	if errors.As(err, &notExposed) {
+		name := strings.TrimSpace(notExposed.ItemName)
+		if name == "" {
+			name = strings.TrimPrefix(strings.TrimSpace(notExposed.Reference), "@")
+		}
+		hint := "run `hasp secret expose --project-root . <NAME>` to expose the existing secret to this project"
+		if name != "" {
+			hint = fmt.Sprintf("run `hasp secret expose --project-root . %s` to expose this existing secret to the project", name)
+		}
+		return newAppError(errCodeUserInput, err.Error()).withHint(hint)
+	}
 	if errors.Is(err, store.ErrReferenceNotFound) {
 		return newAppError(errCodeUserInput, err.Error()).
 			withHint("run `hasp secret expose --project-root . <NAME>` to expose an existing secret, or `hasp secret add <NAME>` to create a new one")

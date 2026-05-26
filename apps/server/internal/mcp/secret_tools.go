@@ -195,7 +195,15 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 	item, err := getItemMCPFn(handle, name)
 	if err != nil {
 		if errors.Is(err, store.ErrItemNotFound) {
-			return map[string]any{"name": name, "exists": false, "named_reference": store.NamedReference(name)}, nil
+			return map[string]any{
+				"name":                 name,
+				"exists":               false,
+				"available_in_project": false,
+				"project_root":         binding.CanonicalRoot,
+				"reference":            "",
+				"named_reference":      store.NamedReference(name),
+				"recovery":             secretGetRecovery(name, binding.CanonicalRoot, false, false),
+			}, nil
 		}
 		return nil, err
 	}
@@ -209,16 +217,19 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 			break
 		}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"name":                 item.Name,
 		"exists":               true,
 		"kind":                 item.Kind,
 		"created_at":           item.CreatedAt.Format(time.RFC3339),
 		"updated_at":           item.UpdatedAt.Format(time.RFC3339),
 		"available_in_project": available,
+		"project_root":         binding.CanonicalRoot,
 		"reference":            reference,
 		"named_reference":      store.NamedReference(item.Name),
-	}, nil
+		"recovery":             secretGetRecovery(item.Name, binding.CanonicalRoot, true, available),
+	}
+	return out, nil
 }
 
 func callSecretExpose(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
@@ -341,4 +352,35 @@ func appendSecretAuditMCP(eventType string, _ string, details map[string]any) {
 	}
 	log = log.WithKey(auditlog.GetHMACKey())
 	_, _ = log.Append(eventType, "agent", details)
+}
+
+func secretGetRecovery(name string, projectRoot string, exists bool, availableInProject bool) map[string]any {
+	switch {
+	case !exists:
+		return map[string]any{
+			"status":                   "missing_in_vault",
+			"action":                   "add_or_capture_secret",
+			"suggested_tools":          []string{"hasp_secret_add", "hasp_capture"},
+			"cli_args":                 []string{"hasp", "secret", "add", name},
+			"mutation_protected":       true,
+			"unsafe_mcp_tool_required": true,
+		}
+	case !availableInProject:
+		return map[string]any{
+			"status":                   "not_exposed_in_project",
+			"action":                   "request_secret_expose",
+			"suggested_tools":          []string{"hasp_secret_expose"},
+			"cli_args":                 []string{"hasp", "secret", "expose", name, "--project-root", projectRoot},
+			"mutation_protected":       true,
+			"unsafe_mcp_tool_required": true,
+		}
+	default:
+		return map[string]any{
+			"status":                   "available",
+			"action":                   "use_named_reference",
+			"suggested_tools":          []string{"hasp_run", "hasp_inject"},
+			"mutation_protected":       false,
+			"unsafe_mcp_tool_required": false,
+		}
+	}
 }

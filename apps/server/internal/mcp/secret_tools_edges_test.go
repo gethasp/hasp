@@ -157,6 +157,8 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 
 	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "MISSING", "project_root": gitRoot, "session_token": "session-token"}}); err != nil || got["exists"] != false {
 		t.Fatalf("expected missing get result, got %+v err=%v", got, err)
+	} else if recovery, ok := got["recovery"].(map[string]any); !ok || recovery["status"] != "missing_in_vault" {
+		t.Fatalf("expected missing recovery metadata, got %+v", got)
 	}
 	getItemMCPFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get fail") }
 	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": gitRoot, "session_token": "session-token"}}); err == nil || !strings.Contains(err.Error(), "get fail") {
@@ -165,6 +167,11 @@ func TestSecretToolEdgeBranches(t *testing.T) {
 	getItemMCPFn = origGetItem
 	if got, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{"name": "INLINE", "project_root": gitRoot, "session_token": "session-token"}}); err == nil && got["available_in_project"] != false {
 		t.Fatalf("expected non-exposed secret to be unavailable in project, got %+v", got)
+	} else if err == nil {
+		recovery, ok := got["recovery"].(map[string]any)
+		if !ok || recovery["status"] != "not_exposed_in_project" {
+			t.Fatalf("expected non-exposed recovery metadata, got %+v", got)
+		}
 	}
 	if _, err := callSecretGet(context.Background(), handle, toolCall{Name: "hasp_secret_get", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("expected missing get name failure")

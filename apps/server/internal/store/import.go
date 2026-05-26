@@ -27,6 +27,31 @@ type ImportedItem struct {
 }
 
 var ErrReferenceNotFound = errors.New("reference not found")
+var ErrReferenceNotExposed = fmt.Errorf("%w: not exposed to project", ErrReferenceNotFound)
+
+type ReferenceNotExposedError struct {
+	Reference string `json:"reference,omitempty"`
+	ItemName  string `json:"item_name,omitempty"`
+}
+
+func (e *ReferenceNotExposedError) Error() string {
+	switch {
+	case e == nil:
+		return ErrReferenceNotExposed.Error()
+	case e.Reference != "" && e.ItemName != "" && e.Reference != NamedReference(e.ItemName):
+		return fmt.Sprintf("%s: reference %q item %q", ErrReferenceNotExposed, e.Reference, e.ItemName)
+	case e.Reference != "":
+		return fmt.Sprintf("%s: reference %q", ErrReferenceNotExposed, e.Reference)
+	case e.ItemName != "":
+		return fmt.Sprintf("%s: item %q", ErrReferenceNotExposed, e.ItemName)
+	default:
+		return ErrReferenceNotExposed.Error()
+	}
+}
+
+func (e *ReferenceNotExposedError) Unwrap() error {
+	return ErrReferenceNotExposed
+}
 
 type ResolvedReference struct {
 	Reference      string   `json:"reference"`
@@ -184,6 +209,14 @@ func (h *Handle) ResolveReference(ctx context.Context, projectPath string, refer
 		}
 		alias := bindingAliasForItem(binding, itemName)
 		if alias == "" {
+			if _, err := h.GetItem(itemName); err == nil {
+				return ResolvedReference{}, &ReferenceNotExposedError{
+					Reference: ref,
+					ItemName:  itemName,
+				}
+			} else if !errors.Is(err, ErrItemNotFound) {
+				return ResolvedReference{}, err
+			}
 			return ResolvedReference{}, fmt.Errorf("%w: %q", ErrReferenceNotFound, ref)
 		}
 		item, err := h.GetItem(itemName)
