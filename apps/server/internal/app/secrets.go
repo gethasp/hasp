@@ -2,12 +2,16 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +22,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/vaultaccess"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -449,6 +454,179 @@ func auditExportCommand(ctx context.Context, args []string, stdout io.Writer) er
 	return err
 }
 
+type auditRecoveryReport struct {
+	Status               string    `json:"status"`
+	RecoveredAt          time.Time `json:"recovered_at"`
+	Reason               string    `json:"reason,omitempty"`
+	OriginalPath         string    `json:"original_path"`
+	ArchivedPath         string    `json:"archived_path"`
+	ReportPath           string    `json:"report_path"`
+	NewAuditPath         string    `json:"new_audit_path"`
+	ArchiveSHA256        string    `json:"archive_sha256"`
+	ChainOKBefore        bool      `json:"chain_ok_before"`
+	TotalEntriesBefore   int       `json:"total_entries_before"`
+	FirstCorruptionAt    *int64    `json:"first_corruption_at,omitempty"`
+	VerificationError    string    `json:"verification_error,omitempty"`
+	RecoveryMarkerSeq    int64     `json:"recovery_marker_sequence"`
+	RecoveryMarkerHash   string    `json:"recovery_marker_hash"`
+	RecoveryMarkerScheme string    `json:"recovery_marker_scheme"`
+}
+
+func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("audit recover", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	outputDir := fs.String("output", "", "")
+	reason := fs.String("reason", "", "")
+	force := fs.Bool("force", false, "")
+	jsonOutput := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return errors.New("usage: hasp audit recover [--output <dir>] [--reason <text>] [--force] [--json]")
+	}
+	resolved, err := paths.Resolve()
+	if err != nil {
+		return err
+	}
+	log, err := newAuditLogFn()
+	if err != nil {
+		return err
+	}
+	key := getAuditHMACKey()
+	if len(key) == 0 {
+		if handle, oerr := openVaultHandleFn(ctx); oerr == nil && handle != nil {
+			key = handle.AuditHMACKey()
+		}
+	}
+	if len(key) > 0 {
+		log = log.WithKey(key)
+	}
+	recoveredAt := time.Now().UTC()
+	verify, err := auditops.Verify(log, recoveredAt)
+	if err != nil {
+		return err
+	}
+	if verify.ChainOK && !*force {
+		return errors.New("audit chain verifies; recovery not needed (use --force to rotate anyway)")
+	}
+	archiveData, err := os.ReadFile(resolved.AuditPath)
+	if err != nil {
+		return fmt.Errorf("read audit log: %w", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	if strings.TrimSpace(*outputDir) == "" {
+		*outputDir = filepath.Join(resolved.HomeDir, "audit-recovery", recoveredAt.Format("20060102T150405Z"))
+	}
+	expandedOutput, err := expandUserPath(strings.TrimSpace(*outputDir))
+	if err != nil {
+		return fmt.Errorf("--output: %w", err)
+	}
+	if err := os.MkdirAll(expandedOutput, 0o700); err != nil {
+		return fmt.Errorf("create recovery dir: %w", err)
+	}
+	archivePath := filepath.Join(expandedOutput, "audit.jsonl")
+	reportPath := filepath.Join(expandedOutput, "recovery-report.json")
+	originalAbs, _ := filepath.Abs(resolved.AuditPath)
+	archiveAbs, _ := filepath.Abs(archivePath)
+	if originalAbs == archiveAbs {
+		return errors.New("--output must not be the active HASP home directory")
+	}
+	if _, err := os.Stat(archivePath); err == nil {
+		return fmt.Errorf("archive path already exists: %s", archivePath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check archive path: %w", err)
+	}
+	if _, err := os.Stat(reportPath); err == nil {
+		return fmt.Errorf("recovery report already exists: %s", reportPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check recovery report path: %w", err)
+	}
+	if err := os.Rename(resolved.AuditPath, archivePath); err != nil {
+		return fmt.Errorf("archive degraded audit log: %w", err)
+	}
+
+	markerLog := audit.NewForPaths(resolved)
+	if len(key) > 0 {
+		markerLog = markerLog.WithKey(key)
+	}
+	details := map[string]any{
+		"archived_path":        archivePath,
+		"archive_sha256":       hex.EncodeToString(sum[:]),
+		"chain_ok_before":      verify.ChainOK,
+		"total_entries_before": verify.TotalEntries,
+	}
+	if verify.FirstCorruptionAt != nil {
+		details["first_corruption_at"] = *verify.FirstCorruptionAt
+	}
+	if verify.Error != "" {
+		details["verification_error"] = verify.Error
+	}
+	if trimmed := strings.TrimSpace(*reason); trimmed != "" {
+		details["reason"] = trimmed
+	}
+	marker, err := markerLog.Append("audit.recovery.rotate", "user", details)
+	if err != nil {
+		if restoreErr := os.Rename(archivePath, resolved.AuditPath); restoreErr != nil {
+			return fmt.Errorf("append recovery marker: %w; restore archived audit log: %v", err, restoreErr)
+		}
+		return fmt.Errorf("append recovery marker: %w", err)
+	}
+	report := auditRecoveryReport{
+		Status:               "recovered",
+		RecoveredAt:          recoveredAt,
+		Reason:               strings.TrimSpace(*reason),
+		OriginalPath:         resolved.AuditPath,
+		ArchivedPath:         archivePath,
+		ReportPath:           reportPath,
+		NewAuditPath:         resolved.AuditPath,
+		ArchiveSHA256:        hex.EncodeToString(sum[:]),
+		ChainOKBefore:        verify.ChainOK,
+		TotalEntriesBefore:   verify.TotalEntries,
+		FirstCorruptionAt:    verify.FirstCorruptionAt,
+		VerificationError:    verify.Error,
+		RecoveryMarkerSeq:    marker.Sequence,
+		RecoveryMarkerHash:   marker.Hash,
+		RecoveryMarkerScheme: marker.Scheme,
+	}
+	reportData, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	reportData = append(reportData, '\n')
+	if err := os.WriteFile(reportPath, reportData, 0o600); err != nil {
+		return fmt.Errorf("write recovery report: %w", err)
+	}
+	payload := map[string]any{
+		"status":                   report.Status,
+		"archived_path":            report.ArchivedPath,
+		"report_path":              report.ReportPath,
+		"new_audit_path":           report.NewAuditPath,
+		"archive_sha256":           report.ArchiveSHA256,
+		"chain_ok_before":          report.ChainOKBefore,
+		"total_entries_before":     report.TotalEntriesBefore,
+		"first_corruption_at":      report.FirstCorruptionAt,
+		"verification_error":       report.VerificationError,
+		"recovery_marker_sequence": report.RecoveryMarkerSeq,
+	}
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderSimpleAction(ctx, w, "Audit recovered", "Archived the degraded audit log and started a fresh chain with a recovery marker.",
+			cliPair("Archive", report.ArchivedPath),
+			cliPair("Report", report.ReportPath),
+			cliPair("New audit", report.NewAuditPath),
+			cliPair("First corruption", formatOptionalInt64(report.FirstCorruptionAt)),
+			cliPair("Status", report.Status),
+		)
+	})
+}
+
+func formatOptionalInt64(value *int64) string {
+	if value == nil {
+		return "-"
+	}
+	return strconv.FormatInt(*value, 10)
+}
+
 func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) error {
 	// `hasp audit tail` is a streaming sub-subcommand with its own flag
 	// surface; route before the general `audit` parser so flags like `-n`
@@ -458,6 +636,9 @@ func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) 
 	}
 	if len(args) > 0 && args[0] == "export" {
 		return auditExportCommand(ctx, args[1:], stdout)
+	}
+	if len(args) > 0 && args[0] == "recover" {
+		return auditRecoverCommand(ctx, args[1:], stdout)
 	}
 	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

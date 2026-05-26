@@ -82,6 +82,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "ping", text: pingHelpText},
 	{key: "audit", text: auditHelpText},
 	{key: "audit export", text: auditExportHelpText},
+	{key: "audit recover", text: auditRecoverHelpText},
 	{key: "audit tail", text: auditTailHelpText},
 	{key: "export-backup", text: exportBackupHelpText},
 	{key: "restore-backup", text: restoreBackupHelpText},
@@ -1518,6 +1519,7 @@ Subcommands
   tail      print the most recent events; -f streams new appends
   verify    verify the local audit chain HMAC and exit
   export    stream audit events as NDJSON with a trailer HMAC
+  recover   archive a degraded audit log and start a fresh chain
 
 Flags
   --json                   emit one JSON event per line (NDJSON)
@@ -1536,6 +1538,7 @@ Examples
   hasp audit
   hasp audit --incident-bundle --json
   hasp audit export --from 2026-05-10T00:00:00Z --to 2026-05-10T01:00:00Z
+  hasp audit recover --reason "duplicate append at sequence 889"
   hasp audit tail -n 20 -f
 `
 
@@ -1552,6 +1555,24 @@ Flags
 Examples
   hasp audit export --format ndjson
   hasp audit export --from 2026-05-10T00:00:00Z --to 2026-05-10T01:00:00Z
+`
+
+const auditRecoverHelpText = `hasp audit recover
+
+Archive a degraded audit log and start a fresh audit chain with a recovery
+marker. This command does not rewrite tamper-evident history: it moves the
+existing audit.jsonl into a recovery directory, writes a signed recovery report,
+and records the archive digest in the first event of the new chain.
+
+Flags
+  --output <dir>      recovery directory (default: $HASP_HOME/audit-recovery/<timestamp>)
+  --reason <text>     operator reason stored in the recovery report and marker
+  --force             rotate even when the current audit chain verifies
+  --json              emit machine-readable recovery metadata
+
+Examples
+  hasp audit recover --reason "duplicate append at sequence 889"
+  hasp audit recover --output ~/Desktop/hasp-audit-recovery --json
 `
 
 const auditTailHelpText = `hasp audit tail
