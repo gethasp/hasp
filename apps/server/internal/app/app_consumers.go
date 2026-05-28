@@ -15,6 +15,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/appops"
 	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
+	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
@@ -374,6 +375,13 @@ func applyAppTargetConfig(ctx context.Context, handle *store.Handle, cfg *appCon
 	}
 	if strings.TrimSpace(cfg.ProjectRoot) == "" {
 		return errors.New("app connect --target requires a project root")
+	}
+	expansion, err := store.ExpandManifestTarget(cfg.ProjectRoot, cfg.Target)
+	if err != nil {
+		return err
+	}
+	if err := brokerops.RequireReviewedTarget(handle, cfg.ProjectRoot, expansion); err != nil {
+		return err
 	}
 	manifest, err := store.LoadRepoManifest(cfg.ProjectRoot)
 	if err != nil {

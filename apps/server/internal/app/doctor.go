@@ -15,6 +15,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/ui"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
+	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 type doctorJSONReport struct {
@@ -36,6 +37,7 @@ type doctorReport struct {
 	doctorJSONReport
 	DaemonVersion         string
 	VersionMismatch       bool
+	ProjectRoot           string
 	RedactorMinLength     int
 	RedactorANSIAware     bool
 	FixesAttempted        []string
@@ -199,6 +201,10 @@ var doctorDaemonPingFn = doctorDaemonPing
 
 func buildDoctorReport(ctx context.Context, projectRoot string, s starter) doctorReport {
 	major, minor, patch := parseVersionParts(runtime.VersionString())
+	checkedRoot := strings.TrimSpace(projectRoot)
+	if canonicalRoot, err := appCanonicalProjectRootFn(ctx, checkedRoot); err == nil {
+		checkedRoot = canonicalRoot
+	}
 	report := doctorReport{
 		doctorJSONReport: doctorJSONReport{
 			DaemonRunning:      false,
@@ -211,6 +217,7 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 			VersionMinor:       minor,
 			VersionPatch:       patch,
 		},
+		ProjectRoot:           checkedRoot,
 		RedactorMinLength:     redactor.MinRedactLen,
 		RedactorANSIAware:     redactor.ANSIAwareAvailable(),
 		daemonDetail:          "daemon is not reachable; run hasp daemon start or retry the command",
@@ -263,17 +270,28 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 		report.vaultDetail = "vault opens successfully"
 		if binding, _, err := resolveBindingViewAppFn(handle, ctx, projectRoot); err == nil && binding.ID != "" {
 			report.BindingState = "bound"
-			report.bindingDetail = "project binding resolves"
+			report.bindingDetail = "project binding resolves for " + cliDisplayPath(report.ProjectRoot)
 			report.HooksInstalled = bootstrapHookPresent(binding.CanonicalRoot)
+		} else if err != nil {
+			report.BindingState = "error"
+			report.bindingDetail = doctorBindingFailureDetail(report.ProjectRoot, err)
 		} else {
 			report.BindingState = "unbound"
-			report.bindingDetail = "project binding is missing; run hasp project bind"
+			report.bindingDetail = "project binding is missing for " + cliDisplayPath(report.ProjectRoot) + "; run hasp project bind --project-root " + strconv.Quote(report.ProjectRoot)
 		}
 	} else {
 		report.VaultState = "missing"
 		report.vaultDetail = "vault check failed; run hasp init or set HASP_MASTER_PASSWORD"
 	}
 	return report
+}
+
+func doctorBindingFailureDetail(projectRoot string, err error) string {
+	var missingBindingItem store.MissingBindingItemError
+	if errors.As(err, &missingBindingItem) {
+		return missingBindingItem.Error()
+	}
+	return "project binding check failed for " + cliDisplayPath(projectRoot) + ": " + err.Error()
 }
 
 func doctorRuntimeStatus(ctx context.Context, s starter) (runtime.StatusResponse, bool) {
@@ -313,6 +331,9 @@ func doctorDaemonPing(ctx context.Context, s starter) (string, bool) {
 func renderDoctorHumanWithColor(stdout io.Writer, report doctorReport, opts ui.ColorOptions) error {
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "HASP doctor")
+	if strings.TrimSpace(report.ProjectRoot) != "" {
+		fmt.Fprintf(tw, "project_root\t%s\n", cliDisplayPath(report.ProjectRoot))
+	}
 	fmt.Fprintf(tw, "daemon\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.DaemonRunning), boolRole(report.DaemonRunning), opts), report.daemonDetail)
 	fmt.Fprintf(tw, "vault\t%s\t%s\n", ui.Colorize(report.VaultState, vaultRole(report.VaultState), opts), report.vaultDetail)
 	fmt.Fprintf(tw, "binding\t%s\t%s\n", ui.Colorize(report.BindingState, bindingRole(report.BindingState), opts), report.bindingDetail)

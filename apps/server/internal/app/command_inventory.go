@@ -64,8 +64,11 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "vault", summary: "lock local vault/session material", group: commandGroupUtility, subcommands: []string{"lock", "forget-device"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return vaultCommand(ctx, args, stdout, s)
 		}},
-		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, subcommands: []string{"adopt", "bind", "doctor", "examples", "requirements", "status", "targets", "unbind"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, subcommands: []string{"adopt", "bind", "doctor", "examples", "init", "requirements", "status", "target", "targets", "unbind"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return projectCommandWithStderr(ctx, args, stdout, stderr)
+		}},
+		{name: "template", summary: "alias for value-free project manifest targets", group: commandGroupDaily, helpTopic: []string{"template"}, subcommands: []string{"add", "doctor", "init", "list", "review"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
+			return templateCommand(ctx, args, stdout)
 		}},
 		{name: "run", summary: "run a repo-scoped command through the broker", group: commandGroupDaily, helpTopic: []string{"run"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return runCommand(ctx, args, stdout, stderr, s)

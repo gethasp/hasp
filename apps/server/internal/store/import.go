@@ -214,8 +214,6 @@ func (h *Handle) ResolveReference(ctx context.Context, projectPath string, refer
 					Reference: ref,
 					ItemName:  itemName,
 				}
-			} else if !errors.Is(err, ErrItemNotFound) {
-				return ResolvedReference{}, err
 			}
 			return ResolvedReference{}, fmt.Errorf("%w: %q", ErrReferenceNotFound, ref)
 		}

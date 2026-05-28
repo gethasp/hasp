@@ -132,6 +132,32 @@ func TestInstallAuditHMACKeyRejectsUntrustedInputs(t *testing.T) {
 	}
 }
 
+func TestInstallAuditHMACKeySurfacesVerifyDetailedError(t *testing.T) {
+	t.Setenv("HASP_HOME", t.TempDir())
+	key := bytes.Repeat([]byte{4}, 32)
+	seed, err := audit.New()
+	if err != nil {
+		t.Fatalf("new seed audit log: %v", err)
+	}
+	if _, err := seed.WithKey(key).Append(audit.EventInit, "tester", nil); err != nil {
+		t.Fatalf("append keyed seed: %v", err)
+	}
+
+	original := runtimeAuditVerify
+	t.Cleanup(func() { runtimeAuditVerify = original })
+	runtimeAuditVerify = func(*audit.Log) (audit.VerifyReport, error) {
+		return audit.VerifyReport{}, errors.New("verify detailed failed")
+	}
+
+	candidate, err := audit.New()
+	if err != nil {
+		t.Fatalf("new candidate audit log: %v", err)
+	}
+	if err := installAuditHMACKey(candidate, key); err == nil || !strings.Contains(err.Error(), "does not verify existing audit chain") {
+		t.Fatalf("expected verify detailed error, got %v", err)
+	}
+}
+
 func TestInstallAuditHMACKeyAcceptsKeyedPrefixBeforeExistingCorruption(t *testing.T) {
 	t.Setenv("HASP_HOME", t.TempDir())
 	key := bytes.Repeat([]byte{7}, 32)

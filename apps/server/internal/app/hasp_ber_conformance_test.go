@@ -77,7 +77,7 @@ func TestDoctorHumanReportsDaemonVaultAndBinding(t *testing.T) {
 		t.Fatalf("doctor: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"daemon", "true", "vault", "unlocked", "binding", "bound", "audit_degraded"} {
+	for _, want := range []string{"project_root", projectRoot, "daemon", "true", "vault", "unlocked", "binding", "bound", "audit_degraded"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("doctor human output missing %q: %s", want, text)
 		}
@@ -87,6 +87,66 @@ func TestDoctorHumanReportsDaemonVaultAndBinding(t *testing.T) {
 	}
 	if err := doctorCommand(context.Background(), []string{"--bad"}, io.Discard, starter); err == nil {
 		t.Fatal("expected doctor parse error")
+	}
+}
+
+func TestDoctorHumanNamesCheckedProjectRootWhenUnbound(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"doctor", "--project-root", projectRoot}, bytes.NewBuffer(nil), &out, io.Discard, &fakeStarter{}); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"project_root", projectRoot, "binding", "unbound", "project binding is missing for", "hasp project bind --project-root"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("doctor human output missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestDoctorHumanSeparatesBindingErrorFromUnbound(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	handle, err := openVaultHandleFn(context.Background())
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "missing_item"}, store.PolicySession, false); err != nil {
+		t.Fatalf("upsert bad binding: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runWithStarter(context.Background(), []string{"doctor", "--project-root", projectRoot}, bytes.NewBuffer(nil), &out, io.Discard, &fakeStarter{}); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"project_root", projectRoot, "binding", "error", "missing_item", "hasp secret add --vault-only missing_item"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("doctor human output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "project binding is missing for") {
+		t.Fatalf("doctor should not call a broken binding missing: %s", text)
 	}
 }
 

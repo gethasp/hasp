@@ -246,7 +246,7 @@ func TestProjectAdoptCommandErrorBranches(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), repoRoot, map[string]string{"secret_01": "missing_item"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert bad binding: %v", err)
 	}
-	if err := projectAdoptCommand(context.Background(), []string{"--under", baseDir}, io.Discard); err == nil || !strings.Contains(err.Error(), "item not found") {
+	if err := projectAdoptCommand(context.Background(), []string{"--under", baseDir}, io.Discard); err == nil || !strings.Contains(err.Error(), "missing_item") || !strings.Contains(err.Error(), "hasp secret add --vault-only missing_item") {
 		t.Fatalf("expected resolve binding failure, got %v", err)
 	}
 

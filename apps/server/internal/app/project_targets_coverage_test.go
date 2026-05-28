@@ -408,6 +408,13 @@ func TestApplyAppTargetConfigCoverage(t *testing.T) {
 		t.Fatal("expected unknown target")
 	}
 	writeUnresolvedAppTargetManifestForCoverage(t, projectRoot)
+	expansion, err := store.ExpandManifestTarget(projectRoot, "unresolved")
+	if err != nil {
+		t.Fatalf("expand unresolved target: %v", err)
+	}
+	if err := handle.RecordManifestTargetReview(projectRoot, expansion); err != nil {
+		t.Fatalf("review unresolved target: %v", err)
+	}
 	if err := applyAppTargetConfig(context.Background(), handle, &appConnectConfig{ProjectRoot: projectRoot, Target: "unresolved", Command: "true"}); err == nil {
 		t.Fatal("expected unresolved target ref")
 	}

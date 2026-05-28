@@ -83,11 +83,15 @@ func classifyAppError(err error) *appError {
 		return envelope
 	}
 	message := err.Error()
+	var missingBindingItem store.MissingBindingItemError
 	switch {
 	case errors.Is(err, store.ErrVaultNotInitialized):
 		return newAppError(errCodeVaultLocked, message).withHint("run hasp setup or set HASP_MASTER_PASSWORD")
 	case errors.Is(err, store.ErrInvalidPassword):
 		return newAppError(errCodePasswordWrong, message)
+	case errors.As(err, &missingBindingItem):
+		return newAppError(errCodeNotFound, missingBindingItem.Error()).
+			withHint("run `hasp secret add --vault-only " + missingBindingItem.ItemName + "` to create the vault item, then retry the command")
 	case errors.Is(err, store.ErrItemNotFound):
 		return newAppError(errCodeNotFound, message)
 	case looksLikeUserInputError(message):

@@ -136,6 +136,87 @@ func TestExecuteAuthorizesRefsConfiguresRunnerAndRuns(t *testing.T) {
 	}
 }
 
+func TestExecuteRequiresReviewedManifestTargetBeforeAuthorizingRefs(t *testing.T) {
+	handle := newBrokeropsHandle(t)
+	projectRoot := t.TempDir()
+	expansion := store.ManifestTargetExpansion{
+		TargetName:   "server.dev",
+		ManifestHash: "manifest-a",
+		Command:      []string{"sh", "-c", "true"},
+		Env:          map[string]string{"TOKEN": "secret_01"},
+		Refs:         []string{"secret_01"},
+	}
+	authorized := false
+	_, err := Execute(context.Background(), ExecutionRequest{
+		Handle:      handle,
+		ProjectRoot: projectRoot,
+		Command:     []string{"true"},
+		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
+		Expansion:   expansion,
+		Deps: ExecutionDeps{
+			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+				authorized = true
+				return store.Item{}, nil
+			},
+		},
+	})
+	var reviewErr TargetReviewRequiredError
+	if !errors.As(err, &reviewErr) || !strings.Contains(err.Error(), "requires local review") {
+		t.Fatalf("Execute err = %v, want target review requirement", err)
+	}
+	if authorized {
+		t.Fatal("unreviewed target authorized a reference")
+	}
+
+	if err := handle.RecordManifestTargetReview(projectRoot, expansion); err != nil {
+		t.Fatalf("record review: %v", err)
+	}
+	result, err := Execute(context.Background(), ExecutionRequest{
+		Handle:      handle,
+		ProjectRoot: projectRoot,
+		Command:     []string{"true"},
+		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
+		Expansion:   expansion,
+		Deps: ExecutionDeps{
+			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+				authorized = true
+				return store.Item{Name: "api_token", Value: []byte("secret")}, nil
+			},
+			RunnerExecute: func(context.Context, runner.Input) (runner.Result, error) {
+				return runner.Result{ExitCode: 0}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute after review: %v", err)
+	}
+	if !authorized || result.RunResult.ExitCode != 0 {
+		t.Fatalf("reviewed target did not execute as expected: authorized=%v result=%+v", authorized, result)
+	}
+
+	expansion.Command = []string{"sh", "-c", "false"}
+	authorized = false
+	_, err = Execute(context.Background(), ExecutionRequest{
+		Handle:      handle,
+		ProjectRoot: projectRoot,
+		Command:     []string{"false"},
+		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
+		Expansion:   expansion,
+		Deps: ExecutionDeps{
+			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+				authorized = true
+				return store.Item{}, nil
+			},
+		},
+	})
+	if !errors.As(err, &reviewErr) || !strings.Contains(err.Error(), "requires renewed local review") {
+		t.Fatalf("Execute drift err = %v, want renewed review requirement", err)
+	}
+	if authorized {
+		t.Fatal("changed target authorized a reference before renewed review")
+	}
+}
+
 func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) {
 	wrapped := errors.New("wrapped")
 	_, err := Execute(context.Background(), ExecutionRequest{

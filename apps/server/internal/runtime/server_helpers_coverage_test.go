@@ -889,6 +889,53 @@ func TestHTTPServerSeamedFailureBranches(t *testing.T) {
 	brokerLockVault = oldBrokerLockVault
 }
 
+func TestHTTPServerDropsServeErrorWhenContextIsCanceled(t *testing.T) {
+	lockRuntimeSeams(t)
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	oldServeHTTPServer := serveHTTPServer
+	t.Cleanup(func() {
+		httpHMACKey = oldHTTPHMACKey
+		serveHTTPServer = oldServeHTTPServer
+	})
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	served := make(chan struct{})
+	serveHTTPServer = func(*httpapi.Server, context.Context) error {
+		close(served)
+		return errors.New("serve failed after cancel")
+	}
+
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	errCh := make(chan error)
+	httpSrv, err := startHTTPServer(ctx, runtimePaths, newRPCServer(runtimePaths), errCh)
+	if err != nil {
+		t.Fatalf("start seamed canceled server: %v", err)
+	}
+	defer func() { _ = httpSrv.Close() }()
+	select {
+	case <-served:
+	case <-time.After(time.Second):
+		t.Fatal("serve seam was not called")
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("serve error should be dropped when context is canceled, got %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 func TestHTTPRevealHandlerBranches(t *testing.T) {
 	home := t.TempDir()
 	server := newRPCServer(paths.Paths{

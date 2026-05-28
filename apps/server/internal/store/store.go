@@ -28,6 +28,20 @@ var (
 	passwordIterations = defaultPasswordIterations
 )
 
+type MissingBindingItemError struct {
+	ProjectRoot string
+	Alias       string
+	ItemName    string
+}
+
+func (e MissingBindingItemError) Error() string {
+	return "project \"" + e.ProjectRoot + "\" references missing secret \"" + e.ItemName + "\" as \"" + e.Alias + "\"; create it with `hasp secret add --vault-only " + e.ItemName + "` or remove the reference from .hasp.manifest.json"
+}
+
+func (e MissingBindingItemError) Unwrap() error {
+	return ErrItemNotFound
+}
+
 // FormatVersion returns the on-disk envelope format version every freshly
 // initialised vault stamps into its header. Operators read it via
 // `hasp version --json` to confirm a binary will write a vault their other

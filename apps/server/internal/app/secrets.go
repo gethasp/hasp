@@ -36,6 +36,16 @@ import (
 var newAuditLogFn = audit.New
 var auditEventsFn = (*audit.Log).Events
 
+var (
+	auditRecoverReadFileFn    = os.ReadFile
+	auditRecoverMkdirAllFn    = os.MkdirAll
+	auditRecoverStatFn        = os.Stat
+	auditRecoverRenameFn      = os.Rename
+	auditRecoverNewLogFn      = audit.NewForPaths
+	auditRecoverMarshalJSONFn = json.MarshalIndent
+	auditRecoverWriteFileFn   = os.WriteFile
+)
+
 func init() {
 	auditlog.NewLogFn = func() (*audit.Log, error) { return newAuditLogFn() }
 	auditlog.EventsFn = func(log *audit.Log) ([]audit.Event, error) { return auditEventsFn(log) }
@@ -510,7 +520,7 @@ func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) e
 	if verify.ChainOK && !*force {
 		return errors.New("audit chain verifies; recovery not needed (use --force to rotate anyway)")
 	}
-	archiveData, err := os.ReadFile(resolved.AuditPath)
+	archiveData, err := auditRecoverReadFileFn(resolved.AuditPath)
 	if err != nil {
 		return fmt.Errorf("read audit log: %w", err)
 	}
@@ -522,7 +532,7 @@ func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) e
 	if err != nil {
 		return fmt.Errorf("--output: %w", err)
 	}
-	if err := os.MkdirAll(expandedOutput, 0o700); err != nil {
+	if err := auditRecoverMkdirAllFn(expandedOutput, 0o700); err != nil {
 		return fmt.Errorf("create recovery dir: %w", err)
 	}
 	archivePath := filepath.Join(expandedOutput, "audit.jsonl")
@@ -532,21 +542,21 @@ func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) e
 	if originalAbs == archiveAbs {
 		return errors.New("--output must not be the active HASP home directory")
 	}
-	if _, err := os.Stat(archivePath); err == nil {
+	if _, err := auditRecoverStatFn(archivePath); err == nil {
 		return fmt.Errorf("archive path already exists: %s", archivePath)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("check archive path: %w", err)
 	}
-	if _, err := os.Stat(reportPath); err == nil {
+	if _, err := auditRecoverStatFn(reportPath); err == nil {
 		return fmt.Errorf("recovery report already exists: %s", reportPath)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("check recovery report path: %w", err)
 	}
-	if err := os.Rename(resolved.AuditPath, archivePath); err != nil {
+	if err := auditRecoverRenameFn(resolved.AuditPath, archivePath); err != nil {
 		return fmt.Errorf("archive degraded audit log: %w", err)
 	}
 
-	markerLog := audit.NewForPaths(resolved)
+	markerLog := auditRecoverNewLogFn(resolved)
 	if len(key) > 0 {
 		markerLog = markerLog.WithKey(key)
 	}
@@ -567,7 +577,7 @@ func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) e
 	}
 	marker, err := markerLog.Append("audit.recovery.rotate", "user", details)
 	if err != nil {
-		if restoreErr := os.Rename(archivePath, resolved.AuditPath); restoreErr != nil {
+		if restoreErr := auditRecoverRenameFn(archivePath, resolved.AuditPath); restoreErr != nil {
 			return fmt.Errorf("append recovery marker: %w; restore archived audit log: %v", err, restoreErr)
 		}
 		return fmt.Errorf("append recovery marker: %w", err)
@@ -589,12 +599,12 @@ func auditRecoverCommand(ctx context.Context, args []string, stdout io.Writer) e
 		RecoveryMarkerHash:   marker.Hash,
 		RecoveryMarkerScheme: marker.Scheme,
 	}
-	reportData, err := json.MarshalIndent(report, "", "  ")
+	reportData, err := auditRecoverMarshalJSONFn(report, "", "  ")
 	if err != nil {
 		return err
 	}
 	reportData = append(reportData, '\n')
-	if err := os.WriteFile(reportPath, reportData, 0o600); err != nil {
+	if err := auditRecoverWriteFileFn(reportPath, reportData, 0o600); err != nil {
 		return fmt.Errorf("write recovery report: %w", err)
 	}
 	payload := map[string]any{

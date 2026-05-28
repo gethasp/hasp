@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 func TestProjectRequirementsJSONDoesNotExecuteTargetsOrExposeValues(t *testing.T) {
@@ -32,6 +36,145 @@ func TestProjectRequirementsJSONDoesNotExecuteTargetsOrExposeValues(t *testing.T
 	}
 	if _, ok := payload["requirements"]; !ok {
 		t.Fatalf("project requirements JSON missing requirements field: %+v", payload)
+	}
+}
+
+func TestProjectManifestMissingReturnsActionableError(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := t.TempDir()
+
+	err := Run(context.Background(), []string{"project", "targets", "--project-root", projectRoot}, bytes.NewBuffer(nil), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected missing manifest error")
+	}
+	var envelope *appError
+	if !errors.As(err, &envelope) {
+		t.Fatalf("expected appError, got %T %v", err, err)
+	}
+	if envelope.Code != errCodeNotFound || !strings.Contains(envelope.Hint, "hasp project init") {
+		t.Fatalf("unexpected missing manifest error: %+v", envelope)
+	}
+}
+
+func TestProjectTargetAddCreatesValueFreeManifest(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "gum"), 0o755); err != nil {
+		t.Fatalf("mkdir apps/gum: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := Run(context.Background(), []string{
+		"project", "target", "add", "release.build",
+		"--project-root", projectRoot,
+		"--root", "apps/gum",
+		"--env", "GUM_OAUTH_CLIENT_SECRET=@GUM_OAUTH_CLIENT_SECRET",
+		"--env-example", "apps/gum/.env.example",
+		"--json",
+		"--", "goreleaser", "release",
+	}, bytes.NewBuffer(nil), &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("project target add: %v", err)
+	}
+	body := stdout.String()
+	if strings.Contains(body, "goreleaser") {
+		t.Fatalf("target add JSON should not echo repo-controlled command argv: %s", body)
+	}
+	manifestBytes, err := os.ReadFile(filepath.Join(projectRoot, ".hasp.manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if strings.Contains(string(manifestBytes), "client-secret-value") {
+		t.Fatalf("manifest stored a raw value: %s", string(manifestBytes))
+	}
+	manifest, err := store.DecodeRepoManifest(projectRoot, manifestBytes)
+	if err != nil {
+		t.Fatalf("decode generated manifest: %v\n%s", err, manifestBytes)
+	}
+	target, ok := manifest.Target("release.build")
+	if !ok {
+		t.Fatalf("generated manifest missing target: %+v", manifest)
+	}
+	if target.Root != "apps/gum" || !slices.Equal(target.Command, []string{"goreleaser", "release"}) {
+		t.Fatalf("unexpected target: %+v", target)
+	}
+	if len(target.Delivery) != 1 || target.Delivery[0].Name != "GUM_OAUTH_CLIENT_SECRET" || target.Delivery[0].Ref != "@GUM_OAUTH_CLIENT_SECRET" {
+		t.Fatalf("unexpected delivery: %+v", target.Delivery)
+	}
+	if _, ok := manifest.Requirement("@GUM_OAUTH_CLIENT_SECRET"); !ok {
+		t.Fatalf("generated manifest missing requirement: %+v", manifest.Requirements)
+	}
+	if item, ok := manifest.ItemNameForRef("@GUM_OAUTH_CLIENT_SECRET"); !ok || item != "GUM_OAUTH_CLIENT_SECRET" {
+		t.Fatalf("generated manifest missing reference, got %q ok=%v", item, ok)
+	}
+}
+
+func TestTemplateAddAliasCreatesValueFreeManifest(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := t.TempDir()
+
+	if err := Run(context.Background(), []string{
+		"template", "add", "server.dev",
+		"--project-root", projectRoot,
+		"--env", "OPENAI_API_KEY=@OPENAI_API_KEY",
+		"--", "npm", "test",
+	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("template add: %v", err)
+	}
+	if _, err := store.LoadRepoManifest(projectRoot); err != nil {
+		t.Fatalf("template add did not create a valid manifest: %v", err)
+	}
+}
+
+func TestProjectTargetAddRejectsNonNamedRefs(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := t.TempDir()
+
+	err := Run(context.Background(), []string{
+		"project", "target", "add", "server.dev",
+		"--project-root", projectRoot,
+		"--env", "OPENAI_API_KEY=literal-value",
+	}, bytes.NewBuffer(nil), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "named refs") {
+		t.Fatalf("expected named-ref rejection, got %v", err)
+	}
+}
+
+func TestProjectTargetReviewRecordsSignatureWithoutExecutingTarget(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot, secretValue, sentinel := setupProjectTargetManifestFixture(t)
+
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{
+		"project", "target", "review", "server.dev",
+		"--project-root", projectRoot,
+		"--json",
+	}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+		t.Fatalf("project target review: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatalf("project target review executed target command and created %s", sentinel)
+	}
+	body := stdout.String()
+	for _, forbidden := range []string{secretValue, "touch " + sentinel} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("project target review exposed forbidden content %q in %s", forbidden, body)
+		}
+	}
+	manifest, err := store.ExpandManifestTarget(projectRoot, "server.dev")
+	if err != nil {
+		t.Fatalf("expand target: %v", err)
+	}
+	handle, err := openVaultHandle(context.Background())
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+	drift, err := handle.ManifestTargetDrift(projectRoot, manifest)
+	if err != nil {
+		t.Fatalf("target drift: %v", err)
+	}
+	if !drift.Known || drift.Changed {
+		t.Fatalf("expected reviewed unchanged target, got %+v", drift)
 	}
 }
 

@@ -24,6 +24,22 @@ func TestRunTargetInjectsOnlyDeclaredEnvAndRejectsAdditiveMappings(t *testing.T)
 		"--grant-secret", "session",
 		"--grant-window", "15m",
 		"--",
+		"true",
+	}, bytes.NewBuffer(nil), &stdout, &stderr, starter)
+	if err == nil || !strings.Contains(err.Error(), "requires local review") {
+		t.Fatalf("expected unreviewed target refusal, got %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	reviewTargetForTest(t, projectRoot, "server.dev")
+	stdout.Reset()
+	stderr.Reset()
+	err = runWithStarter(context.Background(), []string{
+		"run",
+		"--project-root", projectRoot,
+		"--target", "server.dev",
+		"--grant-project", "window",
+		"--grant-secret", "session",
+		"--grant-window", "15m",
+		"--",
 		"sh", "-c", `got="$(pwd -P)"; test "$got" = "$1" || { echo "cwd=$got want=$1" >&2; exit 1; }; test -n "$OPENAI_API_KEY" || { echo "missing OPENAI_API_KEY" >&2; exit 1; }; test -z "$DATABASE_URL" || { echo "unexpected DATABASE_URL" >&2; exit 1; }`, "target-root-check", targetRoot,
 	}, bytes.NewBuffer(nil), &stdout, &stderr, starter)
 	if err != nil {
@@ -55,6 +71,16 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 		"app", "connect", "server-dev",
 		"--project-root", projectRoot,
 		"--target", "server.dev",
+	}, bytes.NewBuffer(nil), &stdout, &stderr); err == nil || !strings.Contains(err.Error(), "requires local review") {
+		t.Fatalf("expected app connect unreviewed target refusal, got %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	reviewTargetForTest(t, projectRoot, "server.dev")
+	stdout.Reset()
+	stderr.Reset()
+	if err := Run(context.Background(), []string{
+		"app", "connect", "server-dev",
+		"--project-root", projectRoot,
+		"--target", "server.dev",
 	}, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("app connect --target: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
@@ -77,6 +103,7 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 		t.Fatalf("unexpected seeded bindings %+v", consumer.Bindings)
 	}
 
+	reviewTargetForTest(t, projectRoot, "release.sign")
 	if err := Run(context.Background(), []string{
 		"app", "connect", "deployapp",
 		"--project-root", projectRoot,
@@ -92,6 +119,7 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("app connect commandless target with override: %v", err)
 	}
+	reviewTargetForTest(t, projectRoot, "build.config")
 	if err := Run(context.Background(), []string{
 		"app", "connect", "macapp",
 		"--project-root", projectRoot,
@@ -112,6 +140,7 @@ func TestAppConnectTargetSeedsLocalProfileIndependently(t *testing.T) {
 
 func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
+	reviewTargetForTest(t, projectRoot, "server.dev")
 
 	if err := runWithStarter(context.Background(), []string{
 		"run",
@@ -161,8 +190,8 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 		"--grant-window", "15m",
 		"--",
 		"true",
-	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter); err != nil {
-		t.Fatalf("second run --target after drift: %v\nstderr=%s", err, stderr.String())
+	}, bytes.NewBuffer(nil), io.Discard, &stderr, starter); err == nil || !strings.Contains(err.Error(), "requires renewed local review") {
+		t.Fatalf("expected second run after drift to require renewed review, got %v\nstderr=%s", err, stderr.String())
 	}
 	warning := stderr.String()
 	for _, want := range []string{"manifest target \"server.dev\" changed", "command", "refs", "delivery"} {
@@ -174,6 +203,7 @@ func TestTargetRuntimeAndDoctorSurfaceManifestDrift(t *testing.T) {
 
 func TestInjectTargetProvidesDeclaredTempFileOnly(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
+	reviewTargetForTest(t, projectRoot, "release.sign")
 
 	var stdout, stderr bytes.Buffer
 	err := runWithStarter(context.Background(), []string{
@@ -196,6 +226,7 @@ func TestInjectTargetProvidesDeclaredTempFileOnly(t *testing.T) {
 
 func TestWriteEnvTargetUsesConfiguredOutputAndRequiresConvenienceGrant(t *testing.T) {
 	projectRoot, starter := setupTargetRuntimeFixture(t)
+	reviewTargetForTest(t, projectRoot, "build.config")
 	output := filepath.Join(projectRoot, "apps", "server", "Config", "Secrets.generated.xcconfig")
 
 	err := runWithStarter(context.Background(), []string{
@@ -350,6 +381,16 @@ func rewriteWebTargetManifest(t *testing.T, projectRoot string) {
 }`
 	if err := os.WriteFile(filepath.Join(projectRoot, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatalf("rewrite manifest: %v", err)
+	}
+}
+
+func reviewTargetForTest(t *testing.T, projectRoot string, targetName string) {
+	t.Helper()
+	if err := Run(context.Background(), []string{
+		"project", "target", "review", targetName,
+		"--project-root", projectRoot,
+	}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("review target %s: %v", targetName, err)
 	}
 }
 

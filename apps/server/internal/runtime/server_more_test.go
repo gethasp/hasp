@@ -261,6 +261,42 @@ func TestEnsureDaemonHonorsContextCancellationWhileWaiting(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonHonorsContextCancellationAfterDialAttempt(t *testing.T) {
+	lockRuntimeSeams(t)
+	t.Setenv("HASP_DAEMON_STARTUP_TIMEOUT", "15s")
+	origSpawn := spawnDaemonProcess
+	origMkdir := runtimeMkdirAll
+	origRemove := runtimeRemove
+	defer func() {
+		spawnDaemonProcess = origSpawn
+		runtimeMkdirAll = origMkdir
+		runtimeRemove = origRemove
+	}()
+
+	runtimeMkdirAll = func(string, os.FileMode) error { return nil }
+	runtimeRemove = func(string) error { return nil }
+	spawnDaemonProcess = func(context.Context) error { return nil }
+
+	manager := &Manager{paths: paths.Paths{
+		RuntimeDir: t.TempDir(),
+		SocketPath: filepath.Join(t.TempDir(), "missing.sock"),
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	err := manager.EnsureDaemon(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("context cancellation should not wait for startup timeout, took %s", time.Since(start))
+	}
+}
+
 func TestManagerStartDaemonUsesBackgroundWhenNil(t *testing.T) {
 	lockRuntimeSeams(t)
 	origSpawn := spawnDaemonProcess

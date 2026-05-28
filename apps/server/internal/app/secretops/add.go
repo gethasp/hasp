@@ -117,7 +117,10 @@ func secretAddCommand(ctx context.Context, deps Deps, args []string, stdin io.Re
 	}
 	if autoExpose {
 		if _, _, _, err := deps.EnsureProjectBindingExplicit(ctx, handle, targetRoot); err != nil {
-			return err
+			var missingBindingItem store.MissingBindingItemError
+			if !errors.As(err, &missingBindingItem) || !secretInputsContainItem(inputs, missingBindingItem.ItemName) {
+				return err
+			}
 		}
 	}
 
@@ -151,6 +154,9 @@ func secretAddPersistInputs(ctx context.Context, deps Deps, handle *store.Handle
 		}
 		view := secrettypes.MutationView{Name: item.Name, NamedReference: store.NamedReference(item.Name), Kind: item.Kind, Outcome: outcome}
 		if autoExpose {
+			if _, _, _, err := deps.EnsureProjectBindingExplicit(ctx, handle, targetRoot); err != nil {
+				return nil, err
+			}
 			reference, err := deps.BindItemAlias(handle, ctx, targetRoot, item.Name)
 			if err != nil {
 				return nil, err
@@ -171,6 +177,15 @@ func secretAddPersistInputs(ctx context.Context, deps Deps, handle *store.Handle
 		})
 	}
 	return added, nil
+}
+
+func secretInputsContainItem(inputs []secretInput, itemName string) bool {
+	for _, input := range inputs {
+		if strings.TrimSpace(input.name) == itemName {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSecretAddExpose decides whether `hasp secret add` should auto-bind

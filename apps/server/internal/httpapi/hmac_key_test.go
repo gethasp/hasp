@@ -759,6 +759,14 @@ func TestHMACKeyLocalDebugSeamsCoverResidualBranches(t *testing.T) {
 	}
 	hmacWriteFile = oldWriteFile
 
+	hmacReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	hmacMkdirAll = func(string, os.FileMode) error { return errors.New("provision mkdir denied") }
+	if _, err := LoadProvisionedHMACKey(nil); err == nil || !strings.Contains(err.Error(), "read HTTP HMAC key") {
+		t.Fatalf("provisioned local debug create failure = %v", err)
+	}
+	hmacReadFile = oldReadFile
+	hmacMkdirAll = oldMkdirAll
+
 	t.Setenv("HASP_HOME", "")
 	userHomeDirFn = func() (string, error) { return home, nil }
 	if got, err := localDebugHMACKeyPath(); err != nil || !strings.Contains(got, "Application Support") {
@@ -781,6 +789,25 @@ func TestHMACKeyLocalDebugSeamsCoverResidualBranches(t *testing.T) {
 		t.Fatalf("protected store missing team id error = %v", err)
 	}
 	restoreArgs0()
+}
+
+func TestUsesLocalDebugHMACKeyFailsClosedWhenRequirementsError(t *testing.T) {
+	oldRuntimeOS := hmacRuntimeOS
+	oldIsTest := hmacIsGoTestProcess
+	t.Cleanup(func() {
+		hmacRuntimeOS = oldRuntimeOS
+		hmacIsGoTestProcess = oldIsTest
+	})
+	hmacRuntimeOS = "darwin"
+	hmacIsGoTestProcess = func() bool { return false }
+	restoreTeamID := setHMACTeamIDForTest("")
+	defer restoreTeamID()
+	restoreArgs0 := osArgs0ForTest(t, "/usr/local/bin/hasp")
+	defer restoreArgs0()
+
+	if usesLocalDebugHMACKey() {
+		t.Fatal("requirements error should fail closed without local debug key")
+	}
 }
 
 func setHMACTeamIDForTest(value string) func() {

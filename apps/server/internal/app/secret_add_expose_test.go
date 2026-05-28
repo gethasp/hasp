@@ -28,9 +28,10 @@ func withinTempRepoForSecretAdd(t *testing.T) string {
 //
 // Now non-interactive `secret add` inside a repo refuses to auto-bind
 // unless the operator picks one of:
-//   --vault-only          (don't bind)
-//   --expose=never        (don't bind, explicit)
-//   --expose=always       (bind, explicit)
+//
+//	--vault-only          (don't bind)
+//	--expose=never        (don't bind, explicit)
+//	--expose=always       (bind, explicit)
 //
 // Bare `secret add NAME` from a non-tty stdin should error and surface
 // the available flags so the operator can pick one.
@@ -72,6 +73,64 @@ func TestSecretAddExposeAlwaysBindsNonInteractive(t *testing.T) {
 
 	if err := secretAddCommand(ctx, []string{"--project-root", root, "--from-stdin", "--expose=always", "TOKEN"}, bytes.NewBufferString("v"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("--expose=always should succeed non-interactively: %v", err)
+	}
+}
+
+func TestSecretAddExposeAlwaysCreatesMissingManifestItem(t *testing.T) {
+	lockAppSeams(t)
+	ctx := bootstrapVaultForArgvTest(t)
+	root := withinTempRepoForSecretAdd(t)
+	manifest := `{"version":"v1","references":[{"alias":"gum_oauth_client_secret","item":"GUM_OAUTH_CLIENT_SECRET"}]}`
+	if err := os.WriteFile(filepath.Join(root, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := secretAddCommand(ctx, []string{"--project-root", root, "--from-stdin", "--expose=always", "GUM_OAUTH_CLIENT_SECRET"}, bytes.NewBufferString("secret-value\n"), &out, io.Discard)
+	if err != nil {
+		t.Fatalf("secret add should create missing manifest item: %v", err)
+	}
+	if !strings.Contains(out.String(), "gum_oauth_client_secret") {
+		t.Fatalf("expected manifest alias in output, got %q", out.String())
+	}
+
+	var status bytes.Buffer
+	if err := projectStatusCommand(ctx, []string{"--json", "--project-root", root}, &status); err != nil {
+		t.Fatalf("project status: %v", err)
+	}
+	for _, want := range []string{"gum_oauth_client_secret", "GUM_OAUTH_CLIENT_SECRET"} {
+		if !strings.Contains(status.String(), want) {
+			t.Fatalf("project status missing %q: %s", want, status.String())
+		}
+	}
+}
+
+func TestSecretAddExposeAlwaysExplainsUnrelatedMissingManifestItem(t *testing.T) {
+	lockAppSeams(t)
+	ctx := bootstrapVaultForArgvTest(t)
+	root := withinTempRepoForSecretAdd(t)
+	manifest := `{"version":"v1","references":[{"alias":"gum_oauth_client_secret","item":"GUM_OAUTH_CLIENT_SECRET"}]}`
+	if err := os.WriteFile(filepath.Join(root, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := secretAddCommand(ctx, []string{"--project-root", root, "--from-stdin", "--expose=always", "OTHER_SECRET"}, bytes.NewBufferString("secret-value\n"), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected unrelated missing manifest item to block auto-expose")
+	}
+	msg := err.Error()
+	for _, want := range []string{"gum_oauth_client_secret", "GUM_OAUTH_CLIENT_SECRET", "hasp secret add --vault-only GUM_OAUTH_CLIENT_SECRET", ".hasp.manifest.json"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("missing %q in error %q", want, msg)
+		}
+	}
+	if strings.TrimSpace(msg) == "item not found" {
+		t.Fatalf("expected contextual error, got %q", msg)
+	}
+
+	var getOut bytes.Buffer
+	if err := secretGetCommand(ctx, []string{"OTHER_SECRET"}, bytes.NewBuffer(nil), &getOut, io.Discard); err == nil {
+		t.Fatalf("OTHER_SECRET should not be saved after preflight failure: %s", getOut.String())
 	}
 }
 

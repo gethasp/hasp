@@ -45,6 +45,23 @@ type ExecutionResult struct {
 	Items     []store.Item
 }
 
+type TargetReviewRequiredError struct {
+	Target string
+	Drift  store.ManifestDrift
+}
+
+func (e TargetReviewRequiredError) Error() string {
+	target := e.Target
+	if target == "" {
+		target = "(unknown)"
+	}
+	reason := "requires local review"
+	if e.Drift.Changed {
+		reason = "requires renewed local review after manifest changes"
+	}
+	return fmt.Sprintf("manifest target %q %s; inspect the value-free target shape, then run `hasp project target review %s`", target, reason, target)
+}
+
 func ExpandExecutionTarget(projectRoot string, targetName string, envRefs map[string]string, fileRefs map[string]string, command []string) (ExecutionTarget, error) {
 	out := ExecutionTarget{
 		EnvRefs:  cloneStringMap(envRefs),
@@ -81,6 +98,9 @@ func Execute(ctx context.Context, request ExecutionRequest) (ExecutionResult, er
 	if deps.RunnerExecute == nil {
 		deps.RunnerExecute = runner.Execute
 	}
+	if err := RequireReviewedTarget(request.Handle, request.ProjectRoot, request.Expansion); err != nil {
+		return ExecutionResult{}, err
+	}
 
 	items := make([]store.Item, 0, len(request.EnvRefs)+len(request.FileRefs))
 	env := map[string]string{}
@@ -115,6 +135,23 @@ func Execute(ctx context.Context, request ExecutionRequest) (ExecutionResult, er
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{RunResult: runResult, Items: items}, nil
+}
+
+func RequireReviewedTarget(handle *store.Handle, projectRoot string, expansion store.ManifestTargetExpansion) error {
+	if expansion.TargetName == "" {
+		return nil
+	}
+	if handle == nil {
+		return TargetReviewRequiredError{Target: expansion.TargetName}
+	}
+	drift, err := handle.ManifestTargetDrift(projectRoot, expansion)
+	if err != nil {
+		return err
+	}
+	if !drift.Known || drift.Changed {
+		return TargetReviewRequiredError{Target: expansion.TargetName, Drift: drift}
+	}
+	return nil
 }
 
 func wrapExecutionAuthorizeError(request ExecutionRequest, err error) error {

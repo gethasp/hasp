@@ -474,6 +474,9 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 	if err := warnTargetDrift(stderr, handle, *projectRoot, targetExpansion); err != nil {
 		return err
 	}
+	if err := brokerops.RequireReviewedTarget(handle, *projectRoot, targetExpansion); err != nil {
+		return err
+	}
 	// Overwrite guard: when neither --force nor --append, refuse if file exists.
 	if !*appendMode && !*forceMode {
 		if _, statErr := os.Stat(*outputPath); statErr == nil {
@@ -763,6 +766,9 @@ func warnTargetDrift(stderr io.Writer, handle *store.Handle, projectRoot string,
 		return err
 	}
 	if !drift.Changed {
+		if !drift.Known {
+			_, _ = fmt.Fprintf(stderr, "manifest target %q has not been locally reviewed; inspect the value-free target shape, then run `hasp project target review %s` before granting secrets.\n", expansion.TargetName, expansion.TargetName)
+		}
 		return nil
 	}
 	changes := make([]string, 0, 4)

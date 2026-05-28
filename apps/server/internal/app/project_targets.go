@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -66,6 +67,210 @@ type projectDoctorDiagnostic struct {
 	Exposed        bool           `json:"exposed,omitempty"`
 	Ignored        bool           `json:"ignored,omitempty"`
 	Stale          bool           `json:"stale,omitempty"`
+}
+
+type projectManifestWriteResult struct {
+	ProjectRoot  string   `json:"project_root"`
+	ManifestPath string   `json:"manifest_path"`
+	Created      bool     `json:"created"`
+	Updated      bool     `json:"updated"`
+	Target       string   `json:"target,omitempty"`
+	Refs         []string `json:"refs,omitempty"`
+	Command      bool     `json:"command,omitempty"`
+}
+
+func projectManifestInitCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("project init", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	projectRoot := fs.String("project-root", ".", "")
+	projectName := fs.String("name", "", "")
+	description := fs.String("description", "", "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp project init --project-root <path> [--name <name>] [--description <text>] [--json]")
+	}
+	root, err := prepareManifestProjectRoot(*projectRoot)
+	if err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(root, ".hasp.manifest.json")
+	if _, err := appReadFileFn(manifestPath); err == nil {
+		return newAppError(errCodeUserInput, "HASP project manifest already exists").
+			withHint("use `hasp project target add <name> ...` or `hasp template add <name> ...` to add a value-free target")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	name := strings.TrimSpace(*projectName)
+	if name == "" {
+		name = filepath.Base(root)
+	}
+	manifest := store.RepoManifest{
+		Version: "v1",
+		Project: store.ManifestProject{
+			Name:        name,
+			Description: strings.TrimSpace(*description),
+		},
+		References: []store.ManifestReference{},
+	}
+	if err := writeProjectManifest(root, manifest); err != nil {
+		return err
+	}
+	result := projectManifestWriteResult{ProjectRoot: root, ManifestPath: manifestPath, Created: true}
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, result, func(w io.Writer) error {
+		return renderProjectManifestWriteResult(w, "Project manifest created", "Created a value-free HASP manifest.", result)
+	})
+}
+
+func projectTargetCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return errors.New("usage: hasp project target add|review <name> [flags]")
+	}
+	switch args[0] {
+	case "add":
+		return projectTargetAddCommand(ctx, args[1:], stdout)
+	case "review":
+		return projectTargetReviewCommand(ctx, args[1:], stdout)
+	default:
+		return fmt.Errorf("unknown project target subcommand %q", args[0])
+	}
+}
+
+func projectTargetAddCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New("usage: hasp project target add <name> --env NAME=@REF [--file NAME=@REF] [--root <path>] [-- <command>]")
+	}
+	targetName := strings.TrimSpace(args[0])
+	fs := flag.NewFlagSet("project target add", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	projectRoot := fs.String("project-root", ".", "")
+	targetRoot := fs.String("root", ".", "")
+	description := fs.String("description", "", "")
+	envExample := fs.String("env-example", "", "")
+	var envRefs mappingFlag
+	var fileRefs mappingFlag
+	fs.Var(&envRefs, "env", "NAME=@REF")
+	fs.Var(&fileRefs, "file", "NAME=@REF")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	command := slices.Clone(fs.Args())
+	if len(envRefs) == 0 && len(fileRefs) == 0 {
+		return errors.New("project target add requires at least one --env or --file mapping")
+	}
+	root, err := prepareManifestProjectRoot(*projectRoot)
+	if err != nil {
+		return err
+	}
+	manifest, created, err := loadOrCreateProjectManifest(root)
+	if err != nil {
+		return err
+	}
+	if _, ok := manifest.Target(targetName); ok {
+		return newAppError(errCodeUserInput, fmt.Sprintf("manifest target %q already exists", targetName)).
+			withHint("choose a new target name, or edit .hasp.manifest.json intentionally")
+	}
+	existingAliases := manifestAliasMap(manifest)
+	delivery := make([]store.ManifestDelivery, 0, len(envRefs)+len(fileRefs))
+	refs := make([]string, 0, len(envRefs)+len(fileRefs))
+	for name, ref := range envRefs {
+		if err := ensureManifestRequirementForNamedRef(&manifest, &existingAliases, ref, store.ItemKindKV); err != nil {
+			return err
+		}
+		delivery = append(delivery, store.ManifestDelivery{As: store.ManifestDeliveryEnv, Name: name, Ref: ref})
+		refs = append(refs, ref)
+	}
+	for name, ref := range fileRefs {
+		if err := ensureManifestRequirementForNamedRef(&manifest, &existingAliases, ref, store.ItemKindFile); err != nil {
+			return err
+		}
+		delivery = append(delivery, store.ManifestDelivery{As: store.ManifestDeliveryFile, Name: name, Ref: ref})
+		refs = append(refs, ref)
+	}
+	slices.SortFunc(delivery, func(a, b store.ManifestDelivery) int {
+		if a.As != b.As {
+			return strings.Compare(a.As, b.As)
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	examples := []store.ManifestExample{}
+	if strings.TrimSpace(*envExample) != "" {
+		examples = append(examples, store.ManifestExample{Format: store.ManifestExampleEnv, Path: strings.TrimSpace(*envExample)})
+	}
+	manifest.Targets = append(manifest.Targets, store.ManifestTarget{
+		Name:        targetName,
+		Description: strings.TrimSpace(*description),
+		Root:        strings.TrimSpace(*targetRoot),
+		Command:     command,
+		Delivery:    delivery,
+		Examples:    examples,
+	})
+	if err := writeProjectManifest(root, manifest); err != nil {
+		return err
+	}
+	slices.Sort(refs)
+	refs = slices.Compact(refs)
+	result := projectManifestWriteResult{
+		ProjectRoot:  root,
+		ManifestPath: filepath.Join(root, ".hasp.manifest.json"),
+		Created:      created,
+		Updated:      !created,
+		Target:       targetName,
+		Refs:         refs,
+		Command:      len(command) > 0,
+	}
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, result, func(w io.Writer) error {
+		return renderProjectManifestWriteResult(w, "Project target added", "Added a value-free HASP manifest target.", result)
+	})
+}
+
+func projectTargetReviewCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New("usage: hasp project target review <name> --project-root <path> [--json]")
+	}
+	targetName := strings.TrimSpace(args[0])
+	fs := flag.NewFlagSet("project target review", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOutput := fs.Bool("json", false, "")
+	projectRoot := fs.String("project-root", ".", "")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp project target review <name> --project-root <path> [--json]")
+	}
+	root, err := prepareManifestProjectRoot(*projectRoot)
+	if err != nil {
+		return err
+	}
+	expansion, err := store.ExpandManifestTarget(root, targetName)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return newAppError(errCodeNotFound, "no HASP project manifest found").
+				withHint("run `hasp project init --project-root .`, then `hasp project target add <name> --env NAME=@REF -- <command>`")
+		}
+		return err
+	}
+	handle, err := openVaultHandleFn(ctx)
+	if err != nil {
+		return err
+	}
+	if err := recordManifestReviewFn(handle, root, expansion); err != nil {
+		return err
+	}
+	result := projectManifestWriteResult{
+		ProjectRoot:  root,
+		ManifestPath: filepath.Join(root, ".hasp.manifest.json"),
+		Target:       expansion.TargetName,
+		Refs:         expansion.Refs,
+		Command:      len(expansion.Command) > 0,
+	}
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, result, func(w io.Writer) error {
+		return renderProjectManifestWriteResult(w, "Project target reviewed", "Recorded the value-free target signature for local drift checks.", result)
+	})
 }
 
 func projectRequirementsCommand(ctx context.Context, args []string, stdout io.Writer) error {
@@ -187,9 +392,114 @@ func loadProjectManifest(projectRoot string) (string, store.RepoManifest, error)
 	}
 	manifest, err := store.LoadRepoManifest(root)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", store.RepoManifest{}, newAppError(errCodeNotFound, "no HASP project manifest found").
+				withHint("run `hasp project init --project-root .`, then `hasp project target add <name> --env NAME=@REF -- <command>`")
+		}
 		return "", store.RepoManifest{}, err
 	}
 	return root, manifest, nil
+}
+
+func prepareManifestProjectRoot(projectRoot string) (string, error) {
+	root, err := expandUserPath(strings.TrimSpace(projectRoot))
+	if err != nil {
+		return "", fmt.Errorf("--project-root: %w", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("project root %q is not a directory", root)
+	}
+	return root, nil
+}
+
+func loadOrCreateProjectManifest(root string) (store.RepoManifest, bool, error) {
+	manifest, err := store.LoadRepoManifest(root)
+	if err == nil {
+		return manifest, false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return store.RepoManifest{}, false, err
+	}
+	return store.RepoManifest{
+		Version:    "v1",
+		Project:    store.ManifestProject{Name: filepath.Base(root)},
+		References: []store.ManifestReference{},
+	}, true, nil
+}
+
+func writeProjectManifest(root string, manifest store.RepoManifest) error {
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if _, err := store.DecodeRepoManifest(root, data); err != nil {
+		return err
+	}
+	return appWriteFileFn(filepath.Join(root, ".hasp.manifest.json"), data, 0o600)
+}
+
+func manifestAliasMap(manifest store.RepoManifest) map[string]string {
+	out := map[string]string{}
+	for _, ref := range manifest.References {
+		alias := strings.TrimSpace(ref.Alias)
+		item := strings.TrimSpace(ref.Item)
+		if alias != "" && item != "" {
+			out[alias] = item
+		}
+	}
+	return out
+}
+
+func ensureManifestRequirementForNamedRef(manifest *store.RepoManifest, existingAliases *map[string]string, ref string, kind store.ItemKind) error {
+	ref = strings.TrimSpace(ref)
+	itemName, ok := manifestItemNameFromNamedRef(ref)
+	if !ok {
+		return fmt.Errorf("manifest authoring refs must be named refs like @OPENAI_API_KEY, got %q", ref)
+	}
+	for _, req := range manifest.Requirements {
+		if strings.TrimSpace(req.Ref) == ref {
+			if req.Kind != kind {
+				return fmt.Errorf("manifest requirement %q is already declared as %s", ref, req.Kind)
+			}
+			return nil
+		}
+	}
+	declared := false
+	for _, declaredRef := range manifest.References {
+		if strings.TrimSpace(declaredRef.Item) == itemName {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		alias := store.GenerateNeutralAlias(kind, *existingAliases)
+		(*existingAliases)[alias] = itemName
+		manifest.References = append(manifest.References, store.ManifestReference{Alias: alias, Item: itemName})
+	}
+	manifest.Requirements = append(manifest.Requirements, store.ManifestRequirement{
+		Ref:            ref,
+		Kind:           kind,
+		Required:       true,
+		Classification: store.ManifestClassificationSecret,
+	})
+	return nil
+}
+
+func manifestItemNameFromNamedRef(ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(ref, "@") {
+		return "", false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(ref, "@"))
+	if name == "" || strings.ContainsAny(name, " \t\r\n") {
+		return "", false
+	}
+	return name, true
 }
 
 func selectedManifestTargets(manifest store.RepoManifest, targetName string) ([]store.ManifestTarget, error) {
@@ -745,4 +1055,39 @@ func renderProjectDoctor(w io.Writer, projectRoot string, diagnostics []projectD
 		}
 	}
 	return nil
+}
+
+func renderProjectManifestWriteResult(w io.Writer, title string, lead string, result projectManifestWriteResult) error {
+	if err := cliWriteStage(w, title, lead); err != nil {
+		return err
+	}
+	if err := cliWriteKeyValues(w, "Manifest",
+		cliPair("Project root", cliDisplayPath(result.ProjectRoot)),
+		cliPair("Manifest", cliDisplayPath(result.ManifestPath)),
+		cliPair("Created", setupYesNo(result.Created)),
+		cliPair("Updated", setupYesNo(result.Updated)),
+	); err != nil {
+		return err
+	}
+	if strings.TrimSpace(result.Target) != "" {
+		if err := cliWriteKeyValues(w, "Target",
+			cliPair("Name", result.Target),
+			cliPair("Refs", strings.Join(result.Refs, ", ")),
+			cliPair("Command", setupYesNo(result.Command)),
+		); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w, "Next steps"); err != nil {
+		return err
+	}
+	if result.Target == "" {
+		_, err := fmt.Fprintln(w, "  hasp project target add <name> --env NAME=@REF -- <command>")
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  hasp project doctor --project-root %s\n", strconv.Quote(result.ProjectRoot)); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "  hasp run --project-root %s --target %s --explain --dry-run\n", strconv.Quote(result.ProjectRoot), strconv.Quote(result.Target))
+	return err
 }

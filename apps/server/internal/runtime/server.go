@@ -105,6 +105,7 @@ var (
 	httpAttestor                 = newHASPAppAttestor
 	haspAppDesignatedRequirement = httpapi.HASPAppDesignatedRequirement
 	serveHTTPServer              = func(server *httpapi.Server, ctx context.Context) error { return server.Serve(ctx) }
+	runtimeAuditVerify           = (*audit.Log).VerifyDetailed
 	revealRandRead               = rand.Read
 	revealNewCipher              = aes.NewCipher
 	revealNewGCM                 = cipher.NewGCM
@@ -2870,7 +2871,7 @@ func installAuditHMACKey(log *audit.Log, key []byte) error {
 	if !hasKeyedAuditEventBefore(events, nil) {
 		return errors.New("audit HMAC key cannot be adopted before an existing keyed audit chain is present")
 	}
-	report, err := verifier.WithKey(key).VerifyDetailed()
+	report, err := runtimeAuditVerify(verifier.WithKey(key))
 	if err != nil {
 		return fmt.Errorf("audit HMAC key does not verify existing audit chain: %w", err)
 	}

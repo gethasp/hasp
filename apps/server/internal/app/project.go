@@ -62,16 +62,40 @@ func projectCommandWithStderr(ctx context.Context, args []string, stdout io.Writ
 		return projectManifestDoctorCommand(ctx, args[1:], stdout)
 	case "examples":
 		return projectExamplesCommand(ctx, args[1:], stdout)
+	case "init":
+		return projectManifestInitCommand(ctx, args[1:], stdout)
 	case "requirements":
 		return projectRequirementsCommand(ctx, args[1:], stdout)
 	case "status":
 		return projectStatusCommand(ctx, args[1:], stdout)
+	case "target":
+		return projectTargetCommand(ctx, args[1:], stdout)
 	case "targets":
 		return projectTargetsCommand(ctx, args[1:], stdout)
 	case "unbind":
 		return projectUnbindCommand(ctx, args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown project subcommand %q", args[0])
+	}
+}
+
+func templateCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return printHelpTopic(stdout, []string{"template"})
+	}
+	switch args[0] {
+	case "add":
+		return projectTargetAddCommand(ctx, args[1:], stdout)
+	case "doctor":
+		return projectManifestDoctorCommand(ctx, args[1:], stdout)
+	case "init":
+		return projectManifestInitCommand(ctx, args[1:], stdout)
+	case "list", "ls":
+		return projectTargetsCommand(ctx, args[1:], stdout)
+	case "review":
+		return projectTargetReviewCommand(ctx, args[1:], stdout)
+	default:
+		return fmt.Errorf("unknown template subcommand %q", args[0])
 	}
 }
 

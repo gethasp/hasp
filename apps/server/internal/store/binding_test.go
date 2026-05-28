@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,40 @@ func TestRepoManifestConflictBlocksResolution(t *testing.T) {
 
 	if _, _, err := handle.ResolveBindingView(context.Background(), projectRoot); !errors.Is(err, ErrBindingConflict) {
 		t.Fatalf("expected binding conflict, got %v", err)
+	}
+}
+
+func TestResolveBindingViewNamesMissingManifestItem(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Init(context.Background(), "correct horse battery staple"); err != nil {
+		t.Fatalf("init vault: %v", err)
+	}
+	handle, err := store.OpenWithPassword(context.Background(), "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("open vault: %v", err)
+	}
+
+	projectRoot := t.TempDir()
+	manifest := `{"version":"v1","references":[{"alias":"gum_oauth_client_secret","item":"GUM_OAUTH_CLIENT_SECRET"}]}`
+	if err := os.WriteFile(filepath.Join(projectRoot, manifestFilename), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	_, _, err = handle.ResolveBindingView(context.Background(), projectRoot)
+	if !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("expected item-not-found classification, got %v", err)
+	}
+	var missing MissingBindingItemError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected MissingBindingItemError, got %T %v", err, err)
+	}
+	if missing.Alias != "gum_oauth_client_secret" || missing.ItemName != "GUM_OAUTH_CLIENT_SECRET" {
+		t.Fatalf("unexpected missing item details: %+v", missing)
+	}
+	for _, want := range []string{"gum_oauth_client_secret", "GUM_OAUTH_CLIENT_SECRET", "hasp secret add --vault-only GUM_OAUTH_CLIENT_SECRET"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in error %q", want, err.Error())
+		}
 	}
 }
 

@@ -71,6 +71,19 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 	}
 
 	startTestDaemon(t)
+	if _, err := callExecute(context.Background(), handle, toolCall{
+		Name: "hasp_run",
+		Arguments: map[string]any{
+			"project_root":  projectRoot,
+			"target":        "server.dev",
+			"grant_project": "window",
+			"grant_secret":  "session",
+			"command":       []any{"true"},
+		},
+	}); err == nil || !strings.Contains(err.Error(), "requires local review") {
+		t.Fatalf("expected unreviewed MCP target refusal, got %v", err)
+	}
+	reviewMCPTarget(t, handle, projectRoot, "server.dev")
 	runResult, err := callExecute(context.Background(), handle, toolCall{
 		Name: "hasp_run",
 		Arguments: map[string]any{
@@ -96,6 +109,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		t.Fatalf("target run missing target metadata: %+v", runResult)
 	}
 
+	reviewMCPTarget(t, handle, projectRoot, "release.sign")
 	injectResult, err := callExecute(context.Background(), handle, toolCall{
 		Name: "hasp_inject",
 		Arguments: map[string]any{
@@ -285,4 +299,15 @@ func setupMCPTargetFixture(t *testing.T) (*store.Handle, string) {
 		t.Fatalf("write manifest: %v", err)
 	}
 	return handle, projectRoot
+}
+
+func reviewMCPTarget(t *testing.T, handle *store.Handle, projectRoot string, targetName string) {
+	t.Helper()
+	expansion, err := store.ExpandManifestTarget(projectRoot, targetName)
+	if err != nil {
+		t.Fatalf("expand target %s: %v", targetName, err)
+	}
+	if err := handle.RecordManifestTargetReview(projectRoot, expansion); err != nil {
+		t.Fatalf("review target %s: %v", targetName, err)
+	}
 }

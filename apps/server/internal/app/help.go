@@ -49,6 +49,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "agent list", text: agentListHelpText},
 	{key: "agent list-supported", text: agentListSupportedHelpText},
 	{key: "project", text: projectHelpText},
+	{key: "template", text: templateHelpText},
 	{key: "run", text: runHelpText},
 	{key: "inject", text: injectHelpText},
 	{key: "write-env", text: writeEnvHelpText},
@@ -894,8 +895,10 @@ Subcommands
   bind      bind one repo and create its initial alias map
   doctor    audit manifest-backed project-target setup without exposing values
   examples  check or write placeholder example files from the manifest
+  init      create a value-free .hasp.manifest.json
   requirements  list manifest requirements, optionally filtered by target
   status    inspect one bound repo
+  target    add value-free manifest targets
   targets   list manifest targets without command argv
   unbind    remove one repo binding
 
@@ -913,12 +916,31 @@ project bind flags
   --allow-non-git           bind even if the path is not a git working tree
   --alias <alias=item>      add a repo alias mapping (repeatable)
 
+project init flags
+  --name <name>             project name stored in the value-free manifest
+  --description <text>      human description stored in the manifest
+
 project examples flags
   --target <name>           limit check/write to one manifest target
   --check                   report stale or missing generated examples
   --write                   write missing/stale generated examples
 
+project target add flags
+  --root <path>             target working directory inside the project
+  --env <NAME=@REF>         deliver a named ref as an environment variable
+                            (repeatable)
+  --file <NAME=@REF>        deliver a named file ref as a broker-owned temp
+                            file environment variable (repeatable)
+  --env-example <path>      generate an env example from env deliveries
+  --description <text>      human description stored in the value-free manifest
+
+project target review flags
+  --json                    emit machine-readable result on stdout
+
 Examples
+  hasp project init --project-root .
+  hasp project target add release.build --root apps/gum --env GUM_OAUTH_CLIENT_SECRET=@GUM_OAUTH_CLIENT_SECRET -- goreleaser release
+  hasp project target review release.build --project-root .
   hasp project bind --project-root .
   hasp project requirements --project-root .
   hasp project targets --project-root . --json
@@ -928,6 +950,25 @@ Examples
   hasp project adopt --under ~/Work
   hasp project adopt --under ~/Work --preview
   hasp project unbind --project-root .
+`
+
+const templateHelpText = `hasp template
+
+Alias for value-free HASP project manifest targets. A template is a committed
+.hasp.manifest.json target: refs and delivery names only, never secret values.
+
+Subcommands
+  init    create .hasp.manifest.json
+  add     add one value-free target
+  review  record one target signature for local drift checks
+  list    list manifest targets without command argv
+  doctor  audit target setup without exposing values
+
+Examples
+  hasp template init --project-root .
+  hasp template add release.build --root apps/gum --env GUM_OAUTH_CLIENT_SECRET=@GUM_OAUTH_CLIENT_SECRET -- goreleaser release
+  hasp template review release.build --project-root .
+  hasp template list --project-root .
 `
 
 const runHelpText = `hasp run
