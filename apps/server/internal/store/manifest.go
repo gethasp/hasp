@@ -23,24 +23,28 @@ const (
 	ManifestDeliveryXCConfig           = "xcconfig"
 	ManifestExampleEnv                 = "env"
 	ManifestExampleXCConfig            = "xcconfig"
+	ManifestCredentialSetGeneric       = "generic"
+	ManifestCredentialSetGoogleOAuth   = "google_oauth_client"
 )
 
 var (
-	manifestTargetNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
-	manifestDestinationPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	manifestTargetNamePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	manifestDestinationPattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	manifestCredentialRolePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
 type ManifestTargetExpansion struct {
-	TargetName   string            `json:"target"`
-	TargetRoot   string            `json:"target_root"`
-	ManifestHash string            `json:"manifest_hash"`
-	Command      []string          `json:"command,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
-	Files        map[string]string `json:"files,omitempty"`
-	XCConfig     map[string]string `json:"xcconfig,omitempty"`
-	Outputs      map[string]string `json:"outputs,omitempty"`
-	Refs         []string          `json:"refs"`
-	Destinations []string          `json:"destinations"`
+	TargetName     string            `json:"target"`
+	TargetRoot     string            `json:"target_root"`
+	ManifestHash   string            `json:"manifest_hash"`
+	Command        []string          `json:"command,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Files          map[string]string `json:"files,omitempty"`
+	XCConfig       map[string]string `json:"xcconfig,omitempty"`
+	Outputs        map[string]string `json:"outputs,omitempty"`
+	Refs           []string          `json:"refs"`
+	Destinations   []string          `json:"destinations"`
+	CredentialSets []string          `json:"credential_sets,omitempty"`
 }
 
 type ManifestReview struct {
@@ -239,6 +243,46 @@ func (m RepoManifest) Validate(root string) error {
 		requirements[ref] = req
 	}
 
+	credentialSets := map[string]ManifestCredentialSet{}
+	for _, set := range m.CredentialSets {
+		name := strings.TrimSpace(set.Name)
+		if !manifestTargetNamePattern.MatchString(name) || strings.ContainsAny(name, `/\`) || containsControl(name) {
+			return fmt.Errorf("unsafe credential set name %q", set.Name)
+		}
+		lower := strings.ToLower(name)
+		if existing, ok := credentialSets[lower]; ok {
+			return fmt.Errorf("duplicate credential set name %q conflicts with %q", name, existing.Name)
+		}
+		kind := strings.TrimSpace(set.Kind)
+		switch kind {
+		case ManifestCredentialSetGeneric, ManifestCredentialSetGoogleOAuth:
+		default:
+			return fmt.Errorf("unknown credential set kind %q for %s", set.Kind, name)
+		}
+		if len(set.Members) == 0 {
+			return fmt.Errorf("credential set %q must declare at least one member", name)
+		}
+		for role, ref := range set.Members {
+			role = strings.TrimSpace(role)
+			if !manifestCredentialRolePattern.MatchString(role) {
+				return fmt.Errorf("unsafe credential set role %q in %s", role, name)
+			}
+			ref = strings.TrimSpace(ref)
+			if _, ok := requirements[ref]; !ok {
+				return fmt.Errorf("credential set %q role %q references unknown requirement %q", name, role, ref)
+			}
+		}
+		if err := validateManifestCredentialSetSchema(name, kind, set, requirements); err != nil {
+			return err
+		}
+		credentialSets[lower] = ManifestCredentialSet{
+			Name:        name,
+			Kind:        kind,
+			Description: strings.TrimSpace(set.Description),
+			Members:     set.Members,
+		}
+	}
+
 	targetNames := map[string]string{}
 	for _, target := range m.Targets {
 		name := strings.TrimSpace(target.Name)
@@ -260,7 +304,7 @@ func (m RepoManifest) Validate(root string) error {
 		}
 		deliveryNames := map[string]struct{}{}
 		for _, delivery := range target.Delivery {
-			if err := validateManifestDelivery(name, delivery, requirements); err != nil {
+			if err := validateManifestDelivery(name, delivery, requirements, credentialSets); err != nil {
 				return err
 			}
 			key := strings.ToLower(strings.TrimSpace(delivery.Name))
@@ -313,11 +357,57 @@ func (m RepoManifest) manifestReferenceDeclared(ref string) bool {
 }
 
 func manifestHasExtendedFields(m RepoManifest) bool {
-	return len(m.Requirements) > 0 || len(m.Targets) > 0 ||
+	return len(m.Requirements) > 0 || len(m.CredentialSets) > 0 || len(m.Targets) > 0 ||
 		strings.TrimSpace(m.Project.Name) != "" || strings.TrimSpace(m.Project.Description) != ""
 }
 
-func validateManifestDelivery(targetName string, delivery ManifestDelivery, requirements map[string]ManifestRequirement) error {
+func validateManifestCredentialSetSchema(name string, kind string, set ManifestCredentialSet, requirements map[string]ManifestRequirement) error {
+	if kind != ManifestCredentialSetGoogleOAuth {
+		return nil
+	}
+	for _, role := range []string{"client_id", "client_secret"} {
+		if strings.TrimSpace(set.Members[role]) == "" {
+			return fmt.Errorf("credential set %q kind %s requires role %q", name, kind, role)
+		}
+	}
+	for role := range set.Members {
+		switch strings.TrimSpace(role) {
+		case "client_id", "client_secret", "redirect_uri":
+		default:
+			return fmt.Errorf("credential set %q kind %s does not support role %q", name, kind, role)
+		}
+	}
+	if err := validateManifestCredentialSetMember(name, "client_id", set.Members["client_id"], requirements, ItemKindKV, ManifestClassificationPublicConfig); err != nil {
+		return err
+	}
+	if err := validateManifestCredentialSetMember(name, "client_secret", set.Members["client_secret"], requirements, ItemKindKV, ManifestClassificationSecret); err != nil {
+		return err
+	}
+	return validateManifestCredentialSetOptionalMember(name, "redirect_uri", set.Members["redirect_uri"], requirements, ItemKindKV, ManifestClassificationPublicConfig)
+}
+
+func validateManifestCredentialSetMember(name string, role string, ref string, requirements map[string]ManifestRequirement, kind ItemKind, classification string) error {
+	req, ok := requirements[strings.TrimSpace(ref)]
+	if !ok {
+		return fmt.Errorf("credential set %q role %q references unknown requirement %q", name, role, ref)
+	}
+	if req.Kind != kind {
+		return fmt.Errorf("credential set %q role %q requires %s item kind, got %s", name, role, kind, req.Kind)
+	}
+	if strings.TrimSpace(req.Classification) != classification {
+		return fmt.Errorf("credential set %q role %q requires %s classification, got %s", name, role, classification, req.Classification)
+	}
+	return nil
+}
+
+func validateManifestCredentialSetOptionalMember(name string, role string, ref string, requirements map[string]ManifestRequirement, kind ItemKind, classification string) error {
+	if strings.TrimSpace(ref) == "" {
+		return nil
+	}
+	return validateManifestCredentialSetMember(name, role, ref, requirements, kind, classification)
+}
+
+func validateManifestDelivery(targetName string, delivery ManifestDelivery, requirements map[string]ManifestRequirement, credentialSets map[string]ManifestCredentialSet) error {
 	as := strings.TrimSpace(delivery.As)
 	switch as {
 	case ManifestDeliveryEnv, ManifestDeliveryFile, ManifestDeliveryXCConfig:
@@ -328,15 +418,45 @@ func validateManifestDelivery(targetName string, delivery ManifestDelivery, requ
 	if !manifestDestinationPattern.MatchString(name) || manifestDangerousDestination(name) {
 		return fmt.Errorf("unsafe delivery destination %q in target %q", delivery.Name, targetName)
 	}
-	ref := strings.TrimSpace(delivery.Ref)
+	ref, err := resolveManifestDeliveryRef(delivery, credentialSets)
+	if err != nil {
+		return fmt.Errorf("delivery %q in target %q %w", name, targetName, err)
+	}
 	req, ok := requirements[ref]
 	if !ok {
-		return fmt.Errorf("delivery %q in target %q references unknown requirement %q", name, targetName, delivery.Ref)
+		return fmt.Errorf("delivery %q in target %q references unknown requirement %q", name, targetName, ref)
 	}
 	if req.Kind == ItemKindFile && as != ManifestDeliveryFile {
 		return fmt.Errorf("file requirement %q cannot be delivered as %s in target %q", ref, as, targetName)
 	}
 	return nil
+}
+
+func resolveManifestDeliveryRef(delivery ManifestDelivery, credentialSets map[string]ManifestCredentialSet) (string, error) {
+	ref := strings.TrimSpace(delivery.Ref)
+	fromSet := strings.TrimSpace(delivery.FromSet)
+	role := strings.TrimSpace(delivery.Role)
+	if ref != "" {
+		if fromSet != "" || role != "" {
+			return "", errors.New("must use either ref or from_set/role, not both")
+		}
+		return ref, nil
+	}
+	if fromSet == "" && role == "" {
+		return "", errors.New("must declare ref or from_set/role")
+	}
+	if fromSet == "" || role == "" {
+		return "", errors.New("must declare both from_set and role")
+	}
+	set, ok := credentialSets[strings.ToLower(fromSet)]
+	if !ok {
+		return "", fmt.Errorf("references unknown credential set %q", fromSet)
+	}
+	ref = strings.TrimSpace(set.Members[role])
+	if ref == "" {
+		return "", fmt.Errorf("references unknown credential set role %q in %s", role, fromSet)
+	}
+	return ref, nil
 }
 
 func validateManifestRelativePath(root string, value string, label string, required bool) error {
@@ -475,6 +595,36 @@ func (m RepoManifest) Requirement(ref string) (ManifestRequirement, bool) {
 	return ManifestRequirement{}, false
 }
 
+func (m RepoManifest) CredentialSet(name string) (ManifestCredentialSet, bool) {
+	name = strings.TrimSpace(name)
+	for _, set := range m.CredentialSets {
+		if strings.EqualFold(set.Name, name) {
+			return set, true
+		}
+	}
+	return ManifestCredentialSet{}, false
+}
+
+func (m RepoManifest) DeliveryCredentialSet(delivery ManifestDelivery) (ManifestCredentialSet, bool) {
+	fromSet := strings.TrimSpace(delivery.FromSet)
+	if fromSet == "" {
+		return ManifestCredentialSet{}, false
+	}
+	return m.CredentialSet(fromSet)
+}
+
+func (m RepoManifest) DeliveryRef(delivery ManifestDelivery) (string, bool) {
+	if ref := strings.TrimSpace(delivery.Ref); ref != "" {
+		return ref, true
+	}
+	set, ok := m.DeliveryCredentialSet(delivery)
+	if !ok {
+		return "", false
+	}
+	ref := strings.TrimSpace(set.Members[strings.TrimSpace(delivery.Role)])
+	return ref, ref != ""
+}
+
 func (m RepoManifest) ItemNameForRef(ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)
 	if itemName, ok := parseNamedReference(ref); ok && itemName != "" {
@@ -509,7 +659,10 @@ func ExpandManifestTarget(root string, targetName string) (ManifestTargetExpansi
 	}
 	for _, delivery := range target.Delivery {
 		name := strings.TrimSpace(delivery.Name)
-		ref := strings.TrimSpace(delivery.Ref)
+		ref, _ := manifest.DeliveryRef(delivery)
+		if set, ok := manifest.DeliveryCredentialSet(delivery); ok {
+			expansion.CredentialSets = append(expansion.CredentialSets, set.Name)
+		}
 		switch delivery.As {
 		case ManifestDeliveryEnv:
 			expansion.Env[name] = ref
@@ -528,5 +681,7 @@ func ExpandManifestTarget(root string, targetName string) (ManifestTargetExpansi
 	expansion.Refs = slices.Compact(expansion.Refs)
 	slices.Sort(expansion.Destinations)
 	expansion.Destinations = slices.Compact(expansion.Destinations)
+	slices.Sort(expansion.CredentialSets)
+	expansion.CredentialSets = slices.Compact(expansion.CredentialSets)
 	return expansion, nil
 }

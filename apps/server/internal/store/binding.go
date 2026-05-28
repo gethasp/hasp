@@ -25,12 +25,13 @@ type Binding struct {
 }
 
 type RepoManifest struct {
-	Version              string                `json:"version"`
-	Project              ManifestProject       `json:"project,omitempty"`
-	References           []ManifestReference   `json:"references"`
-	Requirements         []ManifestRequirement `json:"requirements,omitempty"`
-	Targets              []ManifestTarget      `json:"targets,omitempty"`
-	DefaultCapturePolicy SecretPolicy          `json:"default_capture_policy,omitempty"`
+	Version              string                  `json:"version"`
+	Project              ManifestProject         `json:"project,omitempty"`
+	References           []ManifestReference     `json:"references"`
+	Requirements         []ManifestRequirement   `json:"requirements,omitempty"`
+	CredentialSets       []ManifestCredentialSet `json:"credential_sets,omitempty"`
+	Targets              []ManifestTarget        `json:"targets,omitempty"`
+	DefaultCapturePolicy SecretPolicy            `json:"default_capture_policy,omitempty"`
 }
 
 type ManifestProject struct {
@@ -51,6 +52,13 @@ type ManifestRequirement struct {
 	Description    string   `json:"description,omitempty"`
 }
 
+type ManifestCredentialSet struct {
+	Name        string            `json:"name"`
+	Kind        string            `json:"kind"`
+	Description string            `json:"description,omitempty"`
+	Members     map[string]string `json:"members"`
+}
+
 type ManifestTarget struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description,omitempty"`
@@ -61,10 +69,12 @@ type ManifestTarget struct {
 }
 
 type ManifestDelivery struct {
-	As     string `json:"as"`
-	Name   string `json:"name"`
-	Ref    string `json:"ref"`
-	Output string `json:"output,omitempty"`
+	As      string `json:"as"`
+	Name    string `json:"name"`
+	Ref     string `json:"ref,omitempty"`
+	FromSet string `json:"from_set,omitempty"`
+	Role    string `json:"role,omitempty"`
+	Output  string `json:"output,omitempty"`
 }
 
 type ManifestExample struct {

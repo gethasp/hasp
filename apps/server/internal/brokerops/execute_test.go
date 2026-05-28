@@ -33,15 +33,23 @@ func TestExpandExecutionTargetHandlesExplicitAndManifestTargets(t *testing.T) {
 	projectRoot := t.TempDir()
 	writeBrokeropsManifest(t, projectRoot, `{
 	  "version":"v1",
-	  "references":[{"alias":"secret_01","item":"api_token"},{"alias":"file_01","item":"config_file"}],
+	  "references":[{"alias":"config_01","item":"google_client_id"},{"alias":"secret_01","item":"api_token"},{"alias":"file_01","item":"config_file"}],
 	  "requirements":[
+	    {"ref":"config_01","kind":"kv","classification":"public_config"},
 	    {"ref":"secret_01","kind":"kv","classification":"secret"},
 	    {"ref":"file_01","kind":"file","classification":"secret"}
 	  ],
-	  "targets":[{"name":"server.dev","root":"cmd/server","command":["go","run","."],"delivery":[
-	    {"as":"env","name":"API_TOKEN","ref":"secret_01"},
-	    {"as":"file","name":"CONFIG_FILE","ref":"file_01"}
-	  ]}]
+	  "credential_sets":[{"name":"google.oauth.web","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}],
+	  "targets":[
+	    {"name":"server.dev","root":"cmd/server","command":["go","run","."],"delivery":[
+	      {"as":"env","name":"API_TOKEN","ref":"secret_01"},
+	      {"as":"file","name":"CONFIG_FILE","ref":"file_01"}
+	    ]},
+	    {"name":"oauth.dev","root":"cmd/oauth","delivery":[
+	      {"as":"env","name":"GOOGLE_CLIENT_ID","from_set":"google.oauth.web","role":"client_id"},
+	      {"as":"env","name":"GOOGLE_CLIENT_SECRET","from_set":"google.oauth.web","role":"client_secret"}
+	    ]}
+	  ]
 	}`)
 	target, err = ExpandExecutionTarget(projectRoot, "server.dev", nil, nil, nil)
 	if err != nil {
@@ -60,6 +68,17 @@ func TestExpandExecutionTargetHandlesExplicitAndManifestTargets(t *testing.T) {
 	}
 	if !reflect.DeepEqual(override.Command, []string{"custom"}) {
 		t.Fatalf("override command = %#v", override.Command)
+	}
+
+	credentialSetTarget, err := ExpandExecutionTarget(projectRoot, "oauth.dev", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("credential set target: %v", err)
+	}
+	if credentialSetTarget.EnvRefs["GOOGLE_CLIENT_ID"] != "config_01" || credentialSetTarget.EnvRefs["GOOGLE_CLIENT_SECRET"] != "secret_01" {
+		t.Fatalf("credential set refs = %+v", credentialSetTarget)
+	}
+	if !reflect.DeepEqual(credentialSetTarget.Expansion.CredentialSets, []string{"google.oauth.web"}) {
+		t.Fatalf("credential set metadata = %+v", credentialSetTarget.Expansion.CredentialSets)
 	}
 }
 

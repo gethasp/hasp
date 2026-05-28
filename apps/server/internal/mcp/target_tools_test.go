@@ -216,6 +216,62 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	}
 }
 
+func TestMCPTargetToolsExposeCredentialSetMetadata(t *testing.T) {
+	lockMCPSeams(t)
+	handle, projectRoot := setupMCPTargetFixture(t)
+	if _, err := handle.UpsertItem("google_client_id", store.ItemKindKV, []byte("client-id-value"), store.ItemMetadata{Policy: store.PolicySession}); err != nil {
+		t.Fatalf("upsert google client id: %v", err)
+	}
+	writeMCPCredentialSetManifestForCoverage(t, projectRoot)
+
+	listing, err := callTargets(context.Background(), handle, toolCall{
+		Name:      "hasp_targets",
+		Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"},
+	})
+	if err != nil {
+		t.Fatalf("hasp_targets: %v", err)
+	}
+	targets, ok := listing["targets"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected target listing payload: %+v", listing)
+	}
+	var serverTarget map[string]any
+	for _, target := range targets {
+		if target["name"] == "server.dev" {
+			serverTarget = target
+		}
+	}
+	if serverTarget == nil {
+		t.Fatalf("missing server.dev target in %+v", targets)
+	}
+	if got, ok := serverTarget["credential_sets"].([]string); !ok || len(got) != 1 || got[0] != "google.oauth.web" {
+		t.Fatalf("credential set metadata = %+v", serverTarget["credential_sets"])
+	}
+	if got, ok := serverTarget["refs"].([]string); !ok || len(got) != 2 || got[0] != "config_01" || got[1] != "secret_01" {
+		t.Fatalf("resolved refs = %+v", serverTarget["refs"])
+	}
+	prereqs, ok := serverTarget["prerequisites"].([]map[string]any)
+	if !ok || len(prereqs) != 2 {
+		t.Fatalf("unexpected prerequisites = %+v", serverTarget["prerequisites"])
+	}
+	for _, prereq := range prereqs {
+		if prereq["credential_set"] != "google.oauth.web" {
+			t.Fatalf("prerequisite missing canonical credential set: %+v", prereq)
+		}
+	}
+
+	explain, err := callTargetExplain(context.Background(), toolCall{
+		Name:      "hasp_target_explain",
+		Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"},
+	})
+	if err != nil {
+		t.Fatalf("hasp_target_explain: %v", err)
+	}
+	if got, ok := explain["credential_sets"].([]string); !ok || len(got) != 1 || got[0] != "google.oauth.web" {
+		t.Fatalf("explain credential sets = %+v", explain["credential_sets"])
+	}
+}
+
 func writeMCPXCConfigManifestForCoverage(t *testing.T, projectRoot string) {
 	t.Helper()
 	manifest := `{
@@ -232,6 +288,37 @@ func writeMCPXCConfigManifestForCoverage(t *testing.T, projectRoot string) {
 }`
 	if err := os.WriteFile(filepath.Join(projectRoot, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatalf("write xcconfig manifest: %v", err)
+	}
+}
+
+func writeMCPCredentialSetManifestForCoverage(t *testing.T, projectRoot string) {
+	t.Helper()
+	manifest := `{
+  "version": "v1",
+  "references": [
+    {"alias": "config_01", "item": "google_client_id"},
+    {"alias": "secret_01", "item": "api_token"}
+  ],
+  "requirements": [
+    {"ref": "config_01", "kind": "kv", "classification": "public_config", "required": true},
+    {"ref": "secret_01", "kind": "kv", "classification": "secret", "required": true}
+  ],
+  "credential_sets": [
+    {"name": "google.oauth.web", "kind": "google_oauth_client", "members": {"client_id": "config_01", "client_secret": "secret_01"}}
+  ],
+  "targets": [
+    {
+      "name": "server.dev",
+      "root": ".",
+      "delivery": [
+        {"as": "env", "name": "GOOGLE_CLIENT_ID", "from_set": "google.oauth.web", "role": "client_id"},
+        {"as": "env", "name": "GOOGLE_CLIENT_SECRET", "from_set": "GOOGLE.OAUTH.WEB", "role": "client_secret"}
+      ]
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(projectRoot, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write credential set manifest: %v", err)
 	}
 }
 

@@ -188,23 +188,34 @@ func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	for _, target := range manifest.Targets {
 		refs := make([]string, 0, len(target.Delivery))
 		kinds := make([]string, 0, len(target.Delivery))
+		sets := make([]string, 0)
 		prereqs := make([]map[string]any, 0, len(target.Delivery))
 		for _, delivery := range target.Delivery {
-			refs = append(refs, delivery.Ref)
+			ref, _ := manifest.DeliveryRef(delivery)
+			refs = append(refs, ref)
 			kinds = append(kinds, delivery.As)
-			_, err := handle.ResolveReference(ctx, root, delivery.Ref)
-			prereqs = append(prereqs, map[string]any{
-				"ref":     delivery.Ref,
+			if set, ok := manifest.DeliveryCredentialSet(delivery); ok {
+				sets = append(sets, set.Name)
+			}
+			_, err := handle.ResolveReference(ctx, root, ref)
+			prereq := map[string]any{
+				"ref":     ref,
 				"kind":    delivery.As,
 				"present": err == nil,
-			})
+			}
+			if set, ok := manifest.DeliveryCredentialSet(delivery); ok {
+				prereq["credential_set"] = set.Name
+				prereq["role"] = strings.TrimSpace(delivery.Role)
+			}
+			prereqs = append(prereqs, prereq)
 		}
 		targets = append(targets, map[string]any{
-			"name":           target.Name,
-			"description":    sanitizeMCPDescription(target.Description),
-			"refs":           uniqueStrings(refs),
-			"delivery_kinds": uniqueStrings(kinds),
-			"prerequisites":  prereqs,
+			"name":            target.Name,
+			"description":     sanitizeMCPDescription(target.Description),
+			"refs":            uniqueStrings(refs),
+			"credential_sets": uniqueStrings(sets),
+			"delivery_kinds":  uniqueStrings(kinds),
+			"prerequisites":   prereqs,
 		})
 	}
 	return map[string]any{"manifest_hash": identity, "targets": targets}, nil
@@ -239,6 +250,7 @@ func callTargetExplain(ctx context.Context, call toolCall) (map[string]any, erro
 		"target_root":           expansion.TargetRoot,
 		"manifest_hash":         expansion.ManifestHash,
 		"refs":                  expansion.Refs,
+		"credential_sets":       expansion.CredentialSets,
 		"destinations":          expansion.Destinations,
 		"delivery_kinds":        kinds,
 		"has_command":           len(expansion.Command) > 0,

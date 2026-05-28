@@ -20,6 +20,8 @@ workflows.
   troubleshooting.
 - [Value-free manifests](value-free-manifests.md): how to describe secret use
   without storing secret values.
+- [Credential sets](credential-sets.md): typed role sets for coupled secrets
+  such as Google OAuth client IDs and client secrets.
 - [Agent profiles](agent-profiles/README.md): Codex, Claude Code, Cursor,
   Aider, and generic agent setups.
 - [Error codes](error-codes.md): stable process exit codes and error envelopes.

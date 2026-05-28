@@ -371,10 +371,84 @@ func TestManifestTargetExpansionHelpersCoverManifestSurface(t *testing.T) {
 	}
 }
 
+func TestManifestCredentialSetsExpandTargetRoles(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeRepoManifestForTest(t, projectRoot, `{
+  "version": "v1",
+  "references": [
+    {"alias": "config_01", "item": "GOOGLE_CLIENT_ID"},
+    {"alias": "secret_01", "item": "GOOGLE_CLIENT_SECRET"},
+    {"alias": "config_02", "item": "GOOGLE_REDIRECT_URI"}
+  ],
+  "requirements": [
+    {"ref": "config_01", "kind": "kv", "classification": "public_config", "required": true},
+    {"ref": "secret_01", "kind": "kv", "classification": "secret", "required": true},
+    {"ref": "config_02", "kind": "kv", "classification": "public_config", "required": false}
+  ],
+  "credential_sets": [
+    {
+      "name": "google.oauth.web",
+      "kind": "google_oauth_client",
+      "members": {
+        "client_id": "config_01",
+        "client_secret": "secret_01",
+        "redirect_uri": "config_02"
+      }
+    }
+  ],
+  "targets": [
+    {
+      "name": "server.dev",
+      "delivery": [
+        {"as": "env", "name": "GOOGLE_CLIENT_ID", "from_set": "google.oauth.web", "role": "client_id"},
+        {"as": "env", "name": "GOOGLE_CLIENT_SECRET", "from_set": "google.oauth.web", "role": "client_secret"},
+        {"as": "env", "name": "GOOGLE_REDIRECT_URI", "from_set": "GOOGLE.OAUTH.WEB", "role": "redirect_uri"}
+      ]
+    }
+  ]
+}`)
+
+	manifest, err := LoadRepoManifest(projectRoot)
+	if err != nil {
+		t.Fatalf("load credential-set manifest: %v", err)
+	}
+	set, ok := manifest.CredentialSet("google.oauth.web")
+	if !ok || set.Kind != ManifestCredentialSetGoogleOAuth || set.Members["client_secret"] != "secret_01" {
+		t.Fatalf("credential set lookup failed: %+v ok=%v", set, ok)
+	}
+	target, ok := manifest.Target("server.dev")
+	if !ok {
+		t.Fatal("missing server.dev target")
+	}
+	if ref, ok := manifest.DeliveryRef(target.Delivery[0]); !ok || ref != "config_01" {
+		t.Fatalf("delivery role ref = %q ok=%v", ref, ok)
+	}
+	if _, ok := manifest.CredentialSet("missing"); ok {
+		t.Fatal("missing credential set lookup succeeded")
+	}
+	if _, ok := manifest.DeliveryRef(ManifestDelivery{FromSet: "missing", Role: "client_id"}); ok {
+		t.Fatal("missing credential set delivery ref succeeded")
+	}
+	expansion, err := ExpandManifestTarget(projectRoot, "server.dev")
+	if err != nil {
+		t.Fatalf("expand credential-set target: %v", err)
+	}
+	if expansion.Env["GOOGLE_CLIENT_ID"] != "config_01" || expansion.Env["GOOGLE_CLIENT_SECRET"] != "secret_01" || expansion.Env["GOOGLE_REDIRECT_URI"] != "config_02" {
+		t.Fatalf("unexpected credential-set expansion: %+v", expansion)
+	}
+	if !slices.Equal(expansion.Refs, []string{"config_01", "config_02", "secret_01"}) {
+		t.Fatalf("unexpected expanded refs: %+v", expansion.Refs)
+	}
+	if !slices.Equal(expansion.CredentialSets, []string{"google.oauth.web"}) {
+		t.Fatalf("unexpected expanded sets: %+v", expansion.CredentialSets)
+	}
+}
+
 func TestManifestValidationBranchCoverage(t *testing.T) {
 	projectRoot := t.TempDir()
 	cases := []string{
 		`{"project":{"name":"fixture"}}`,
+		`{"credential_sets":[{"name":"google.oauth.web","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}]}`,
 		`{"version":"v1","requirements":[{"ref":"","kind":"kv","classification":"secret"}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"},{"ref":"secret_01","kind":"kv","classification":"secret"}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"missing","kind":"kv","classification":"secret"}]}`,
@@ -385,6 +459,22 @@ func TestManifestValidationBranchCoverage(t *testing.T) {
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"OPENAI_API_KEY","ref":"secret_01","output":"out.env"}]}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","examples":[{"format":"toml","path":"example.toml"}]}]}`,
 		`{"version":"v1","references":[{"alias":"secret_01","item":"OPENAI_API_KEY"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","examples":[{"format":"env","path":"/tmp/.env.example"}]}]}`,
+		`{"version":"v1","credential_sets":[{"name":"bad/name","kind":"generic","members":{"token":"secret_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"TOKEN"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"generic","members":{"token":"secret_01"}},{"name":"oauth","kind":"generic","members":{"other":"secret_01"}}]}`,
+		`{"version":"v1","credential_sets":[{"name":"oauth","kind":"unknown","members":{"token":"secret_01"}}]}`,
+		`{"version":"v1","credential_sets":[{"name":"oauth","kind":"generic","members":{}}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"TOKEN"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"generic","members":{"BadRole":"secret_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"TOKEN"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"generic","members":{"token":"missing"}}]}`,
+		`{"version":"v1","references":[{"alias":"secret_01","item":"TOKEN"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"secret_01","client_secret":"secret_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"public_config"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"file","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01","tenant":"config_01"}}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"GOOGLE_CLIENT_ID"}]}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"GOOGLE_CLIENT_ID","from_set":"oauth"}]}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"GOOGLE_CLIENT_ID","ref":"config_01","from_set":"oauth","role":"client_id"}]}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"GOOGLE_CLIENT_ID","from_set":"missing","role":"client_id"}]}]}`,
+		`{"version":"v1","references":[{"alias":"config_01","item":"CID"},{"alias":"secret_01","item":"SEC"}],"requirements":[{"ref":"config_01","kind":"kv","classification":"public_config"},{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"oauth","kind":"google_oauth_client","members":{"client_id":"config_01","client_secret":"secret_01"}}],"targets":[{"name":"server.dev","delivery":[{"as":"env","name":"GOOGLE_CLIENT_ID","from_set":"oauth","role":"tenant"}]}]}`,
 	}
 	for _, body := range cases {
 		if _, err := DecodeRepoManifest(projectRoot, []byte(body)); err == nil {
@@ -396,6 +486,12 @@ func TestManifestValidationBranchCoverage(t *testing.T) {
 	}
 	if _, err := DecodeRepoManifest("", []byte(`{"version":"v1","references":[],"targets":[{"name":"root.task","root":""}]}`)); err != nil {
 		t.Fatalf("empty optional target root should remain valid without filesystem root: %v", err)
+	}
+	if _, err := DecodeRepoManifest("", []byte(`{"version":"v1","references":[{"alias":"secret_01","item":"TOKEN"}],"requirements":[{"ref":"secret_01","kind":"kv","classification":"secret"}],"credential_sets":[{"name":"token.bundle","kind":"generic","members":{"token":"secret_01"}}]}`)); err != nil {
+		t.Fatalf("generic credential set should remain valid: %v", err)
+	}
+	if err := validateManifestCredentialSetMember("broken", "token", "missing", map[string]ManifestRequirement{}, ItemKindKV, ManifestClassificationSecret); err == nil {
+		t.Fatal("expected missing credential set member rejection")
 	}
 	if _, err := DecodeRepoManifest(projectRoot, []byte(`{"version":"v1","references":[],"value":"secret"}`)); err == nil {
 		t.Fatal("expected local authority field rejection")

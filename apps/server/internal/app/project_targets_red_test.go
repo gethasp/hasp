@@ -297,6 +297,131 @@ func TestProjectTargetsJSONDoesNotExecuteTargetsOrExposeCommands(t *testing.T) {
 	}
 }
 
+func TestProjectSurfacesCredentialSetTargets(t *testing.T) {
+	lockAppSeams(t)
+	projectRoot := setupProjectCredentialSetManifestFixture(t)
+
+	var stdout bytes.Buffer
+	if err := Run(context.Background(), []string{"project", "targets", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+		t.Fatalf("project targets --json: %v", err)
+	}
+	var targetsPayload struct {
+		Targets []struct {
+			Name           string   `json:"name"`
+			Refs           []string `json:"refs"`
+			CredentialSets []string `json:"credential_sets"`
+			HasEnv         bool     `json:"has_env"`
+			HasXCConfig    bool     `json:"has_xcconfig"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &targetsPayload); err != nil {
+		t.Fatalf("decode targets payload: %v\nbody=%s", err, stdout.String())
+	}
+	targetsByName := map[string]struct {
+		Refs           []string
+		CredentialSets []string
+		HasEnv         bool
+		HasXCConfig    bool
+	}{}
+	for _, target := range targetsPayload.Targets {
+		targetsByName[target.Name] = struct {
+			Refs           []string
+			CredentialSets []string
+			HasEnv         bool
+			HasXCConfig    bool
+		}{target.Refs, target.CredentialSets, target.HasEnv, target.HasXCConfig}
+	}
+	if got := targetsByName["server.dev"]; !got.HasEnv || !slices.Equal(got.Refs, []string{"config_01", "secret_01"}) || !slices.Equal(got.CredentialSets, []string{"google.oauth.web"}) {
+		t.Fatalf("server.dev target view = %+v", got)
+	}
+	if got := targetsByName["ios.config"]; !got.HasXCConfig || !slices.Equal(got.Refs, []string{"secret_01"}) || !slices.Equal(got.CredentialSets, []string{"google.oauth.web"}) {
+		t.Fatalf("ios.config target view = %+v", got)
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "requirements", "--json", "--project-root", projectRoot, "--target", "server.dev"}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+		t.Fatalf("project requirements --json --target: %v", err)
+	}
+	var requirementsPayload struct {
+		Requirements []struct {
+			Ref     string   `json:"ref"`
+			Targets []string `json:"targets"`
+		} `json:"requirements"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &requirementsPayload); err != nil {
+		t.Fatalf("decode requirements payload: %v\nbody=%s", err, stdout.String())
+	}
+	refsByTarget := map[string][]string{}
+	for _, req := range requirementsPayload.Requirements {
+		refsByTarget[req.Ref] = req.Targets
+	}
+	if len(refsByTarget) != 2 || !slices.Equal(refsByTarget["config_01"], []string{"server.dev"}) || !slices.Equal(refsByTarget["secret_01"], []string{"server.dev"}) {
+		t.Fatalf("requirements target filter did not resolve set roles: %+v", refsByTarget)
+	}
+
+	if err := Run(context.Background(), []string{"project", "examples", "--write", "--project-root", projectRoot, "--target", "server.dev"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("project examples --write: %v", err)
+	}
+	example, err := os.ReadFile(filepath.Join(projectRoot, "apps", "server", ".env.example"))
+	if err != nil {
+		t.Fatalf("read generated example: %v", err)
+	}
+	exampleBody := string(example)
+	for _, want := range []string{
+		`GOOGLE_CLIENT_ID="__HASP_PUBLIC_CONFIG__"`,
+		`GOOGLE_CLIENT_SECRET="__HASP_SECRET__"`,
+	} {
+		if !strings.Contains(exampleBody, want) {
+			t.Fatalf("generated example missing %q in %s", want, exampleBody)
+		}
+	}
+
+	stdout.Reset()
+	if err := Run(context.Background(), []string{"project", "doctor", "--json", "--project-root", projectRoot}, bytes.NewBuffer(nil), &stdout, io.Discard); err != nil {
+		t.Fatalf("project doctor --json: %v", err)
+	}
+	var doctorPayload struct {
+		Diagnostics []struct {
+			Code   string `json:"code"`
+			Target string `json:"target"`
+			Ref    string `json:"ref"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doctorPayload); err != nil {
+		t.Fatalf("decode doctor payload: %v\nbody=%s", err, stdout.String())
+	}
+	foundSecretWorkspaceDelivery := false
+	for _, diag := range doctorPayload.Diagnostics {
+		if diag.Code == "secret_workspace_delivery" && diag.Target == "ios.config" && diag.Ref == "secret_01" {
+			foundSecretWorkspaceDelivery = true
+		}
+	}
+	if !foundSecretWorkspaceDelivery {
+		t.Fatalf("doctor did not resolve set-backed xcconfig secret delivery: %+v", doctorPayload.Diagnostics)
+	}
+}
+
+func TestProjectHelpersHandleUnresolvedCredentialSetRoles(t *testing.T) {
+	manifest := store.RepoManifest{}
+	target := store.ManifestTarget{
+		Name: "broken",
+		Delivery: []store.ManifestDelivery{
+			{As: store.ManifestDeliveryEnv, Name: "GOOGLE_CLIENT_SECRET", FromSet: "missing", Role: "client_secret"},
+		},
+	}
+	if _, err := renderProjectExample(manifest, target, store.ManifestExample{Format: store.ManifestExampleEnv}); err == nil {
+		t.Fatal("expected unresolved env credential role error")
+	}
+	target.Delivery[0].As = store.ManifestDeliveryXCConfig
+	if _, err := renderProjectExample(manifest, target, store.ManifestExample{Format: store.ManifestExampleXCConfig}); err == nil {
+		t.Fatal("expected unresolved xcconfig credential role error")
+	}
+	diagnostics := buildProjectDoctorDiagnostics(context.Background(), t.TempDir(), store.RepoManifest{Targets: []store.ManifestTarget{target}})
+	if len(diagnostics) == 0 || diagnostics[0].Code != "vault_unavailable" {
+		t.Fatalf("unexpected diagnostics for unresolved role: %+v", diagnostics)
+	}
+}
+
 func TestProjectExamplesCheckDoesNotExecuteTargetsOrWriteExampleFiles(t *testing.T) {
 	lockAppSeams(t)
 	projectRoot, secretValue, sentinel := setupProjectTargetManifestFixture(t)
@@ -493,4 +618,56 @@ func setupProjectTargetManifestFixture(t *testing.T) (projectRoot string, secret
 		t.Fatalf("write manifest: %v", err)
 	}
 	return projectRoot, secretValue, sentinel
+}
+
+func setupProjectCredentialSetManifestFixture(t *testing.T) string {
+	t.Helper()
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "server"), 0o755); err != nil {
+		t.Fatalf("mkdir apps/server: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "apps", "ios", "Config"), 0o755); err != nil {
+		t.Fatalf("mkdir apps/ios/Config: %v", err)
+	}
+	manifest := `{
+  "version": "v1",
+  "references": [
+    {"alias": "config_01", "item": "GOOGLE_CLIENT_ID"},
+    {"alias": "secret_01", "item": "GOOGLE_CLIENT_SECRET"}
+  ],
+  "requirements": [
+    {"ref": "config_01", "kind": "kv", "classification": "public_config", "required": true},
+    {"ref": "secret_01", "kind": "kv", "classification": "secret", "required": true}
+  ],
+  "credential_sets": [
+    {
+      "name": "google.oauth.web",
+      "kind": "google_oauth_client",
+      "members": {
+        "client_id": "config_01",
+        "client_secret": "secret_01"
+      }
+    }
+  ],
+  "targets": [
+    {
+      "name": "server.dev",
+      "root": "apps/server",
+      "delivery": [
+        {"as": "env", "name": "GOOGLE_CLIENT_ID", "from_set": "google.oauth.web", "role": "client_id"},
+        {"as": "env", "name": "GOOGLE_CLIENT_SECRET", "from_set": "GOOGLE.OAUTH.WEB", "role": "client_secret"}
+      ],
+      "examples": [{"format": "env", "path": "apps/server/.env.example"}]
+    },
+    {
+      "name": "ios.config",
+      "root": "apps/ios",
+      "delivery": [{"as": "xcconfig", "name": "GOOGLE_CLIENT_SECRET", "from_set": "google.oauth.web", "role": "client_secret", "output": "apps/ios/Config/Secrets.generated.xcconfig"}]
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(projectRoot, ".hasp.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write credential set manifest: %v", err)
+	}
+	return projectRoot
 }

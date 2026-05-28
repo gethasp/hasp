@@ -38,15 +38,16 @@ type projectRequirementView struct {
 }
 
 type projectTargetView struct {
-	Name         string   `json:"name"`
-	Refs         []string `json:"refs,omitempty"`
-	HasCommand   bool     `json:"has_command"`
-	HasEnv       bool     `json:"has_env"`
-	HasFiles     bool     `json:"has_files"`
-	HasXCConfig  bool     `json:"has_xcconfig"`
-	HasExamples  bool     `json:"has_examples"`
-	HasEnvSample bool     `json:"has_env_example"`
-	HasXCSample  bool     `json:"has_xcconfig_example"`
+	Name           string   `json:"name"`
+	Refs           []string `json:"refs,omitempty"`
+	CredentialSets []string `json:"credential_sets,omitempty"`
+	HasCommand     bool     `json:"has_command"`
+	HasEnv         bool     `json:"has_env"`
+	HasFiles       bool     `json:"has_files"`
+	HasXCConfig    bool     `json:"has_xcconfig"`
+	HasExamples    bool     `json:"has_examples"`
+	HasEnvSample   bool     `json:"has_env_example"`
+	HasXCSample    bool     `json:"has_xcconfig_example"`
 }
 
 type projectExampleResult struct {
@@ -519,8 +520,8 @@ func projectRequirementViews(ctx context.Context, projectRoot string, manifest s
 	for _, target := range targets {
 		seen := map[string]struct{}{}
 		for _, delivery := range target.Delivery {
-			ref := strings.TrimSpace(delivery.Ref)
-			if ref == "" {
+			ref, ok := manifest.DeliveryRef(delivery)
+			if !ok {
 				continue
 			}
 			if _, ok := seen[ref]; ok {
@@ -590,6 +591,7 @@ func projectTargetViews(manifest store.RepoManifest) []projectTargetView {
 			HasExamples: len(target.Examples) > 0,
 		}
 		refSeen := map[string]struct{}{}
+		setSeen := map[string]struct{}{}
 		for _, delivery := range target.Delivery {
 			switch strings.TrimSpace(delivery.As) {
 			case store.ManifestDeliveryEnv:
@@ -599,15 +601,19 @@ func projectTargetViews(manifest store.RepoManifest) []projectTargetView {
 			case store.ManifestDeliveryXCConfig:
 				view.HasXCConfig = true
 			}
-			ref := strings.TrimSpace(delivery.Ref)
-			if ref == "" {
-				continue
+			if set, ok := manifest.DeliveryCredentialSet(delivery); ok {
+				if _, ok := setSeen[set.Name]; !ok {
+					setSeen[set.Name] = struct{}{}
+					view.CredentialSets = append(view.CredentialSets, set.Name)
+				}
 			}
-			if _, ok := refSeen[ref]; ok {
-				continue
+			if ref, ok := manifest.DeliveryRef(delivery); ok {
+				if _, ok := refSeen[ref]; ok {
+					continue
+				}
+				refSeen[ref] = struct{}{}
+				view.Refs = append(view.Refs, ref)
 			}
-			refSeen[ref] = struct{}{}
-			view.Refs = append(view.Refs, ref)
 		}
 		for _, example := range target.Examples {
 			switch strings.TrimSpace(example.Format) {
@@ -618,6 +624,7 @@ func projectTargetViews(manifest store.RepoManifest) []projectTargetView {
 			}
 		}
 		slices.Sort(view.Refs)
+		slices.Sort(view.CredentialSets)
 		views = append(views, view)
 	}
 	return views
@@ -680,9 +687,13 @@ func renderProjectExample(manifest store.RepoManifest, target store.ManifestTarg
 			if strings.TrimSpace(delivery.As) != store.ManifestDeliveryEnv {
 				continue
 			}
-			req, ok := manifest.Requirement(strings.TrimSpace(delivery.Ref))
+			ref, ok := manifest.DeliveryRef(delivery)
 			if !ok {
-				return nil, fmt.Errorf("delivery %q in target %q references unknown requirement %q", delivery.Name, target.Name, delivery.Ref)
+				return nil, fmt.Errorf("delivery %q in target %q references an unresolved credential role", delivery.Name, target.Name)
+			}
+			req, ok := manifest.Requirement(ref)
+			if !ok {
+				return nil, fmt.Errorf("delivery %q in target %q references unknown requirement %q", delivery.Name, target.Name, ref)
 			}
 			lines = append(lines, strings.TrimSpace(delivery.Name)+"="+strconv.Quote(projectExamplePlaceholder(req)))
 		}
@@ -695,9 +706,13 @@ func renderProjectExample(manifest store.RepoManifest, target store.ManifestTarg
 			if strings.TrimSpace(delivery.As) != store.ManifestDeliveryXCConfig {
 				continue
 			}
-			req, ok := manifest.Requirement(strings.TrimSpace(delivery.Ref))
+			ref, ok := manifest.DeliveryRef(delivery)
 			if !ok {
-				return nil, fmt.Errorf("delivery %q in target %q references unknown requirement %q", delivery.Name, target.Name, delivery.Ref)
+				return nil, fmt.Errorf("delivery %q in target %q references an unresolved credential role", delivery.Name, target.Name)
+			}
+			req, ok := manifest.Requirement(ref)
+			if !ok {
+				return nil, fmt.Errorf("delivery %q in target %q references unknown requirement %q", delivery.Name, target.Name, ref)
 			}
 			lines = append(lines, strings.TrimSpace(delivery.Name)+" = "+projectExamplePlaceholder(req))
 		}
@@ -722,8 +737,7 @@ func buildProjectDoctorDiagnostics(ctx context.Context, projectRoot string, mani
 	exposedByRef := map[string]bool{}
 	for _, target := range manifest.Targets {
 		for _, delivery := range target.Delivery {
-			ref := strings.TrimSpace(delivery.Ref)
-			if ref != "" {
+			if ref, ok := manifest.DeliveryRef(delivery); ok {
 				exposedByRef[ref] = true
 			}
 		}
@@ -782,7 +796,11 @@ func buildProjectDoctorDiagnostics(ctx context.Context, projectRoot string, mani
 			})
 		}
 		for _, delivery := range target.Delivery {
-			req, ok := manifest.Requirement(strings.TrimSpace(delivery.Ref))
+			ref, ok := manifest.DeliveryRef(delivery)
+			if !ok {
+				continue
+			}
+			req, ok := manifest.Requirement(ref)
 			if !ok {
 				continue
 			}
@@ -791,7 +809,7 @@ func buildProjectDoctorDiagnostics(ctx context.Context, projectRoot string, mani
 					Code:           "secret_workspace_delivery",
 					Severity:       "warning",
 					Target:         target.Name,
-					Ref:            req.Ref,
+					Ref:            ref,
 					Kind:           req.Kind,
 					Classification: req.Classification,
 				})
