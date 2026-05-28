@@ -166,14 +166,11 @@ func (h *Handle) ResolveBindingView(ctx context.Context, projectPath string) (Bi
 	for alias, itemName := range resolved.Aliases {
 		item, err := h.GetItem(itemName)
 		if err != nil {
-			if errors.Is(err, ErrItemNotFound) {
-				return Binding{}, nil, MissingBindingItemError{
-					ProjectRoot: resolved.CanonicalRoot,
-					Alias:       alias,
-					ItemName:    itemName,
-				}
+			return Binding{}, nil, MissingBindingItemError{
+				ProjectRoot: resolved.CanonicalRoot,
+				Alias:       alias,
+				ItemName:    itemName,
 			}
-			return Binding{}, nil, err
 		}
 		visible = append(visible, VisibleReference{
 			Alias:          alias,

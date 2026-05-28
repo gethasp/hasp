@@ -260,6 +260,16 @@ func TestSecretCommandSuccessPaths(t *testing.T) {
 	}
 }
 
+func TestSecretInputsContainItemTrimsNames(t *testing.T) {
+	inputs := []secretInput{{name: " TOKEN "}, {name: "OTHER"}}
+	if !secretInputsContainItem(inputs, "TOKEN") {
+		t.Fatal("expected trimmed input name to match item")
+	}
+	if secretInputsContainItem(inputs, "MISSING") {
+		t.Fatal("unexpected missing item match")
+	}
+}
+
 func TestSecretCommandFallbacksAndHelpers(t *testing.T) {
 	deps, _ := fullSecretDeps(t)
 	deps.NewFlagSet = nil
@@ -655,6 +665,13 @@ func TestSecretAdditionalBranches(t *testing.T) {
 	}
 	if _, ok := items["SKIP"]; ok {
 		t.Fatal("skipped item was persisted")
+	}
+	deps, _ = fullSecretDeps(t)
+	deps.EnsureProjectBindingExplicit = func(context.Context, *store.Handle, string) (store.Binding, []store.VisibleReference, bool, error) {
+		return store.Binding{}, nil, false, errors.New("persist bind")
+	}
+	if _, err := secretAddPersistInputs(ctx, deps, &store.Handle{}, []secretInput{{name: "PERSIST", value: []byte("v")}}, store.ItemKindKV, true, "/repo", "replace", &fakeSecretPrompt{}); err == nil {
+		t.Fatal("expected persist auto-expose binding error")
 	}
 
 	deps, _ = fullSecretDeps(t)

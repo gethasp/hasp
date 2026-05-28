@@ -383,32 +383,27 @@ func applyAppTargetConfig(ctx context.Context, handle *store.Handle, cfg *appCon
 	if err := brokerops.RequireReviewedTarget(handle, cfg.ProjectRoot, expansion); err != nil {
 		return err
 	}
-	manifest, err := store.LoadRepoManifest(cfg.ProjectRoot)
-	if err != nil {
-		return err
-	}
-	target, ok := manifest.Target(cfg.Target)
-	if !ok {
-		return fmt.Errorf("unknown manifest target %q", cfg.Target)
-	}
-	if strings.TrimSpace(cfg.Command) == "" && len(target.Command) > 0 {
-		cfg.Command = shellJoinArgs(target.Command)
+	if strings.TrimSpace(cfg.Command) == "" && len(expansion.Command) > 0 {
+		cfg.Command = shellJoinArgs(expansion.Command)
 	}
 	envMappings := mappingFlag{}
 	fileMappings := mappingFlag{}
-	for _, delivery := range target.Delivery {
-		resolved, err := handle.ResolveReference(ctx, cfg.ProjectRoot, delivery.Ref)
+	for name, ref := range expansion.Env {
+		resolved, err := handle.ResolveReference(ctx, cfg.ProjectRoot, ref)
 		if err != nil {
 			return err
 		}
-		switch delivery.As {
-		case store.ManifestDeliveryEnv:
-			envMappings[delivery.Name] = resolved.ItemName
-		case store.ManifestDeliveryFile:
-			fileMappings[delivery.Name] = resolved.ItemName
-		case store.ManifestDeliveryXCConfig:
-			return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", cfg.Target)
+		envMappings[name] = resolved.ItemName
+	}
+	for name, ref := range expansion.Files {
+		resolved, err := handle.ResolveReference(ctx, cfg.ProjectRoot, ref)
+		if err != nil {
+			return err
 		}
+		fileMappings[name] = resolved.ItemName
+	}
+	if len(expansion.XCConfig) > 0 {
+		return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", cfg.Target)
 	}
 	if len(envMappings) > 0 {
 		cfg.EnvMappings = envMappings

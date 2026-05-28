@@ -10,6 +10,8 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
+var manifestTargetDriftFn = (*store.Handle).ManifestTargetDrift
+
 type ExecutionDeps struct {
 	AuthorizeReference func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
 	RunnerExecute      func(ctx context.Context, input runner.Input) (runner.Result, error)
@@ -144,7 +146,7 @@ func RequireReviewedTarget(handle *store.Handle, projectRoot string, expansion s
 	if handle == nil {
 		return TargetReviewRequiredError{Target: expansion.TargetName}
 	}
-	drift, err := handle.ManifestTargetDrift(projectRoot, expansion)
+	drift, err := manifestTargetDriftFn(handle, projectRoot, expansion)
 	if err != nil {
 		return err
 	}

@@ -432,10 +432,7 @@ func loadOrCreateProjectManifest(root string) (store.RepoManifest, bool, error) 
 }
 
 func writeProjectManifest(root string, manifest store.RepoManifest) error {
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return err
-	}
+	data, _ := json.MarshalIndent(manifest, "", "  ")
 	data = append(data, '\n')
 	if _, err := store.DecodeRepoManifest(root, data); err != nil {
 		return err

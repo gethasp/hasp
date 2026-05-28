@@ -217,6 +217,32 @@ func TestExecuteRequiresReviewedManifestTargetBeforeAuthorizingRefs(t *testing.T
 	}
 }
 
+func TestRequireReviewedTargetCoversNilHandleAndDriftError(t *testing.T) {
+	err := RequireReviewedTarget(nil, "/repo", store.ManifestTargetExpansion{TargetName: ""})
+	if err != nil {
+		t.Fatalf("empty target with nil handle: %v", err)
+	}
+	err = RequireReviewedTarget(nil, "/repo", store.ManifestTargetExpansion{TargetName: "server.dev"})
+	var reviewErr TargetReviewRequiredError
+	if !errors.As(err, &reviewErr) || !strings.Contains(err.Error(), "server.dev") {
+		t.Fatalf("nil handle review error = %v", err)
+	}
+	if got := (TargetReviewRequiredError{}).Error(); !strings.Contains(got, "(unknown)") {
+		t.Fatalf("unknown target error = %q", got)
+	}
+
+	handle := newBrokeropsHandle(t)
+	origDrift := manifestTargetDriftFn
+	t.Cleanup(func() { manifestTargetDriftFn = origDrift })
+	manifestTargetDriftFn = func(*store.Handle, string, store.ManifestTargetExpansion) (store.ManifestDrift, error) {
+		return store.ManifestDrift{}, errors.New("drift fail")
+	}
+	err = RequireReviewedTarget(handle, "/repo", store.ManifestTargetExpansion{TargetName: "server.dev"})
+	if err == nil {
+		t.Fatal("expected drift lookup error")
+	}
+}
+
 func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) {
 	wrapped := errors.New("wrapped")
 	_, err := Execute(context.Background(), ExecutionRequest{
