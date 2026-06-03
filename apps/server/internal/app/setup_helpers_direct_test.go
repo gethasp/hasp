@@ -64,15 +64,16 @@ func TestSetupHelpersDirect(t *testing.T) {
 		t.Fatal("expected existing agent config")
 	}
 
-	setupLookPathFn = func(string) (string, error) { return "/usr/local/bin/hasp", nil }
-	if got := setupHaspCommandPath(); got != "/usr/local/bin/hasp" {
-		t.Fatalf("setupHaspCommandPath lookpath = %q", got)
-	}
-	setupLookPathFn = func(string) (string, error) { return "", errors.New("missing") }
 	setupExecutableFn = func() (string, error) { return "/opt/bin/hasp", nil }
 	if got := setupHaspCommandPath(); got != "/opt/bin/hasp" {
 		t.Fatalf("setupHaspCommandPath executable = %q", got)
 	}
+	setupExecutableFn = func() (string, error) { return "/opt/bin/not-hasp", nil }
+	setupLookPathFn = func(string) (string, error) { return "/usr/local/bin/hasp", nil }
+	if got := setupHaspCommandPath(); got != "/usr/local/bin/hasp" {
+		t.Fatalf("setupHaspCommandPath lookpath fallback = %q", got)
+	}
+	setupLookPathFn = func(string) (string, error) { return "", errors.New("missing") }
 	setupExecutableFn = func() (string, error) { return "/opt/bin/not-hasp", nil }
 	if got := setupHaspCommandPath(); got != "hasp" {
 		t.Fatalf("setupHaspCommandPath fallback = %q", got)
@@ -98,6 +99,10 @@ func TestSetupHelpersDirect(t *testing.T) {
 	}
 	if data, err := os.ReadFile(installed); err != nil || !bytes.Contains(data, []byte("agent mcp")) || !bytes.Contains(data, []byte("find_hasp()")) || !bytes.Contains(data, []byte("HASP_AGENT_HASP")) {
 		t.Fatalf("unexpected wrapper contents %q err=%v", string(data), err)
+	} else if configuredIndex := bytes.Index(data, []byte("[[ -x \"$configured_hasp\" ]]")); configuredIndex < 0 {
+		t.Fatalf("wrapper should check configured_hasp before fallbacks: %s", string(data))
+	} else if envIndex := bytes.Index(data, []byte("HASP_AGENT_HASP")); envIndex < 0 || envIndex < configuredIndex {
+		t.Fatalf("wrapper should prefer configured_hasp before HASP_AGENT_HASP fallback: %s", string(data))
 	}
 	if second, err := setupInstallAgentWrapper(filepath.Join(homeDir, ".hasp"), "/usr/local/bin/hasp", "claude-code"); err != nil || second != installed {
 		t.Fatalf("expected managed wrapper reuse, got %q err=%v", second, err)
@@ -303,5 +308,53 @@ func TestSetupAgentWrapperFallsBackWhenConfiguredHaspMoved(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(out)); got != "agent mcp codex-cli --probe" {
 		t.Fatalf("wrapper did not fall back through PATH, got %q", got)
+	}
+}
+
+func TestSetupAgentWrapperPrefersConfiguredHaspOverEnvOverride(t *testing.T) {
+	lockAppSeams(t)
+
+	homeDir := t.TempDir()
+	haspHome := filepath.Join(homeDir, ".hasp")
+	origRead := setupReadFileFn
+	origWrite := setupWriteFileFn
+	origMkdir := setupMkdirAllFn
+	defer func() {
+		setupReadFileFn = origRead
+		setupWriteFileFn = origWrite
+		setupMkdirAllFn = origMkdir
+	}()
+	setupReadFileFn = os.ReadFile
+	setupWriteFileFn = os.WriteFile
+	setupMkdirAllFn = os.MkdirAll
+
+	configuredDir := filepath.Join(homeDir, "configured")
+	envDir := filepath.Join(homeDir, "env")
+	for _, dir := range []string{configuredDir, envDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	configuredHasp := filepath.Join(configuredDir, "hasp")
+	envHasp := filepath.Join(envDir, "hasp")
+	if err := os.WriteFile(configuredHasp, []byte("#!/usr/bin/env bash\nprintf 'configured:%s\\n' \"$*\"\n"), 0o700); err != nil {
+		t.Fatalf("write configured hasp: %v", err)
+	}
+	if err := os.WriteFile(envHasp, []byte("#!/usr/bin/env bash\nprintf 'env:%s\\n' \"$*\"\n"), 0o700); err != nil {
+		t.Fatalf("write env hasp: %v", err)
+	}
+	wrapper, err := setupInstallAgentWrapper(haspHome, configuredHasp, "codex-cli")
+	if err != nil {
+		t.Fatalf("install wrapper: %v", err)
+	}
+
+	cmd := exec.Command(wrapper, "--probe")
+	cmd.Env = append(os.Environ(), "HASP_AGENT_HASP="+envHasp, "PATH="+strings.Join([]string{"/bin", "/usr/bin"}, string(os.PathListSeparator)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run wrapper: %v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "configured:agent mcp codex-cli --probe" {
+		t.Fatalf("wrapper used wrong hasp binary, got %q", got)
 	}
 }

@@ -695,7 +695,7 @@ func TestSetupResolveProjectAndAgentResidualCoverage(t *testing.T) {
 		}
 	})
 
-	t.Run("setupHaspCommandPath prefers lookpath then executable", func(t *testing.T) {
+	t.Run("setupHaspCommandPath prefers executable then lookpath fallback", func(t *testing.T) {
 		origLook := setupLookPathFn
 		origExec := setupExecutableFn
 		defer func() {
@@ -704,15 +704,15 @@ func TestSetupResolveProjectAndAgentResidualCoverage(t *testing.T) {
 		}()
 
 		setupLookPathFn = func(string) (string, error) { return "/opt/homebrew/bin/hasp", nil }
-		setupExecutableFn = func() (string, error) { return "/tmp/fallback-hasp", nil }
-		if got := setupHaspCommandPath(); got != "/opt/homebrew/bin/hasp" {
-			t.Fatalf("expected lookpath result, got %q", got)
-		}
-
-		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }
 		setupExecutableFn = func() (string, error) { return "/tmp/hasp", nil }
 		if got := setupHaspCommandPath(); got != "/tmp/hasp" {
-			t.Fatalf("expected executable fallback, got %q", got)
+			t.Fatalf("expected executable result, got %q", got)
+		}
+
+		setupLookPathFn = func(string) (string, error) { return "/opt/homebrew/bin/hasp", nil }
+		setupExecutableFn = func() (string, error) { return "/tmp/fallback-hasp", nil }
+		if got := setupHaspCommandPath(); got != "/opt/homebrew/bin/hasp" {
+			t.Fatalf("expected lookpath fallback, got %q", got)
 		}
 
 		setupLookPathFn = func(string) (string, error) { return "", os.ErrNotExist }

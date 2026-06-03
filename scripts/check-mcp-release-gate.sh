@@ -17,6 +17,10 @@ The gate verifies:
   - bare `hasp mcp` initialize + tools/list
   - managed `hasp agent mcp claude-code` and `codex-cli`
   - generated Claude/Codex MCP config points at executable managed wrappers
+  - generated Claude/Codex MCP config does not pin HASP_AGENT_HASP
+  - managed wrappers ignore stale HASP_AGENT_HASP when their configured binary exists
+  - doctor detects already-running stale managed-agent MCP processes
+  - managed wrappers can execute hasp_run after recovering a stale inherited session
   - managed wrappers can initialize and list tools within the timeout
 EOF
 }
@@ -104,8 +108,28 @@ git -C "$project_root" init >/dev/null 2>&1
 "$hasp_bin" agent connect claude-code --json --project-root "$project_root" >/dev/null
 "$hasp_bin" agent connect codex-cli --json --project-root "$project_root" >/dev/null
 
+stale_hasp="$tmp_dir/stale-hasp"
+cat >"$stale_hasp" <<'SH'
+#!/usr/bin/env bash
+printf 'stale HASP_AGENT_HASP binary was used: %s\n' "$*" >&2
+exit 94
+SH
+chmod 700 "$stale_hasp"
+
+stale_live_hasp="$tmp_dir/stale-live-hasp"
+cat >"$stale_live_hasp" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "agent" && "${2:-}" == "mcp" ]]; then
+  sleep 60
+  exit 0
+fi
+printf 'stale live HASP binary was used: %s\n' "$*" >&2
+exit 94
+SH
+chmod 700 "$stale_live_hasp"
+
 validate_generated_config() {
-  python3 - "$HOME" "$HASP_HOME" <<'PY'
+  python3 - "$HOME" "$HASP_HOME" "$hasp_bin" <<'PY'
 import json
 import os
 import re
@@ -115,6 +139,7 @@ from pathlib import Path
 
 home = Path(sys.argv[1])
 hasp_home = Path(sys.argv[2])
+hasp_bin = Path(sys.argv[3])
 
 expected = {
     "claude-code": hasp_home / "bin" / "hasp-agent-claude-code",
@@ -133,6 +158,17 @@ for agent_id, wrapper in expected.items():
     text = wrapper.read_text(encoding="utf-8")
     if "# hasp-managed agent wrapper" not in text or f'agent mcp "{agent_id}"' not in text:
         fail(f"managed wrapper does not launch agent MCP for {agent_id}: {wrapper}")
+    configured_match = re.search(r'^configured_hasp="([^"]+)"$', text, re.MULTILINE)
+    if not configured_match:
+        fail(f"managed wrapper does not declare configured_hasp for {agent_id}: {wrapper}")
+    if configured_match.group(1) != str(hasp_bin):
+        fail(f"managed wrapper configured_hasp points at {configured_match.group(1)!r}, want {hasp_bin}")
+    configured_index = text.find('[[ -x "$configured_hasp" ]]')
+    env_index = text.find("HASP_AGENT_HASP")
+    if configured_index < 0:
+        fail(f"managed wrapper does not check configured_hasp executability for {agent_id}: {wrapper}")
+    if env_index >= 0 and env_index < configured_index:
+        fail(f"managed wrapper checks HASP_AGENT_HASP before configured_hasp for {agent_id}: {wrapper}")
 
 claude_config = home / ".claude.json"
 if not claude_config.exists():
@@ -143,6 +179,8 @@ if claude_hasp.get("command") != str(expected["claude-code"]):
     fail(f"Claude MCP command points at {claude_hasp.get('command')!r}, want {expected['claude-code']}")
 if "HASP_MASTER_PASSWORD" in json.dumps(claude_hasp):
     fail("Claude MCP config contains master-password material")
+if "HASP_AGENT_HASP" in json.dumps(claude_hasp):
+    fail("Claude MCP config pins HASP_AGENT_HASP; this can shadow the managed wrapper with a stale binary")
 
 codex_config = home / ".codex" / "config.toml"
 if not codex_config.exists():
@@ -155,6 +193,8 @@ if match.group(1) != str(expected["codex-cli"]):
     fail(f"Codex MCP command points at {match.group(1)!r}, want {expected['codex-cli']}")
 if "HASP_MASTER_PASSWORD" in codex_text:
     fail("Codex MCP config contains master-password material")
+if "HASP_AGENT_HASP" in codex_text:
+    fail("Codex MCP config pins HASP_AGENT_HASP; this can shadow the managed wrapper with a stale binary")
 PY
 }
 
@@ -233,11 +273,124 @@ print(f"[ok] {label} initialize + tools/list in {elapsed:.2f}s")
 PY
 }
 
+probe_mcp_run() {
+  local label="$1"
+  shift
+  python3 - "$label" "$probe_timeout" "$project_root" -- "$@" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+label = sys.argv[1]
+try:
+    timeout = float(sys.argv[2])
+except ValueError as exc:
+    raise SystemExit(f"MCP release gate: invalid timeout {sys.argv[2]!r}") from exc
+project_root = sys.argv[3]
+sep = sys.argv.index("--")
+cmd = sys.argv[sep + 1 :]
+request = "\n".join([
+    json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "hasp-release-gate", "version": "1"},
+        },
+    }),
+    json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    json.dumps({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "hasp_run",
+            "arguments": {
+                "project_root": project_root,
+                "host_label": "hasp-release-gate-stale-session",
+                "command": ["/bin/sh", "-c", "printf ok"],
+            },
+        },
+    }),
+    "",
+])
+start = time.monotonic()
+try:
+    proc = subprocess.run(
+        cmd,
+        input=request,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+except subprocess.TimeoutExpired as exc:
+    raise SystemExit(f"MCP release gate: {label} timed out after {timeout:.2f}s") from exc
+elapsed = time.monotonic() - start
+if proc.returncode != 0:
+    raise SystemExit(
+        f"MCP release gate: {label} exited {proc.returncode}\n"
+        f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
+    )
+responses = []
+for raw in proc.stdout.splitlines():
+    line = raw.strip()
+    if not line:
+        continue
+    try:
+        responses.append(json.loads(line))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"MCP release gate: {label} emitted non-JSON line: {line!r}") from exc
+by_id = {response.get("id"): response for response in responses}
+run = by_id.get(2)
+if not run or run.get("error"):
+    raise SystemExit(f"MCP release gate: {label} hasp_run failed: {run!r}")
+result = run.get("result", {})
+if result.get("exit_code") != 0 or result.get("stdout") != "ok":
+    raise SystemExit(f"MCP release gate: {label} unexpected hasp_run result: {result!r}")
+if "resolve session" in json.dumps(result):
+    raise SystemExit(f"MCP release gate: {label} leaked stale-session failure: {result!r}")
+print(f"[ok] {label} hasp_run stale-session recovery in {elapsed:.2f}s")
+PY
+}
+
+probe_live_stale_agent_detection() {
+  "$stale_live_hasp" agent mcp codex-cli &
+  local stale_pid="$!"
+  sleep 0.2
+  local doctor_output
+  doctor_output="$("$hasp_bin" doctor --project-root "$project_root" 2>&1)" || {
+    kill "$stale_pid" >/dev/null 2>&1 || true
+    wait "$stale_pid" >/dev/null 2>&1 || true
+    printf 'MCP release gate: doctor failed while checking live stale MCP process\n%s\n' "$doctor_output" >&2
+    exit 1
+  }
+  kill "$stale_pid" >/dev/null 2>&1 || true
+  wait "$stale_pid" >/dev/null 2>&1 || true
+  if [[ "$doctor_output" != *$'agent_mcp_wrappers\tfalse'* && "$doctor_output" != *"agent_mcp_wrappers         false"* ]]; then
+    printf 'MCP release gate: doctor did not flag live stale MCP process\n%s\n' "$doctor_output" >&2
+    exit 1
+  fi
+  if [[ "$doctor_output" != *"live agent MCP process is using a stale or unmanaged hasp binary"* || "$doctor_output" != *"restart the affected agent session"* ]]; then
+    printf 'MCP release gate: doctor stale-process warning is missing remediation\n%s\n' "$doctor_output" >&2
+    exit 1
+  fi
+  printf '[ok] doctor detects live stale managed-agent MCP process\n'
+}
+
 validate_generated_config
+probe_live_stale_agent_detection
 probe_mcp "bare hasp mcp" "$hasp_bin" mcp
 probe_mcp "Claude agent mcp" "$hasp_bin" agent mcp claude-code
 probe_mcp "Codex agent mcp" "$hasp_bin" agent mcp codex-cli
 probe_mcp "Claude managed wrapper" "$HASP_HOME/bin/hasp-agent-claude-code"
 probe_mcp "Codex managed wrapper" "$HASP_HOME/bin/hasp-agent-codex-cli"
+HASP_AGENT_HASP="$stale_hasp" probe_mcp "Claude managed wrapper with stale HASP_AGENT_HASP" "$HASP_HOME/bin/hasp-agent-claude-code"
+HASP_AGENT_HASP="$stale_hasp" probe_mcp "Codex managed wrapper with stale HASP_AGENT_HASP" "$HASP_HOME/bin/hasp-agent-codex-cli"
+HASP_SESSION_TOKEN="stale-token" HASP_AGENT_HASP="$stale_hasp" probe_mcp_run "Codex managed wrapper" "$HASP_HOME/bin/hasp-agent-codex-cli"
 
 printf 'MCP release gate passed\n'

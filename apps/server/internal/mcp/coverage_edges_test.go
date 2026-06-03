@@ -217,6 +217,44 @@ func TestCoverageRequireMCPProjectAuthorizationEdges(t *testing.T) {
 	}
 }
 
+func TestRequireMCPProjectAuthorizationRecoversStaleInheritedEnvSessionToken(t *testing.T) {
+	lockMCPSeams(t)
+	origEnsureSession := ensureSessionFn
+	origAuthorizeAndConsume := authorizeAndConsumeMCPFn
+	t.Cleanup(func() {
+		ensureSessionFn = origEnsureSession
+		authorizeAndConsumeMCPFn = origAuthorizeAndConsume
+	})
+	t.Setenv(mcpEnvSessionToken, "stale-token")
+
+	handle, projectRoot := newMCPCoverageHandle(t)
+	ensureCalls := []string{}
+	ensureSessionFn = func(_ context.Context, _ string, providedToken string, _ string) (brokerops.Session, error) {
+		ensureCalls = append(ensureCalls, providedToken)
+		if providedToken == "stale-token" {
+			return brokerops.Session{}, errors.New("resolve session: session not found")
+		}
+		return brokerops.Session{Token: "fresh-token"}, nil
+	}
+	authorizeAndConsumeMCPFn = func(_ *store.Handle, request store.AccessRequest) (store.AccessDecision, error) {
+		if request.SessionToken != "fresh-token" {
+			t.Fatalf("authorization used stale session token %q", request.SessionToken)
+		}
+		return store.AccessDecision{Allowed: true}, nil
+	}
+
+	session, _, err := requireMCPProjectAuthorization(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "grant_project": "once"}}, projectRoot)
+	if err != nil {
+		t.Fatalf("requireMCPProjectAuthorization: %v", err)
+	}
+	if session.Token != "fresh-token" {
+		t.Fatalf("session token = %q", session.Token)
+	}
+	if len(ensureCalls) != 2 || ensureCalls[0] != "stale-token" || ensureCalls[1] != "" {
+		t.Fatalf("ensure calls = %#v", ensureCalls)
+	}
+}
+
 func TestCoverageSecretUpsertInvalidGrantScopes(t *testing.T) {
 	lockMCPSeams(t)
 	origEnsureSession := ensureSessionFn

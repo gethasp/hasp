@@ -65,6 +65,13 @@ grep -Fq 'stubbed HMAC keychain path' "$ROOT/scripts/package-release.sh"
 # shellcheck disable=SC2016
 grep -Fq 'bash ./scripts/check-mcp-release-gate.sh --bin "$installed_bin"' "$ROOT/scripts/release-smoke.sh"
 # shellcheck disable=SC2016
+grep -Fq 'HASP_AGENT_HASP="$stale_hasp" probe_mcp "Codex managed wrapper with stale HASP_AGENT_HASP"' "$ROOT/scripts/check-mcp-release-gate.sh"
+grep -Fq 'probe_mcp_run "Codex managed wrapper"' "$ROOT/scripts/check-mcp-release-gate.sh"
+grep -Fq 'Codex MCP config pins HASP_AGENT_HASP' "$ROOT/scripts/check-mcp-release-gate.sh"
+grep -Fq 'managed wrapper checks HASP_AGENT_HASP before configured_hasp' "$ROOT/scripts/check-mcp-release-gate.sh"
+grep -Fq 'probe_live_stale_agent_detection' "$ROOT/scripts/check-mcp-release-gate.sh"
+grep -Fq 'doctor detects live stale managed-agent MCP process' "$ROOT/scripts/check-mcp-release-gate.sh"
+# shellcheck disable=SC2016
 if grep -Fq '$repo_root/bin/hasp' "$ROOT/scripts/package-release.sh"; then
   printf 'package-release must build directly into the artifact tree, not shared bin/hasp\n' >&2
   exit 1

@@ -640,8 +640,8 @@ func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectR
 func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, call toolCall, projectRoot string) (brokerops.Session, store.Binding, error) {
 	grantProject := stringArg(call.Arguments, "grant_project", "")
 	session := brokerops.Session{Token: defaultMCPSessionToken(call)}
-	if strings.TrimSpace(session.Token) == "" {
-		ensured, err := ensureSessionFn(ctx, projectRoot, "", defaultMCPHostLabel(call))
+	if strings.TrimSpace(session.Token) == "" || grantProject != "" {
+		ensured, err := ensureMCPSession(ctx, call, projectRoot)
 		if err != nil {
 			return brokerops.Session{}, store.Binding{}, err
 		}

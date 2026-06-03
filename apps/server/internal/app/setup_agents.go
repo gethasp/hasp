@@ -256,10 +256,10 @@ func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAg
 }
 
 func setupHaspCommandPath() string {
-	if path, err := setupLookPathFn("hasp"); err == nil && strings.TrimSpace(path) != "" {
+	if path, err := setupExecutableFn(); err == nil && strings.TrimSpace(path) != "" && filepath.Base(path) == "hasp" {
 		return path
 	}
-	if path, err := setupExecutableFn(); err == nil && strings.TrimSpace(path) != "" && filepath.Base(path) == "hasp" {
+	if path, err := setupLookPathFn("hasp"); err == nil && strings.TrimSpace(path) != "" {
 		return path
 	}
 	return "hasp"
@@ -313,12 +313,12 @@ func setupAgentWrapperContent(haspHome string, commandPath string, agentID strin
 			"export HASP_HOME=" + strconvQuote(haspHome) + "\n" +
 			"configured_hasp=" + strconvQuote(commandPath) + "\n" +
 			"find_hasp() {\n" +
-			"  if [[ -n \"${HASP_AGENT_HASP:-}\" && -x \"${HASP_AGENT_HASP}\" ]]; then\n" +
-			"    printf '%s\\n' \"${HASP_AGENT_HASP}\"\n" +
-			"    return 0\n" +
-			"  fi\n" +
 			"  if [[ -x \"$configured_hasp\" ]]; then\n" +
 			"    printf '%s\\n' \"$configured_hasp\"\n" +
+			"    return 0\n" +
+			"  fi\n" +
+			"  if [[ -n \"${HASP_AGENT_HASP:-}\" && -x \"${HASP_AGENT_HASP}\" ]]; then\n" +
+			"    printf '%s\\n' \"${HASP_AGENT_HASP}\"\n" +
 			"    return 0\n" +
 			"  fi\n" +
 			"  local resolved=\"\"\n" +
@@ -336,7 +336,7 @@ func setupAgentWrapperContent(haspHome string, commandPath string, agentID strin
 			"  return 1\n" +
 			"}\n" +
 			"hasp_command=\"$(find_hasp)\" || {\n" +
-			"  printf 'HASP agent wrapper could not find a runnable hasp binary. Re-run hasp agent connect " + agentID + " or set HASP_AGENT_HASP.\\n' >&2\n" +
+			"  printf 'HASP agent wrapper could not find a runnable hasp binary. Re-run hasp agent connect " + agentID + " or set HASP_AGENT_HASP if the configured binary is unavailable.\\n' >&2\n" +
 			"  exit 127\n" +
 			"}\n" +
 			"exec \"$hasp_command\" agent mcp " + strconvQuote(agentID) + " \"$@\"\n",

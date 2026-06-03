@@ -340,6 +340,237 @@ func TestManagedWrapperDiagnosticsDefaultsHomeWhenHASPHomeUnset(t *testing.T) {
 	}
 }
 
+func TestManagedWrapperDiagnosticsFlagsAgentHaspEnvOverrides(t *testing.T) {
+	lockAppSeams(t)
+	restorePathDiagnosticSeams(t)
+	oldHomeDir := agentWrapperUserHomeDir
+	t.Cleanup(func() { agentWrapperUserHomeDir = oldHomeDir })
+
+	tmp := t.TempDir()
+	t.Setenv("HASP_HOME", filepath.Join(tmp, ".hasp"))
+	agentWrapperUserHomeDir = func() (string, error) { return tmp, nil }
+	codexConfig := filepath.Join(tmp, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(codexConfig), 0o700); err != nil {
+		t.Fatalf("mkdir codex config dir: %v", err)
+	}
+	if err := os.WriteFile(codexConfig, []byte("[mcp_servers.hasp]\ncommand = \"/Users/nan/.hasp/bin/hasp-agent-codex-cli\"\n\n[mcp_servers.hasp.env]\nHASP_AGENT_HASP = \"/Users/nan/.hasp/bin/hasp-mcp-preflight-fix\"\n"), 0o600); err != nil {
+		t.Fatalf("write codex config: %v", err)
+	}
+	claudeConfig := filepath.Join(tmp, ".claude.json")
+	if err := os.WriteFile(claudeConfig, []byte(`{"mcpServers":{"hasp":{"command":"/Users/nan/.hasp/bin/hasp-agent-claude-code","env":{"HASP_AGENT_HASP":"/Users/nan/.hasp/bin/hasp-mcp-preflight-fix"}}}}`), 0o600); err != nil {
+		t.Fatalf("write claude config: %v", err)
+	}
+
+	warning := detectManagedAgentMCPWrapperProblems()
+	if !strings.Contains(warning, "HASP_AGENT_HASP") || !strings.Contains(warning, codexConfig) || !strings.Contains(warning, claudeConfig) || !strings.Contains(warning, "stale binaries") {
+		t.Fatalf("expected stale override warning for both configs, got %q", warning)
+	}
+}
+
+func TestManagedWrapperDiagnosticsCombinesBrokenWrapperAndEnvOverride(t *testing.T) {
+	lockAppSeams(t)
+	restorePathDiagnosticSeams(t)
+	oldHomeDir := agentWrapperUserHomeDir
+	oldProcessList := agentMCPProcessListFn
+	t.Cleanup(func() {
+		agentWrapperUserHomeDir = oldHomeDir
+		agentMCPProcessListFn = oldProcessList
+	})
+
+	tmp := t.TempDir()
+	haspHome := filepath.Join(tmp, ".hasp")
+	t.Setenv("HASP_HOME", haspHome)
+	agentWrapperUserHomeDir = func() (string, error) { return tmp, nil }
+	agentMCPProcessListFn = func() ([]liveAgentMCPProcess, error) {
+		return []liveAgentMCPProcess{{
+			PID:     "123",
+			Binary:  filepath.Join(tmp, "old", "hasp"),
+			AgentID: "codex-cli",
+		}}, nil
+	}
+	wrapperDir := filepath.Join(haspHome, "bin")
+	if err := os.MkdirAll(wrapperDir, 0o700); err != nil {
+		t.Fatalf("mkdir wrapper dir: %v", err)
+	}
+	configuredHasp := filepath.Join(tmp, "configured", "hasp")
+	if err := os.MkdirAll(filepath.Dir(configuredHasp), 0o700); err != nil {
+		t.Fatalf("mkdir configured dir: %v", err)
+	}
+	if err := os.WriteFile(configuredHasp, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatalf("write configured hasp: %v", err)
+	}
+	wrapper := filepath.Join(wrapperDir, "hasp-agent-codex-cli")
+	if err := os.WriteFile(wrapper, []byte("#!/usr/bin/env bash\n# hasp-managed agent wrapper\nconfigured_hasp=\""+configuredHasp+"\"\n"), 0o700); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	codexConfig := filepath.Join(tmp, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(codexConfig), 0o700); err != nil {
+		t.Fatalf("mkdir codex config dir: %v", err)
+	}
+	if err := os.WriteFile(codexConfig, []byte("[mcp_servers.hasp.env]\nHASP_AGENT_HASP = \"/tmp/stale\"\n"), 0o600); err != nil {
+		t.Fatalf("write codex config: %v", err)
+	}
+
+	warning := detectManagedAgentMCPWrapperProblems()
+	if !strings.Contains(warning, "live agent MCP process") || !strings.Contains(warning, "pid 123 codex-cli") || !strings.Contains(warning, "HASP_AGENT_HASP") {
+		t.Fatalf("expected combined live-process/config warning, got %q", warning)
+	}
+}
+
+func TestManagedWrapperDiagnosticsCombinesBrokenWrapperLiveProcessAndEnvOverride(t *testing.T) {
+	lockAppSeams(t)
+	restorePathDiagnosticSeams(t)
+	oldHomeDir := agentWrapperUserHomeDir
+	oldProcessList := agentMCPProcessListFn
+	t.Cleanup(func() {
+		agentWrapperUserHomeDir = oldHomeDir
+		agentMCPProcessListFn = oldProcessList
+	})
+
+	tmp := t.TempDir()
+	haspHome := filepath.Join(tmp, ".hasp")
+	t.Setenv("HASP_HOME", haspHome)
+	agentWrapperUserHomeDir = func() (string, error) { return tmp, nil }
+	agentMCPProcessListFn = func() ([]liveAgentMCPProcess, error) {
+		return []liveAgentMCPProcess{{PID: "456", Binary: filepath.Join(tmp, "old", "hasp"), AgentID: "codex-cli"}}, nil
+	}
+	wrapperDir := filepath.Join(haspHome, "bin")
+	if err := os.MkdirAll(wrapperDir, 0o700); err != nil {
+		t.Fatalf("mkdir wrapper dir: %v", err)
+	}
+	missingHasp := filepath.Join(tmp, "missing", "hasp")
+	wrapper := filepath.Join(wrapperDir, "hasp-agent-codex-cli")
+	if err := os.WriteFile(wrapper, []byte("#!/usr/bin/env bash\n# hasp-managed agent wrapper\nconfigured_hasp=\""+missingHasp+"\"\n"), 0o700); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	codexConfig := filepath.Join(tmp, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(codexConfig), 0o700); err != nil {
+		t.Fatalf("mkdir codex config dir: %v", err)
+	}
+	if err := os.WriteFile(codexConfig, []byte("[mcp_servers.hasp.env]\nHASP_AGENT_HASP = \"/tmp/stale\"\n"), 0o600); err != nil {
+		t.Fatalf("write codex config: %v", err)
+	}
+
+	warning := detectManagedAgentMCPWrapperProblems()
+	for _, want := range []string{"points at missing", filepath.Base(wrapper), "live agent MCP process", "pid 456 codex-cli", "HASP_AGENT_HASP"} {
+		if !strings.Contains(warning, want) {
+			t.Fatalf("expected warning to contain %q, got %q", want, warning)
+		}
+	}
+}
+
+func TestLiveAgentMCPProcessDiagnosticsHelpers(t *testing.T) {
+	oldProcessList := agentMCPProcessListFn
+	oldProcessCommand := agentMCPProcessListCommandFn
+	t.Cleanup(func() {
+		agentMCPProcessListFn = oldProcessList
+		agentMCPProcessListCommandFn = oldProcessCommand
+	})
+
+	if got := managedWrapperAgentID("/tmp/hasp-agent-codex-cli"); got != "codex-cli" {
+		t.Fatalf("managedWrapperAgentID = %q", got)
+	}
+	if got := managedWrapperAgentID("/tmp/not-agent"); got != "" {
+		t.Fatalf("unexpected managedWrapperAgentID = %q", got)
+	}
+	parsed := parseLiveAgentMCPProcessLine("123 /tmp/hasp agent mcp codex-cli --flag")
+	if parsed.PID != "123" || parsed.Binary != "/tmp/hasp" || parsed.AgentID != "codex-cli" {
+		t.Fatalf("parsed process = %+v", parsed)
+	}
+	parsed = parseLiveAgentMCPProcessLine("124 /tmp/with space/hasp agent mcp claude-code")
+	if parsed.PID != "124" || parsed.Binary != "/tmp/with space/hasp" || parsed.AgentID != "claude-code" {
+		t.Fatalf("parsed spaced process = %+v", parsed)
+	}
+	if got := parseLiveAgentMCPProcessLine("not enough"); got.PID != "" {
+		t.Fatalf("unexpected parse result = %+v", got)
+	}
+	if !liveAgentMCPProcessMatchesExpected("/tmp/hasp", "/tmp/hasp") {
+		t.Fatal("expected exact executable match")
+	}
+	if !liveAgentMCPProcessMatchesExpected("hasp", "/tmp/hasp") {
+		t.Fatal("expected basename fallback match")
+	}
+	if liveAgentMCPProcessMatchesExpected("/tmp/old/hasp", "/tmp/new/hasp") {
+		t.Fatal("absolute stale path should not match")
+	}
+	if liveAgentMCPProcessMatchesExpected("", "/tmp/hasp") {
+		t.Fatal("blank process binary should not match")
+	}
+	if warning := detectLiveAgentMCPProcessProblems(map[string]string{}); warning != "" {
+		t.Fatalf("empty expectations should not warn: %q", warning)
+	}
+	agentMCPProcessListFn = func() ([]liveAgentMCPProcess, error) {
+		return nil, errors.New("ps failed")
+	}
+	if warning := detectLiveAgentMCPProcessProblems(map[string]string{"codex-cli": "/tmp/hasp"}); warning != "" {
+		t.Fatalf("process list failure should not warn: %q", warning)
+	}
+	agentMCPProcessListCommandFn = func() ([]byte, error) {
+		return []byte("1 /tmp/hasp agent mcp codex-cli\n2 /tmp/nope daemon serve\n"), nil
+	}
+	processes, err := listLiveAgentMCPProcesses()
+	if err != nil || len(processes) != 1 || processes[0].AgentID != "codex-cli" {
+		t.Fatalf("listLiveAgentMCPProcesses = %+v err=%v", processes, err)
+	}
+	agentMCPProcessListCommandFn = func() ([]byte, error) { return nil, errors.New("ps failed") }
+	if _, err := listLiveAgentMCPProcesses(); err == nil {
+		t.Fatal("expected process list command failure")
+	}
+}
+
+func TestDetectAgentMCPConfigEnvOverridesResidualBranches(t *testing.T) {
+	lockAppSeams(t)
+	restorePathDiagnosticSeams(t)
+	oldHomeDir := agentWrapperUserHomeDir
+	t.Cleanup(func() { agentWrapperUserHomeDir = oldHomeDir })
+
+	agentWrapperUserHomeDir = func() (string, error) { return "", nil }
+	if warning := detectAgentMCPConfigEnvOverrides(); warning != "" {
+		t.Fatalf("empty home should not warn: %q", warning)
+	}
+
+	tmp := t.TempDir()
+	agentWrapperUserHomeDir = func() (string, error) { return tmp, nil }
+	desktopConfig := filepath.Join(tmp, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	if err := os.MkdirAll(filepath.Dir(desktopConfig), 0o700); err != nil {
+		t.Fatalf("mkdir claude desktop config dir: %v", err)
+	}
+	if err := os.WriteFile(desktopConfig, []byte(`{"mcpServers":{"hasp":{"env":{"HASP_AGENT_HASP":"/tmp/stale"}}}}`), 0o600); err != nil {
+		t.Fatalf("write claude desktop config: %v", err)
+	}
+	warning := detectAgentMCPConfigEnvOverrides()
+	if !strings.Contains(warning, desktopConfig) {
+		t.Fatalf("expected claude desktop override warning, got %q", warning)
+	}
+}
+
+func TestAgentMCPConfigOverrideParsersStayScopedToHasp(t *testing.T) {
+	if !codexHaspEnvOverride([]byte("[mcp_servers.hasp.env]\nHASP_AGENT_HASP = \"/tmp/hasp\"\n")) {
+		t.Fatal("expected codex hasp env override")
+	}
+	if codexHaspEnvOverride([]byte("[mcp_servers.other.env]\nHASP_AGENT_HASP = \"/tmp/hasp\"\n")) {
+		t.Fatal("unrelated codex MCP server should not warn")
+	}
+	if codexHaspEnvOverride([]byte("[mcp_servers.hasp.env]\nHASP_AGENT_HASP_OLD = \"/tmp/hasp\"\n")) {
+		t.Fatal("near-miss codex env key should not warn")
+	}
+	if !jsonHaspEnvOverride([]byte(`{"projects":{"/repo":{"mcpServers":{"hasp":{"env":{"HASP_AGENT_HASP":"/tmp/hasp"}}}}}}`)) {
+		t.Fatal("expected nested claude hasp env override")
+	}
+	if jsonHaspEnvOverride([]byte(`{"mcpServers":{"other":{"env":{"HASP_AGENT_HASP":"/tmp/hasp"}}}}`)) {
+		t.Fatal("unrelated JSON MCP server should not warn")
+	}
+	if !jsonHaspEnvOverride([]byte(`{"hasp":{"env":{"HASP_AGENT_HASP":"/tmp/hasp"}}}`)) {
+		t.Fatal("expected direct hasp env override")
+	}
+	if !jsonHaspEnvOverride([]byte(`[{"mcpServers":{"hasp":{"env":{"HASP_AGENT_HASP":"/tmp/hasp"}}}}]`)) {
+		t.Fatal("expected array-nested hasp env override")
+	}
+	if jsonHaspEnvOverride([]byte(`{`)) {
+		t.Fatal("invalid JSON should not warn")
+	}
+}
+
 func TestPathDiagnosticsRemainingHelperBranches(t *testing.T) {
 	lockAppSeams(t)
 	restorePathDiagnosticSeams(t)
