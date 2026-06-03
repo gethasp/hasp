@@ -251,6 +251,10 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Read vault-unlocking secrets passed over a one-shot pipe instead of the
+	// inherited env, so they never sit in this long-lived process's
+	// /proc/<pid>/environ (hasp-f373). No-op when the spawner passed none.
+	loadDaemonSecretEnvFromFD()
 	if err := runtimeMkdirAll(m.paths.RuntimeDir, 0o700); err != nil {
 		return fmt.Errorf("create runtime dir: %w", err)
 	}
@@ -480,6 +484,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "GET or POST is required")
 			return
 		}
+		if !requireLocalAdminTransport(w, r) {
+			return
+		}
 		approvalID, ok := approvalDecideIDFromPath(r.URL.Path)
 		if !ok {
 			http.NotFound(w, r)
@@ -699,6 +706,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			w.Header().Set("ETag", reply.Version)
 			_ = jsonwire.WriteResponse(w, reply)
 		case http.MethodPut:
+			if !requireLocalAdminTransport(w, r) {
+				return
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			defer r.Body.Close()
 			var policy PolicyDocument
@@ -756,6 +766,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 	mux.HandleFunc("/v1/config/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "PUT is required")
+			return
+		}
+		if !requireLocalAdminTransport(w, r) {
 			return
 		}
 		keyPath := strings.TrimPrefix(r.URL.Path, "/v1/config/")
@@ -1013,6 +1026,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "POST is required")
 			return
 		}
+		if !requireLocalAdminTransport(w, r) {
+			return
+		}
 		var req UnlockVaultRequest
 		if r.Body != nil {
 			defer r.Body.Close()
@@ -1037,6 +1053,16 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 				httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "master_password is required")
 				return
 			}
+			// Rate-limit failed unlock attempts the same way /v1/vault/master-password
+			// throttles failed change attempts (shared per-caller counter; both guard
+			// the master password). Prevents unbounded online guessing by a caller that
+			// holds the HMAC key.
+			unlockCallerKey := rpcSrv.masterPasswordCallerKey(r)
+			if retryAfter := rpcSrv.masterPasswordRetryAfter(unlockCallerKey, time.Now().UTC()); retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+				httpapi.WriteErrorEnvelope(w, http.StatusTooManyRequests, "master_password_rate_limited", "Too many attempts", "too many failed unlock attempts; wait before retrying")
+				return
+			}
 			vaultStore, err := newStoreForPaths(store.NewDefaultKeyring(), rpcSrv.paths)
 			if err != nil {
 				writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err)
@@ -1045,12 +1071,14 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 			handle, err := storeOpenWithPassword(vaultStore, r.Context(), req.MasterPassword)
 			if err != nil {
 				if errors.Is(err, store.ErrInvalidPassword) {
+					rpcSrv.recordMasterPasswordFailure(unlockCallerKey, time.Now().UTC())
 					httpapi.WriteErrorEnvelope(w, http.StatusForbidden, "invalid_master_password", "Invalid master password", "master password is incorrect")
 					return
 				}
 				writeRedactedHTTPError(w, http.StatusLocked, "vault_locked", "Vault locked", err)
 				return
 			}
+			rpcSrv.clearMasterPasswordFailures(unlockCallerKey)
 			_ = handle
 		default:
 			httpapi.WriteErrorEnvelope(w, http.StatusBadRequest, "bad_request", "Bad request", "unlock method must be device-owner or master-password")
@@ -1085,6 +1113,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 	mux.HandleFunc("/v1/vault/master-password", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "POST is required")
+			return
+		}
+		if !requireLocalAdminTransport(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1168,6 +1199,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 	mux.HandleFunc("/v1/vault/lock", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			httpapi.WriteErrorEnvelope(w, http.StatusMethodNotAllowed, "method_not_allowed", http.StatusText(http.StatusMethodNotAllowed), "POST is required")
+			return
+		}
+		if !requireLocalAdminTransport(w, r) {
 			return
 		}
 		var req LockVaultRequest
@@ -1583,6 +1617,7 @@ func (s *rpcServer) broker() *brokerRPC {
 		events:      s.events,
 		keyring:     s.keyring,
 		matrixInput: s.accessMatrixInput,
+		inProcess:   true,
 	}
 }
 
@@ -2121,13 +2156,35 @@ func (h *runtimeEventHub) publish(name string, data string) {
 	h.mu.Unlock()
 }
 
+// requireLocalAdminTransport gates vault-mutating HTTP admin operations
+// (unlock/lock/master-password, approval decide, policy/config write). They are
+// allowed over the local unix socket (peer-UID enforced) always, and over TCP
+// loopback only where the HMAC key has per-app keyring ACL protection (Darwin).
+// Where the key is not ACL-protected (Linux), any same-UID process could read it
+// and forge an HMAC-signed request, so such operations must use the unix socket
+// (hasp-2dzp). Returns false (and writes 403) when the request must be rejected.
+var adminOverTCPAllowed = httpapi.AdminOverTCPAllowed
+
+func requireLocalAdminTransport(w http.ResponseWriter, r *http.Request) bool {
+	if httpapi.IsUnixTransport(r) || adminOverTCPAllowed() {
+		return true
+	}
+	writeRedactedHTTPError(w, http.StatusForbidden, "forbidden", "Forbidden",
+		errors.New("vault admin operations require the local unix socket on this platform"))
+	return false
+}
+
 func hmacValidatorMiddleware(validator *httpapi.Validator, recorder httpapi.AttestationFailureRecorder, next http.Handler) http.Handler {
 	if next == nil {
 		next = http.NotFoundHandler()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if validator == nil {
-			next.ServeHTTP(w, r)
+			// Fail closed: a missing validator means HMAC auth could not be wired,
+			// so no request should be served unauthenticated (hasp-yx6d). This is
+			// unreachable today (startHTTPServer hard-fails if the key/validator
+			// cannot be built) but must not become an open door if that changes.
+			writeRedactedHTTPError(w, http.StatusInternalServerError, "config_error", "Server misconfigured", errors.New("hmac validator unavailable"))
 			return
 		}
 		if err := validator.Validate(r); err != nil {
@@ -2222,7 +2279,7 @@ func defaultAccessMatrixInput(ctx context.Context, runtimePaths paths.Paths, ses
 }
 
 func openAccessMatrixHandle(ctx context.Context, vaultStore *store.Store) (*store.Handle, error) {
-	if password := os.Getenv("HASP_MASTER_PASSWORD"); strings.TrimSpace(password) != "" {
+	if password := daemonSecretGetenv("HASP_MASTER_PASSWORD"); strings.TrimSpace(password) != "" {
 		return storeOpenWithPassword(vaultStore, ctx, password)
 	}
 	return storeOpenWithConvenienceUnlock(vaultStore, ctx)
@@ -2910,6 +2967,11 @@ type brokerRPC struct {
 	// peer identity fail closed when peerPID is zero.
 	peerPID             uint32
 	backupSchedulerTick time.Duration
+	// inProcess is true only for the broker the daemon constructs for its own
+	// HTTP handlers (s.broker()); it is never set on a socket-served connection.
+	// Caller-controlled privileges that should be daemon-internal (e.g. opening a
+	// dashboard-hidden "Internal" session) are gated on this.
+	inProcess bool
 }
 
 func (b *brokerRPC) Ping(_ PingRequest, reply *PingResponse) error {
@@ -2948,7 +3010,10 @@ func (b *brokerRPC) OpenSession(req OpenSessionRequest, reply *OpenSessionRespon
 	}
 	var session Session
 	var err error
-	if req.Internal {
+	// Honor Internal (dashboard/audit-hidden session) only for the daemon's own
+	// in-process callers. A same-UID socket peer setting Internal would otherwise
+	// open a stealth session invisible to the operator UI/audit (hasp-83ed).
+	if req.Internal && b.inProcess {
 		session, err = b.sessions.OpenInternal(req.HostLabel, req.ProjectRoot, ttl, req.AgentSafe, req.ConsumerName)
 	} else {
 		session, err = b.sessions.Open(req.HostLabel, req.ProjectRoot, ttl, req.AgentSafe, req.ConsumerName)
@@ -3272,7 +3337,7 @@ func (b *brokerRPC) runScheduledBackups(ctx context.Context) {
 }
 
 func (b *brokerRPC) runScheduledBackupOnce(ctx context.Context, now time.Time) error {
-	passphrase := os.Getenv("HASP_BACKUP_PASSPHRASE")
+	passphrase := daemonSecretGetenv("HASP_BACKUP_PASSPHRASE")
 	if strings.TrimSpace(passphrase) == "" {
 		var err error
 		passphrase, err = b.backupPassphraseFromKeyring()
@@ -3708,6 +3773,13 @@ func (b *brokerRPC) decideApprovalTrusted(req DecideApprovalRequest, reply *Deci
 		if strings.TrimSpace(req.Reason) != "" {
 			return errors.New("reason is only valid for deny decisions")
 		}
+		// NOTE (hasp-yx6d): hold_duration_ms and auth_method are caller-asserted
+		// UI-intent fields, NOT cryptographic proofs. The HMAC on the request is
+		// the actual authorization (the key is Keychain-ACL-protected to HASP.app
+		// on Darwin). These checks reject obviously-malformed clients and stamp the
+		// audit trail; they do not themselves attest that a biometric occurred. If
+		// they must become authoritative audit evidence, extend the reveal
+		// attestation middleware to cover /v1/approvals/*/decide.
 		if req.HoldDurationMS < 1500 {
 			return errors.New("approval grant requires a 1.5s hold proof")
 		}

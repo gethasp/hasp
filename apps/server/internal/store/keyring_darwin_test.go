@@ -24,6 +24,31 @@ func TestUnsupportedKeyringReturnsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDarwinKeyringSetUsesNativeSetterWhenAvailable(t *testing.T) {
+	origNative := nativeKeychainSet
+	t.Cleanup(func() { nativeKeychainSet = origNative })
+
+	called := false
+	nativeKeychainSet = func(service, account, value string) error {
+		called = true
+		if service != "svc" || account != "acct" || value != "value" {
+			t.Fatalf("native setter args = %q %q %q", service, account, value)
+		}
+		return nil
+	}
+	if err := (DarwinKeyring{}).Set(context.Background(), "svc", "acct", "value"); err != nil {
+		t.Fatalf("native set: %v", err)
+	}
+	if !called {
+		t.Fatal("native setter was not called")
+	}
+
+	nativeKeychainSet = func(string, string, string) error { return errors.New("native fail") }
+	if err := (DarwinKeyring{}).Set(context.Background(), "svc", "acct", "value"); err == nil || !strings.Contains(err.Error(), "native fail") {
+		t.Fatalf("expected native failure, got %v", err)
+	}
+}
+
 func TestDarwinKeyringCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "security.log")

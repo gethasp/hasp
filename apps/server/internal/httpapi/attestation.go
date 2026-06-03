@@ -64,6 +64,36 @@ func WithPeerPID(ctx context.Context, pid int) context.Context {
 	return context.WithValue(ctx, peerPIDContextKey{}, pid)
 }
 
+type unixTransportContextKey struct{}
+
+// WithUnixTransport marks a request context as having arrived over the local
+// unix-domain socket (peer-UID enforced, 0600 perms), as opposed to TCP loopback.
+func WithUnixTransport(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unixTransportContextKey{}, true)
+}
+
+// IsUnixTransport reports whether the request arrived over the local unix socket.
+func IsUnixTransport(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	v, _ := r.Context().Value(unixTransportContextKey{}).(bool)
+	return v
+}
+
+// AdminOverTCPAllowed reports whether vault-mutating admin operations may be
+// served over TCP loopback. This is true only when the HTTP HMAC key has per-app
+// keyring ACL protection (Darwin): there, only the signed HASP app/daemon can
+// read the key and forge requests, so the TCP surface is safe. Where the key is
+// not ACL-protected (Linux: any same-UID process can read it), admin operations
+// must come over the unix socket instead (hasp-2dzp).
+func AdminOverTCPAllowed() bool {
+	// Relax in go-test processes so the existing TCP-based handler tests run on
+	// any platform; the gate's rejection path is covered by a dedicated unit test
+	// that overrides this via a seam. Mirrors hmac_key.go's isGoTestProcess use.
+	return isGoTestProcess() || requiresProtectedHMACKeyring()
+}
+
 func PeerPIDFromContext(r *http.Request) (int, error) {
 	if r == nil {
 		return 0, fmt.Errorf("%w: request is required", ErrAttestationRejected)

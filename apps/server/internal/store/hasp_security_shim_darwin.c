@@ -74,6 +74,67 @@ done:
   return status;
 }
 
+// HASPKeychainAddTrustingCLI upserts a generic-password item into the file-based
+// default keychain (the same one the `security` CLI uses) with an ACL that trusts
+// /usr/bin/security. This lets the convenience device key be written via the
+// in-process API instead of `security add-generic-password -w <value>` (which
+// exposes the value to same-uid `ps`, hasp-4rqu) while keeping the existing CLI
+// Get/Delete working — they invoke /usr/bin/security, which the ACL trusts. This
+// preserves the prior posture (any same-user process can read it via the CLI).
+OSStatus HASPKeychainAddTrustingCLI(
+  const char *service,
+  const char *account,
+  const unsigned char *bytes,
+  CFIndex length
+) {
+  SecKeychainRef keychain = NULL;
+  SecTrustedApplicationRef cliApp = NULL;
+  CFArrayRef trustedApps = NULL;
+  SecAccessRef access = NULL;
+  SecKeychainItemRef existing = NULL;
+
+  OSStatus status = hasp_default_keychain(&keychain);
+  if (status != errSecSuccess) return status;
+
+  UInt32 serviceLen = (UInt32)strlen(service);
+  UInt32 accountLen = (UInt32)strlen(account);
+
+  // Upsert: remove any existing item first so the create cannot duplicate-fail.
+  if (SecKeychainFindGenericPassword(
+        keychain, serviceLen, service, accountLen, account, NULL, NULL, &existing) == errSecSuccess
+      && existing != NULL) {
+    SecKeychainItemDelete(existing);
+    CFRelease(existing);
+    existing = NULL;
+  }
+
+  status = SecTrustedApplicationCreateFromPath("/usr/bin/security", &cliApp);
+  if (status != errSecSuccess) goto done;
+  const void *apps[] = { cliApp };
+  trustedApps = CFArrayCreate(NULL, apps, 1, &kCFTypeArrayCallBacks);
+  if (trustedApps == NULL) {
+    status = errSecParam;
+    goto done;
+  }
+  status = SecAccessCreate(CFSTR("hasp convenience key"), trustedApps, &access);
+  if (status != errSecSuccess) goto done;
+
+  SecKeychainAttribute attrs[] = {
+    { kSecServiceItemAttr, serviceLen, (void *)service },
+    { kSecAccountItemAttr, accountLen, (void *)account },
+  };
+  SecKeychainAttributeList attrList = { 2, attrs };
+  status = SecKeychainItemCreateFromContent(
+    kSecGenericPasswordItemClass, &attrList, (UInt32)length, bytes, keychain, access, NULL);
+
+done:
+  if (access != NULL) CFRelease(access);
+  if (trustedApps != NULL) CFRelease(trustedApps);
+  if (cliApp != NULL) CFRelease(cliApp);
+  if (keychain != NULL) CFRelease(keychain);
+  return status;
+}
+
 OSStatus HASPKeychainCopy(
   const char *service,
   const char *account,

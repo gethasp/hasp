@@ -12,6 +12,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/reposcan"
+	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -83,6 +84,85 @@ func TestCoverageMCPGrantParseAndAuthorizationEdges(t *testing.T) {
 	}
 	if _, err := callCapture(context.Background(), handle, toolCall{Name: "hasp_capture", Arguments: map[string]any{"project_root": projectRoot, "name": "api", "value": "x", "grant_secret": "later"}}); err == nil {
 		t.Fatal("expected callCapture invalid grant_secret")
+	}
+}
+
+func TestCallListRecoversStaleInheritedEnvSessionToken(t *testing.T) {
+	lockMCPSeams(t)
+	origEnsureSession := ensureSessionFn
+	origAuthorizeAndConsume := authorizeAndConsumeMCPFn
+	t.Cleanup(func() {
+		ensureSessionFn = origEnsureSession
+		authorizeAndConsumeMCPFn = origAuthorizeAndConsume
+	})
+	t.Setenv(mcpEnvSessionToken, "stale-token")
+
+	handle, projectRoot := newMCPCoverageHandle(t)
+	ensureCalls := []string{}
+	ensureSessionFn = func(_ context.Context, _ string, providedToken string, _ string) (brokerops.Session, error) {
+		ensureCalls = append(ensureCalls, providedToken)
+		if providedToken == "stale-token" {
+			return brokerops.Session{}, errors.New("resolve session: session not found")
+		}
+		return brokerops.Session{Token: "session-token"}, nil
+	}
+	authorizeAndConsumeMCPFn = func(_ *store.Handle, request store.AccessRequest) (store.AccessDecision, error) {
+		if request.SessionToken != "session-token" {
+			t.Fatalf("authorization used stale session token %q", request.SessionToken)
+		}
+		return store.AccessDecision{Allowed: true}, nil
+	}
+
+	result, err := callList(context.Background(), handle, toolCall{Name: "hasp_list", Arguments: map[string]any{"project_root": projectRoot}})
+	if err != nil {
+		t.Fatalf("callList: %v", err)
+	}
+	if result["lease_active"] != true {
+		t.Fatalf("unexpected list result %+v", result)
+	}
+	if len(ensureCalls) != 2 || ensureCalls[0] != "stale-token" || ensureCalls[1] != "" {
+		t.Fatalf("ensure calls = %#v", ensureCalls)
+	}
+}
+
+func TestCallExecuteRecoversWrongProjectInheritedEnvSessionToken(t *testing.T) {
+	lockMCPSeams(t)
+	origEnsureSession := ensureSessionFn
+	origRunnerExecute := runnerExecuteMCPFn
+	t.Cleanup(func() {
+		ensureSessionFn = origEnsureSession
+		runnerExecuteMCPFn = origRunnerExecute
+	})
+	t.Setenv(mcpEnvSessionToken, "other-project-token")
+
+	handle, projectRoot := newMCPCoverageHandle(t)
+	ensureCalls := []string{}
+	ensureSessionFn = func(_ context.Context, _ string, providedToken string, _ string) (brokerops.Session, error) {
+		ensureCalls = append(ensureCalls, providedToken)
+		if providedToken == "other-project-token" {
+			return brokerops.Session{}, errors.New("session project root mismatch: have /other want /repo")
+		}
+		return brokerops.Session{Token: "session-token"}, nil
+	}
+	runnerExecuteMCPFn = func(_ context.Context, input runner.Input) (runner.Result, error) {
+		if len(input.Command) != 1 || input.Command[0] != "true" {
+			t.Fatalf("runner command = %#v", input.Command)
+		}
+		return runner.Result{ExitCode: 0}, nil
+	}
+
+	result, err := callExecute(context.Background(), handle, toolCall{Name: "hasp_run", Arguments: map[string]any{
+		"project_root": projectRoot,
+		"command":      []any{"true"},
+	}})
+	if err != nil {
+		t.Fatalf("callExecute: %v", err)
+	}
+	if result["exit_code"] != 0 {
+		t.Fatalf("unexpected execute result %+v", result)
+	}
+	if len(ensureCalls) != 2 || ensureCalls[0] != "other-project-token" || ensureCalls[1] != "" {
+		t.Fatalf("ensure calls = %#v", ensureCalls)
 	}
 }
 

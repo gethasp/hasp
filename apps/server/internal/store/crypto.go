@@ -61,6 +61,11 @@ func deriveFromSpec(masterPassword string, spec kdfSpec) ([]byte, error) {
 	case kdfNamePBKDF2, "":
 		// Empty Name preserves the read-path for envelopes written before the
 		// dispatch table existed; those entries always meant pbkdf2-sha256.
+		if spec.Iterations <= 0 {
+			// Mirror the argon2id guard: a tampered or zeroed iteration count
+			// would silently derive a one-round key. Fail loudly instead.
+			return nil, fmt.Errorf("invalid pbkdf2 kdf params (iterations=%d)", spec.Iterations)
+		}
 		return pbkdf2.Key(sha256.New, masterPassword, salt, spec.Iterations, spec.KeyLength)
 	default:
 		return nil, fmt.Errorf("unknown kdf %q in envelope", spec.Name)

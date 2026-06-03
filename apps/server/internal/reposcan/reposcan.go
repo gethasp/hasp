@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
@@ -26,6 +27,12 @@ type Deps struct {
 	WalkDir    func(root string, fn fs.WalkDirFunc) error
 	GitLsFiles func(ctx context.Context, root string) ([]string, error)
 	ByteIndex  func(data []byte, needle []byte) int
+	// Staged-content scanning (pre-commit gate): these read the INDEX (stage 0)
+	// blobs rather than the working tree, so a secret that is staged then
+	// overwritten in the working tree cannot slip past the gate.
+	GitStagedFiles func(ctx context.Context, root string) ([]string, error)
+	StagedBlobSize func(ctx context.Context, root, rel string) (int64, error)
+	ReadStagedBlob func(ctx context.Context, root, rel string) ([]byte, error)
 }
 
 type Match struct {
@@ -72,6 +79,36 @@ func DefaultDeps() Deps {
 			return files, nil
 		},
 		ByteIndex: bytes.Index,
+		GitStagedFiles: func(ctx context.Context, root string) ([]string, error) {
+			// Added/Copied/Modified/Renamed entries in the index — i.e. exactly the
+			// file content that the pending commit will contain.
+			cmd := gitsafe.BuildCommand(ctx, root, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+			out, err := cmd.Output()
+			if err != nil {
+				return nil, err
+			}
+			parts := bytes.Split(out, []byte{0})
+			files := make([]string, 0, len(parts))
+			for _, part := range parts {
+				trimmed := strings.TrimSpace(string(part))
+				if trimmed != "" {
+					files = append(files, trimmed)
+				}
+			}
+			return files, nil
+		},
+		StagedBlobSize: func(ctx context.Context, root, rel string) (int64, error) {
+			cmd := gitsafe.BuildCommand(ctx, root, "cat-file", "-s", ":"+rel)
+			out, err := cmd.Output()
+			if err != nil {
+				return 0, err
+			}
+			return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+		},
+		ReadStagedBlob: func(ctx context.Context, root, rel string) ([]byte, error) {
+			cmd := gitsafe.BuildCommand(ctx, root, "cat-file", "blob", ":"+rel)
+			return cmd.Output()
+		},
 	}
 }
 
@@ -100,6 +137,43 @@ func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, 
 			continue
 		}
 		data, readErr := deps.ReadFile(abs)
+		if readErr != nil {
+			return Result{}, readErr
+		}
+		for _, item := range compiled {
+			if hitNeedles(data, item.needles, deps.ByteIndex) {
+				result.Matches = append(result.Matches, Match{Path: rel, ItemName: item.name})
+			}
+		}
+	}
+	return result, nil
+}
+
+// ScanStaged scans the staged INDEX content (stage 0 blobs) rather than the
+// working tree. This is the correct source for a pre-commit gate: a secret that
+// is `git add`-ed and then overwritten in the working tree is still in the
+// commit, and Scan (working-tree) would miss it. Reads fail closed.
+func ScanStaged(ctx context.Context, root string, items []store.Item, maxBytes int64, deps Deps) (Result, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBytes
+	}
+	deps = withDefaults(deps)
+	files, err := deps.GitStagedFiles(ctx, root)
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{Walker: "git-staged"}
+	compiled := compileItems(items)
+	for _, rel := range files {
+		size, sizeErr := deps.StagedBlobSize(ctx, root, rel)
+		if sizeErr != nil {
+			return Result{}, sizeErr
+		}
+		if size > maxBytes {
+			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: size, Reason: "over_max_bytes"})
+			continue
+		}
+		data, readErr := deps.ReadStagedBlob(ctx, root, rel)
 		if readErr != nil {
 			return Result{}, readErr
 		}
@@ -196,6 +270,15 @@ func withDefaults(deps Deps) Deps {
 	}
 	if deps.ByteIndex == nil {
 		deps.ByteIndex = defaults.ByteIndex
+	}
+	if deps.GitStagedFiles == nil {
+		deps.GitStagedFiles = defaults.GitStagedFiles
+	}
+	if deps.StagedBlobSize == nil {
+		deps.StagedBlobSize = defaults.StagedBlobSize
+	}
+	if deps.ReadStagedBlob == nil {
+		deps.ReadStagedBlob = defaults.ReadStagedBlob
 	}
 	return deps
 }

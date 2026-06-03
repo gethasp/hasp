@@ -31,19 +31,20 @@ import (
 // can drive a single failure branch without holding the process-wide
 // app-seam mutex.
 type execDeps struct {
-	AuthorizeReference func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
-	AuthorizeItem      func(handle *store.Handle, bindingID, sessionToken string, item store.Item, op store.Operation, projScope, secScope store.GrantScope, window time.Duration) (store.Item, error)
-	RunnerExecute      func(ctx context.Context, input runner.Input) (runner.Result, error)
-	ResolveBindingView func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
-	ResolveReference   func(handle *store.Handle, ctx context.Context, projectRoot, reference string) (store.ResolvedReference, error)
-	GetItem            func(handle *store.Handle, name string) (store.Item, error)
-	GrantProjectLease  func(handle *store.Handle, bindingID, sessionToken string, scope store.GrantScope, window time.Duration) (store.ProjectLease, error)
-	GrantConvenience   func(handle *store.Handle, bindingID, sessionToken, dest string, items []string, principal string, scope store.GrantScope, window time.Duration) (store.ConvenienceGrant, error)
-	WalkProjectDir     func(root string, fn fs.WalkDirFunc) error
-	AbsPath            func(path string) (string, error)
-	EvalSymlinks       func(path string) (string, error)
-	OpenWriteEnvFile   func(path string, flag int, perm os.FileMode) (writeEnvFile, error)
-	GitLsFiles         func(ctx context.Context, root string) ([]string, error)
+	AuthorizeReference      func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
+	AuthorizeItem           func(handle *store.Handle, bindingID, sessionToken string, item store.Item, op store.Operation, projScope, secScope store.GrantScope, window time.Duration) (store.Item, error)
+	RunnerExecute           func(ctx context.Context, input runner.Input) (runner.Result, error)
+	ResolveBindingView      func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
+	ResolveReference        func(handle *store.Handle, ctx context.Context, projectRoot, reference string) (store.ResolvedReference, error)
+	GetItem                 func(handle *store.Handle, name string) (store.Item, error)
+	GrantProjectLease       func(handle *store.Handle, bindingID, sessionToken string, scope store.GrantScope, window time.Duration) (store.ProjectLease, error)
+	GrantConvenience        func(handle *store.Handle, bindingID, sessionToken, dest string, items []string, principal string, scope store.GrantScope, window time.Duration) (store.ConvenienceGrant, error)
+	ConsumeConvenienceGrant func(handle *store.Handle, bindingID, dest string, items []string) error
+	WalkProjectDir          func(root string, fn fs.WalkDirFunc) error
+	AbsPath                 func(path string) (string, error)
+	EvalSymlinks            func(path string) (string, error)
+	OpenWriteEnvFile        func(path string, flag int, perm os.FileMode) (writeEnvFile, error)
+	GitLsFiles              func(ctx context.Context, root string) ([]string, error)
 	// RunnerStdin is the io.Reader forwarded to the child process as its stdin.
 	// When nil, os.Stdin is used in production and nil (no stdin) in tests.
 	RunnerStdin io.Reader
@@ -51,19 +52,20 @@ type execDeps struct {
 
 func defaultExecDeps() execDeps {
 	return execDeps{
-		AuthorizeReference: brokerops.AuthorizeReference,
-		AuthorizeItem:      brokerops.AuthorizeItem,
-		RunnerExecute:      runner.Execute,
-		ResolveBindingView: (*store.Handle).ResolveBindingView,
-		ResolveReference:   (*store.Handle).ResolveReference,
-		GetItem:            (*store.Handle).GetItem,
-		GrantProjectLease:  (*store.Handle).GrantProjectLease,
-		GrantConvenience:   (*store.Handle).GrantConvenience,
-		WalkProjectDir:     filepath.WalkDir,
-		AbsPath:            filepath.Abs,
-		EvalSymlinks:       filepath.EvalSymlinks,
-		RunnerStdin:        os.Stdin,
-		OpenWriteEnvFile:   openWriteEnvFile,
+		AuthorizeReference:      brokerops.AuthorizeReference,
+		AuthorizeItem:           brokerops.AuthorizeItem,
+		RunnerExecute:           runner.Execute,
+		ResolveBindingView:      (*store.Handle).ResolveBindingView,
+		ResolveReference:        (*store.Handle).ResolveReference,
+		GetItem:                 (*store.Handle).GetItem,
+		GrantProjectLease:       (*store.Handle).GrantProjectLease,
+		GrantConvenience:        (*store.Handle).GrantConvenience,
+		ConsumeConvenienceGrant: (*store.Handle).ConsumeConvenienceGrant,
+		WalkProjectDir:          filepath.WalkDir,
+		AbsPath:                 filepath.Abs,
+		EvalSymlinks:            filepath.EvalSymlinks,
+		RunnerStdin:             os.Stdin,
+		OpenWriteEnvFile:        openWriteEnvFile,
 		GitLsFiles: func(ctx context.Context, root string) ([]string, error) {
 			cmd := gitsafe.BuildCommand(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 			out, err := cmd.Output()
@@ -283,12 +285,17 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		Window:           effectiveWindow,
 		AuthorizeWrapErr: wrapAuthorizeReferenceError,
 		ConfigureRunner: func(items []store.Item, input runner.Input) runner.Input {
+			// Under a TTY both streams carry ANSI escapes; stderr must use the
+			// ANSI-aware writer too, else a secret split by a color sequence on
+			// stderr (chalk/rich/termcolor error output) passes unredacted. The
+			// ANSI-aware writer is identical to the plain one on escape-free input.
 			if tty {
 				swOut = redactor.NewStreamingWriterANSIAware(stdout, items)
+				swErr = redactor.NewStreamingWriterANSIAware(stderr, items)
 			} else {
 				swOut = redactor.NewStreamingWriter(stdout, items)
+				swErr = redactor.NewStreamingWriter(stderr, items)
 			}
-			swErr = redactor.NewStreamingWriter(stderr, items)
 			input.Stdin = deps.RunnerStdin
 			input.Stdout = swOut
 			input.Stderr = swErr
@@ -632,6 +639,8 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	allowManagedSecrets := fs.Bool("allow-managed-secrets", false, "")
+	stagedMode := fs.Bool("staged", false, "")
+	failOnSkipped := fs.Bool("fail-on-skipped", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -644,10 +653,23 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	vaultWarning := ""
 	var items []store.Item
 	if err != nil {
-		if !errors.Is(err, store.ErrKeyringUnavailable) && !errors.Is(err, store.ErrVaultNotInitialized) {
+		switch {
+		case errors.Is(err, store.ErrVaultNotInitialized):
+			// No vault configured — there is nothing to match against. Fail open
+			// with a note; blocking commits when hasp isn't set up is absurd.
+			vaultWarning = "vault not initialized; managed-value matching was skipped"
+		case errors.Is(err, store.ErrKeyringUnavailable):
+			// Vault exists but is locked/inaccessible. A security gate must fail
+			// CLOSED here, otherwise locking the vault (or killing the daemon)
+			// silently disables all managed-secret detection.
+			if !*allowManagedSecrets {
+				return newAppError(errCodeVaultLocked, "vault is locked; cannot scan for managed secrets").
+					withHint("unlock the vault, or re-run with --allow-managed-secrets to bypass intentionally")
+			}
+			vaultWarning = "vault locked; managed-value matching was skipped (override)"
+		default:
 			return err
 		}
-		vaultWarning = "vault unavailable; managed-value matching was skipped"
 	} else {
 		items = handle.ListItems()
 	}
@@ -656,7 +678,14 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 		return err
 	}
 	noteResolvedProjectRootIfImplicit(fs, *jsonOutput, root, stderr)
-	scanResult, err := reposcan.Scan(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
+	var scanResult reposcan.Result
+	if *stagedMode {
+		// Pre-commit gate: scan the staged INDEX content, not the working tree, so
+		// a staged-then-overwritten secret cannot slip into the commit (hasp-8buu).
+		scanResult, err = reposcan.ScanStaged(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
+	} else {
+		scanResult, err = reposcan.Scan(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
+	}
 	if err != nil {
 		return err
 	}
@@ -683,6 +712,15 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 		}
 		return newAppError(errCodeRepoLeak, "managed secrets detected in repository files").
 			withHint("re-run with --allow-managed-secrets if the override is intentional")
+	}
+	// Opt-in strict mode: a file skipped (e.g. over the size cap) was not scanned,
+	// so the gate cannot certify it. Fail closed when asked (hasp-7dx8).
+	if *failOnSkipped && len(scanResult.Skipped) > 0 && !*allowManagedSecrets {
+		_ = renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
+		})
+		return newAppError(errCodeRepoLeak, fmt.Sprintf("%d file(s) skipped without being scanned", len(scanResult.Skipped))).
+			withHint("scan smaller files, raise the limit, or re-run with --allow-managed-secrets")
 	}
 	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)

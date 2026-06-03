@@ -3,16 +3,17 @@ package mcp
 import "github.com/gethasp/hasp/apps/server/internal/store"
 
 func catalog() []tool {
+	optionalSessionToken := stringSchema("Optional daemon-backed session token. Usually omit this; HASP will open or reuse a local MCP session. Explicit stale tokens fail closed.")
 	tools := []tool{
 		{Name: "hasp_list", Description: "List project-scoped references and safe named refs. Prefer the named_reference form for brokered use; do not retrieve raw secret values.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
+			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 			"grant_project": grantSchema(),
 		})},
 		{Name: "hasp_check", Description: "Scan the project for managed secret leaks", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
+			"session_token": optionalSessionToken,
 			"grant_project": grantSchema(),
 		})},
 		{Name: "hasp_targets", Description: "List sanitized manifest targets for a project. Returns target names, refs, delivery kinds, and prerequisite status, never values or repo-controlled command argv.", InputSchema: schema(map[string]any{
@@ -24,7 +25,7 @@ func catalog() []tool {
 		}, "target")},
 		{Name: "hasp_run", Description: "Run a command with brokered secret access. Prefer this over raw secret inspection. Reference values may be opaque repo aliases like secret_01 or named refs like @OPENAI_API_KEY.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
+			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 			"grant_project": grantSchema(),
 			"grant_secret":  grantSchema(),
@@ -34,7 +35,7 @@ func catalog() []tool {
 		}, "command")},
 		{Name: "hasp_inject", Description: "Run a command with safe file injection. Prefer this over fetching raw file secrets into agent context. Reference values may be opaque repo aliases like file_01 or named refs like @GOOGLE_APPLICATION_CREDENTIALS.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
-			"session_token": stringSchema("Optional daemon-backed session token"),
+			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 			"grant_project": grantSchema(),
 			"grant_secret":  grantSchema(),
@@ -47,7 +48,7 @@ func catalog() []tool {
 		tools = append(tools,
 			tool{Name: "hasp_capture", Description: "Capture a new unmanaged candidate secret into HASP", InputSchema: schema(map[string]any{
 				"project_root":  stringSchema("Bound project root"),
-				"session_token": stringSchema("Optional daemon-backed session token"),
+				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 				"grant_project": grantSchema(),
 				"grant_secret":  grantSchema(),
@@ -59,7 +60,7 @@ func catalog() []tool {
 			}, "name", "value")},
 			tool{Name: "hasp_secret_add", Description: "Add a secret to the personal vault and optionally expose it in the current repo", InputSchema: schema(map[string]any{
 				"project_root":  stringSchema("Optional repo root to expose into"),
-				"session_token": stringSchema("Optional daemon-backed session token"),
+				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 				"grant_project": grantSchema(),
 				"grant_secret":  grantSchema(),
@@ -72,7 +73,7 @@ func catalog() []tool {
 			}, "name", "value")},
 			tool{Name: "hasp_secret_update", Description: "Update an existing secret and optionally keep it exposed in the current repo", InputSchema: schema(map[string]any{
 				"project_root":  stringSchema("Optional repo root to keep exposed in"),
-				"session_token": stringSchema("Optional daemon-backed session token"),
+				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
 				"grant_project": grantSchema(),
 				"grant_secret":  grantSchema(),
@@ -105,7 +106,7 @@ func catalog() []tool {
 	tools = append(tools,
 		tool{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Optional repo root to check availability in"),
-			"session_token": stringSchema("Optional daemon-backed session token; omitted callers get or reuse a local MCP session"),
+			"session_token": optionalSessionToken,
 			"grant_project": grantSchema(),
 			"host_label":    stringSchema("Optional caller label"),
 			"name":          stringSchema("Secret name"),

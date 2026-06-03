@@ -345,6 +345,68 @@ func TestServerUnixPeerPIDContextBranches(t *testing.T) {
 	}
 }
 
+func TestServerUnixTransportWithoutPeerPIDSource(t *testing.T) {
+	homeDir, err := os.MkdirTemp("/tmp", "hasp-httpapi-")
+	if err != nil {
+		t.Fatalf("short temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	socketPath := filepath.Join(homeDir, "daemon.sock")
+	seen := make(chan struct {
+		unix  bool
+		hasID bool
+	}, 1)
+	server, err := NewServer(paths.Paths{HomeDir: homeDir, HTTPPortFilePath: filepath.Join(homeDir, ".testsock-port")}, Options{
+		V6Addr:         "",
+		UnixSocketPath: socketPath,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, pidErr := PeerPIDFromContext(r)
+			seen <- struct {
+				unix  bool
+				hasID bool
+			}{unix: IsUnixTransport(r), hasID: pidErr == nil}
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	})
+	if err != nil {
+		t.Fatalf("new unix server: %v", err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(ctx) }()
+	waitForPath(t, socketPath)
+
+	client := &http.Client{Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}}
+	resp, err := client.Get("http://unix/")
+	if err != nil {
+		t.Fatalf("unix request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("unix request status = %d", resp.StatusCode)
+	}
+	select {
+	case got := <-seen:
+		if !got.unix || got.hasID {
+			t.Fatalf("unix/peer pid context = %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for unix transport observation")
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("serve unix: %v", err)
+	}
+}
+
 func TestServerServeWritesExclusivePortFileAndServesLoopback(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HASP_HOME", homeDir)

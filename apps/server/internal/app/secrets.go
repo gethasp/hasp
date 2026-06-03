@@ -756,6 +756,10 @@ func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) 
 			"total_entries":       report.TotalEntries,
 			"first_corruption_at": report.FirstCorruptionAt,
 		}
+		if report.UnauthenticatedAfterKeyed > 0 {
+			payload["unauthenticated_after_keyed"] = report.UnauthenticatedAfterKeyed
+			payload["first_unauthenticated_at"] = report.FirstUnauthenticatedAt
+		}
 		if !report.ChainOK {
 			payload["status"] = "corrupt"
 			payload["chain"] = "corrupt"
@@ -767,11 +771,17 @@ func auditCommandWithArgs(ctx context.Context, args []string, stdout io.Writer) 
 			if !report.ChainOK {
 				status = "corrupt"
 				lead = "The local audit chain failed verification."
+			} else if report.UnauthenticatedAfterKeyed > 0 {
+				lead = "The chain links cleanly, but some entries written while the vault was locked are not HMAC-authenticated and must be treated as untrusted."
 			}
-			return renderSimpleAction(ctx, w, "Audit verified", lead,
+			pairs := [][2]string{
 				cliPair("Status", status),
 				cliPair("Entries", strconv.Itoa(report.TotalEntries)),
-			)
+			}
+			if report.UnauthenticatedAfterKeyed > 0 {
+				pairs = append(pairs, cliPair("Unauthenticated entries", strconv.Itoa(report.UnauthenticatedAfterKeyed)))
+			}
+			return renderSimpleAction(ctx, w, "Audit verified", lead, pairs...)
 		})
 		if err != nil {
 			return err

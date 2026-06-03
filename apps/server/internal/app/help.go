@@ -1056,13 +1056,20 @@ Scan a repo for managed values that leaked into files.
 Flags
   --project-root <path>      repo root to scan (default: current directory)
   --json                     emit machine-readable result on stdout
+  --staged                   scan the staged index content (what the commit will
+                             contain) instead of the working tree; used by the
+                             pre-commit hook so a staged-then-overwritten secret
+                             cannot slip past
+  --fail-on-skipped          exit non-zero if any file was skipped (e.g. over the
+                             size cap) and therefore not scanned
   --allow-managed-secrets    suppress exit-1 even when managed values are found
-                             (useful in CI scenarios that treat the scan as
-                             advisory only)
+                             (also bypasses the locked-vault block); useful in CI
+                             scenarios that treat the scan as advisory only
 
 Examples
   hasp check-repo --project-root .
   hasp check-repo --project-root . --json
+  hasp check-repo --project-root . --staged   # pre-commit: scan staged content
 `
 
 const proofHelpText = `hasp proof

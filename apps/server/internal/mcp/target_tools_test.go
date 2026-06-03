@@ -41,7 +41,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 	if listing["manifest_hash"] == "" {
 		t.Fatalf("expected manifest hash in listing: %+v", listing)
 	}
-	explain, err := callTargetExplain(context.Background(), toolCall{
+	explain, err := callTargetExplain(context.Background(), handle, toolCall{
 		Name: "hasp_target_explain",
 		Arguments: map[string]any{
 			"project_root": projectRoot,
@@ -63,7 +63,7 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 	if explain["target"] != "server.dev" || explain["has_command"] != true {
 		t.Fatalf("unexpected target explain payload: %+v", explain)
 	}
-	if _, err := callTargetExplain(context.Background(), toolCall{
+	if _, err := callTargetExplain(context.Background(), handle, toolCall{
 		Name:      "hasp_target_explain",
 		Arguments: map[string]any{"project_root": projectRoot},
 	}); err == nil || !strings.Contains(err.Error(), "target is required") {
@@ -159,14 +159,14 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_target_explain", Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
 		t.Fatalf("dispatch hasp_target_explain: %v", err)
 	}
-	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
+	if explain, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
 		t.Fatalf("explain file target: %v", err)
 	} else if kinds, ok := explain["delivery_kinds"].([]string); !ok || len(kinds) != 1 || kinds[0] != store.ManifestDeliveryFile {
 		t.Fatalf("unexpected file delivery kinds: %+v", explain)
 	}
 
 	writeMCPXCConfigManifestForCoverage(t, projectRoot)
-	if explain, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "build.config"}}); err != nil {
+	if explain, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "build.config"}}); err != nil {
 		t.Fatalf("explain xcconfig target: %v", err)
 	} else if kinds, ok := explain["delivery_kinds"].([]string); !ok || len(kinds) != 1 || kinds[0] != store.ManifestDeliveryXCConfig {
 		t.Fatalf("unexpected xcconfig delivery kinds: %+v", explain)
@@ -189,7 +189,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"}}); err == nil {
 		t.Fatal("expected target listing canonical error")
 	}
-	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil {
+	if _, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil {
 		t.Fatal("expected target explain canonical error")
 	}
 	if _, err := callExecute(context.Background(), handle, toolCall{
@@ -202,7 +202,7 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	if _, err := callTargets(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": t.TempDir(), "session_token": "session-token"}}); err == nil {
 		t.Fatal("expected missing manifest error")
 	}
-	if _, err := callTargetExplain(context.Background(), toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "missing"}}); err == nil {
+	if _, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "missing"}}); err == nil {
 		t.Fatal("expected target explain expansion error")
 	}
 	if got := sanitizeMCPDescription(" <bad>\n" + strings.Repeat("x", 300)); strings.ContainsAny(got, "<>\n") || len(got) != 240 {
@@ -213,6 +213,26 @@ func TestMCPTargetCoverageEdges(t *testing.T) {
 	}
 	if got := uniqueStrings([]string{"b", "a", "a", "b"}); len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("uniqueStrings = %+v", got)
+	}
+}
+
+func TestMCPTargetExplainBindingFailures(t *testing.T) {
+	lockMCPSeams(t)
+	handle, projectRoot := setupMCPTargetFixture(t)
+	origResolveBinding := resolveBindingViewMCPFn
+	t.Cleanup(func() { resolveBindingViewMCPFn = origResolveBinding })
+
+	resolveBindingViewMCPFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{}, nil, errors.New("binding lookup failed")
+	}
+	if _, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil || !strings.Contains(err.Error(), "binding lookup failed") {
+		t.Fatalf("expected binding lookup failure, got %v", err)
+	}
+	resolveBindingViewMCPFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
+		return store.Binding{}, nil, nil
+	}
+	if _, err := callTargetExplain(context.Background(), handle, toolCall{Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"}}); err == nil || !strings.Contains(err.Error(), "not managed yet") {
+		t.Fatalf("expected unmanaged binding failure, got %v", err)
 	}
 }
 
@@ -260,7 +280,7 @@ func TestMCPTargetToolsExposeCredentialSetMetadata(t *testing.T) {
 		}
 	}
 
-	explain, err := callTargetExplain(context.Background(), toolCall{
+	explain, err := callTargetExplain(context.Background(), handle, toolCall{
 		Name:      "hasp_target_explain",
 		Arguments: map[string]any{"project_root": projectRoot, "target": "server.dev"},
 	})

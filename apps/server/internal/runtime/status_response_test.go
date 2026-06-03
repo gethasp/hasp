@@ -3388,3 +3388,55 @@ type runtimeAttestorFunc func(pid int) error
 func (f runtimeAttestorFunc) VerifyPID(pid int) error {
 	return f(pid)
 }
+
+// TestHTTPVaultUnlockRateLimitsMasterPassword verifies the unlock handler's
+// master-password branch throttles repeated failures (hasp-g84c), matching the
+// /v1/vault/master-password change endpoint. The rate-limit check fires before
+// any vault open, so no initialized vault is needed.
+func TestHTTPVaultUnlockRateLimitsMasterPassword(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	t.Cleanup(func() { httpHMACKey = oldHTTPHMACKey })
+
+	home, err := os.MkdirTemp("", "hasp-unlock-rl-*")
+	if err != nil {
+		t.Fatalf("create temp home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	rpcSrv := newRPCServer(paths.Paths{
+		HomeDir:            home,
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	})
+
+	errCh := make(chan error, 1)
+	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = httpSrv.Close()
+	}()
+
+	// Pre-seed the shared per-caller failure counter for the loopback caller
+	// (masterPasswordCallerKey resolves a TCP loopback peer to "remote:127.0.0.1")
+	// past the lockout threshold.
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		rpcSrv.recordMasterPasswordFailure("remote:127.0.0.1", now)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/v1/vault/unlock", httpSrv.Ports().V4)
+	body, status := signedHTTPJSONStatus(t, ctx, key, http.MethodPost, url,
+		[]byte(`{"method":"master-password","master_password":"wrong"}`))
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after repeated failures, got %d body=%s", status, body)
+	}
+}

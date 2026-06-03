@@ -22,6 +22,7 @@ var (
 	grantProjectLeaseFn    = (*store.Handle).GrantProjectLease
 	grantSecretUseFn       = (*store.Handle).GrantSecretUse
 	grantConvenienceFn     = (*store.Handle).GrantConvenience
+	consumeProjectLeaseFn  = (*store.Handle).ConsumeProjectLease
 )
 
 // Flow:
@@ -294,6 +295,13 @@ func AuthorizeCapture(
 	}
 	if !writeGrant {
 		return errors.New("capture write grant required")
+	}
+	// New-item capture never returns an "Allowed" decision (it always prompts for
+	// a write grant), so AuthorizeAndConsume's consume path never fires. Spend the
+	// one-time project lease here so a single capture approval can't be reused for
+	// a later list/run. No-op for session/window leases.
+	if err := consumeProjectLeaseFn(handle, bindingID, sessionToken); err != nil {
+		return err
 	}
 	return nil
 }

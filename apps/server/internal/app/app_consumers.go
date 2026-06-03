@@ -180,6 +180,9 @@ func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer stor
 		case store.AppDeliveryTempFile:
 			files[bindingSpec.Target] = item.Value
 		case store.AppDeliveryTempDotenv:
+			if err := rejectLineDeliveryNewline(bindingSpec.Target, item.Value); err != nil {
+				return runner.Result{}, err
+			}
 			dotenvLines = append(dotenvLines, bindingSpec.Target+"="+string(item.Value))
 		default:
 			return runner.Result{}, fmt.Errorf("unsupported app delivery %q", bindingSpec.Delivery)

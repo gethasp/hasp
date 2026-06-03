@@ -13,6 +13,23 @@ func TestDeriveFromSpecRejectsBadSalt(t *testing.T) {
 	}
 }
 
+// TestDeriveFromSpecRejectsZeroPBKDF2Iterations guards the pbkdf2 branch
+// against a tampered/zeroed iteration count silently deriving a one-round
+// key (hasp-g84c). Mirrors the existing argon2id param guard.
+func TestDeriveFromSpecRejectsZeroPBKDF2Iterations(t *testing.T) {
+	for _, name := range []string{"", kdfNamePBKDF2} {
+		spec := kdfSpec{Name: name, Salt: "AAAAAAAA", Iterations: 0, KeyLength: keyLength}
+		if _, err := deriveFromSpec("password", spec); err == nil {
+			t.Fatalf("expected error for pbkdf2 iterations=0 (name=%q)", name)
+		}
+	}
+	// A positive iteration count still derives cleanly.
+	spec := kdfSpec{Name: kdfNamePBKDF2, Salt: "AAAAAAAA", Iterations: 1000, KeyLength: keyLength}
+	if _, err := deriveFromSpec("password", spec); err != nil {
+		t.Fatalf("unexpected error for valid pbkdf2 spec: %v", err)
+	}
+}
+
 func TestSealAndOpenBytesRoundTrip(t *testing.T) {
 	key := make([]byte, keyLength)
 	blob, err := sealBytes(key, []byte("hello"))

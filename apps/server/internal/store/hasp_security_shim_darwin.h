@@ -13,6 +13,13 @@ OSStatus HASPKeychainAddWithRequirements(
   const char *daemonRequirement
 );
 
+OSStatus HASPKeychainAddTrustingCLI(
+  const char *service,
+  const char *account,
+  const unsigned char *bytes,
+  CFIndex length
+);
+
 OSStatus HASPKeychainCopy(
   const char *service,
   const char *account,

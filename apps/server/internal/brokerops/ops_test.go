@@ -761,3 +761,82 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 	}
 	t.Fatalf("timed out waiting for socket %s", socketPath)
 }
+
+// TestAuthorizeCaptureConsumesOnceProjectLease pins hasp-t5yc: a new-item capture
+// authorized via a one-time project lease must consume that lease, so the single
+// approval can't be reused for a later list/run.
+func TestAuthorizeCaptureConsumesOnceProjectLease(t *testing.T) {
+	lockBrokeropsSeams(t)
+	handle := newBrokeropsHandle(t)
+	origGet := getItemFn
+	origAuth := authorizeFn
+	origGrant := grantProjectLeaseFn
+	origConsume := consumeProjectLeaseFn
+	defer func() {
+		getItemFn = origGet
+		authorizeFn = origAuth
+		grantProjectLeaseFn = origGrant
+		consumeProjectLeaseFn = origConsume
+	}()
+
+	getItemFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, store.ErrItemNotFound }
+	call := 0
+	authorizeFn = func(*store.Handle, store.AccessRequest) store.AccessDecision {
+		call++
+		if call == 1 {
+			return store.AccessDecision{RequiresPrompt: true, Requirement: store.AccessRequirementProjectLease}
+		}
+		return store.AccessDecision{RequiresPrompt: true, Requirement: store.AccessRequirementWriteGrant}
+	}
+	grantProjectLeaseFn = func(*store.Handle, string, string, store.GrantScope, time.Duration) (store.ProjectLease, error) {
+		return store.ProjectLease{}, nil
+	}
+	consumed := ""
+	consumeProjectLeaseFn = func(_ *store.Handle, bindingID, sessionToken string) error {
+		consumed = bindingID + "/" + sessionToken
+		return nil
+	}
+
+	if err := AuthorizeCapture(context.Background(), handle, "binding", "token", "newitem", store.GrantOnce, "", time.Minute, true); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if consumed != "binding/token" {
+		t.Fatalf("expected project lease consumed for binding/token, got %q", consumed)
+	}
+}
+
+func TestAuthorizeCapturePropagatesProjectLeaseConsumeFailure(t *testing.T) {
+	lockBrokeropsSeams(t)
+	handle := newBrokeropsHandle(t)
+	origGet := getItemFn
+	origAuth := authorizeFn
+	origGrant := grantProjectLeaseFn
+	origConsume := consumeProjectLeaseFn
+	defer func() {
+		getItemFn = origGet
+		authorizeFn = origAuth
+		grantProjectLeaseFn = origGrant
+		consumeProjectLeaseFn = origConsume
+	}()
+
+	getItemFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, store.ErrItemNotFound }
+	call := 0
+	authorizeFn = func(*store.Handle, store.AccessRequest) store.AccessDecision {
+		call++
+		if call == 1 {
+			return store.AccessDecision{RequiresPrompt: true, Requirement: store.AccessRequirementProjectLease}
+		}
+		return store.AccessDecision{RequiresPrompt: true, Requirement: store.AccessRequirementWriteGrant}
+	}
+	grantProjectLeaseFn = func(*store.Handle, string, string, store.GrantScope, time.Duration) (store.ProjectLease, error) {
+		return store.ProjectLease{}, nil
+	}
+	consumeProjectLeaseFn = func(*store.Handle, string, string) error {
+		return errors.New("consume project lease failed")
+	}
+
+	err := AuthorizeCapture(context.Background(), handle, "binding", "token", "newitem", store.GrantOnce, "", time.Minute, true)
+	if err == nil || !strings.Contains(err.Error(), "consume project lease failed") {
+		t.Fatalf("expected project lease consume failure, got %v", err)
+	}
+}

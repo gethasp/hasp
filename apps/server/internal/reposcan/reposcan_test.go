@@ -151,15 +151,26 @@ func TestScanSkipsDirectoryReturnedByGit(t *testing.T) {
 func TestDefaultDepsGitLsFilesAndWithDefaults(t *testing.T) {
 	root := t.TempDir()
 	deps := DefaultDeps()
-	if deps.Stat == nil || deps.ReadFile == nil || deps.WalkDir == nil || deps.GitLsFiles == nil || deps.ByteIndex == nil {
+	if deps.Stat == nil || deps.ReadFile == nil || deps.WalkDir == nil || deps.GitLsFiles == nil || deps.ByteIndex == nil ||
+		deps.GitStagedFiles == nil || deps.StagedBlobSize == nil || deps.ReadStagedBlob == nil {
 		t.Fatalf("default deps missing function: %+v", deps)
 	}
 	completed := withDefaults(Deps{})
-	if completed.Stat == nil || completed.ReadFile == nil || completed.WalkDir == nil || completed.GitLsFiles == nil || completed.ByteIndex == nil {
+	if completed.Stat == nil || completed.ReadFile == nil || completed.WalkDir == nil || completed.GitLsFiles == nil || completed.ByteIndex == nil ||
+		completed.GitStagedFiles == nil || completed.StagedBlobSize == nil || completed.ReadStagedBlob == nil {
 		t.Fatalf("withDefaults missing function: %+v", completed)
 	}
 	if _, err := deps.GitLsFiles(context.Background(), root); err == nil {
 		t.Fatal("expected git ls-files outside repo to fail")
+	}
+	if _, err := deps.GitStagedFiles(context.Background(), root); err == nil {
+		t.Fatal("expected git staged files outside repo to fail")
+	}
+	if _, err := deps.StagedBlobSize(context.Background(), root, "missing.txt"); err == nil {
+		t.Fatal("expected staged blob size outside repo to fail")
+	}
+	if _, err := deps.ReadStagedBlob(context.Background(), root, "missing.txt"); err == nil {
+		t.Fatal("expected staged blob read outside repo to fail")
 	}
 
 	gitRoot := t.TempDir()
@@ -185,5 +196,26 @@ func TestDefaultDepsGitLsFilesAndWithDefaults(t *testing.T) {
 	}
 	if !got["tracked.txt"] || !got["untracked.txt"] {
 		t.Fatalf("expected tracked and untracked files, got %v", files)
+	}
+	staged, err := deps.GitStagedFiles(context.Background(), gitRoot)
+	if err != nil {
+		t.Fatalf("GitStagedFiles: %v", err)
+	}
+	if len(staged) != 1 || staged[0] != "tracked.txt" {
+		t.Fatalf("expected only tracked.txt staged, got %v", staged)
+	}
+	size, err := deps.StagedBlobSize(context.Background(), gitRoot, "tracked.txt")
+	if err != nil {
+		t.Fatalf("StagedBlobSize: %v", err)
+	}
+	if size != 1 {
+		t.Fatalf("staged size = %d, want 1", size)
+	}
+	blob, err := deps.ReadStagedBlob(context.Background(), gitRoot, "tracked.txt")
+	if err != nil {
+		t.Fatalf("ReadStagedBlob: %v", err)
+	}
+	if string(blob) != "x" {
+		t.Fatalf("staged blob = %q", blob)
 	}
 }

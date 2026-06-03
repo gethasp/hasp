@@ -66,7 +66,7 @@ func callSecretUpsert(ctx context.Context, handle *store.Handle, call toolCall, 
 	}
 	hostLabel := defaultMCPHostLabel(call)
 	if projectRoot != "" && expose {
-		session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), hostLabel)
+		session, err := ensureMCPSession(ctx, call, projectRoot)
 		if err != nil {
 			return nil, err
 		}
@@ -217,6 +217,23 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 			break
 		}
 	}
+	if !available && len(exposures) > 0 {
+		// The item is exposed in OTHER projects but not the caller's. Return the
+		// same shape as a genuine not-found so a caller authorized for one project
+		// cannot enumerate the existence/kind/timestamps of secrets belonging to
+		// other projects (cross-project oracle, hasp-56ng). Items bound to no
+		// project (e.g. hidden from the caller's own project, or unbound vault
+		// entries) still report existence below, preserving the re-expose hint.
+		return map[string]any{
+			"name":                 name,
+			"exists":               false,
+			"available_in_project": false,
+			"project_root":         binding.CanonicalRoot,
+			"reference":            "",
+			"named_reference":      store.NamedReference(name),
+			"recovery":             secretGetRecovery(name, binding.CanonicalRoot, false, false),
+		}, nil
+	}
 	out := map[string]any{
 		"name":                 item.Name,
 		"exists":               true,
@@ -315,8 +332,7 @@ func authorizeSecretMutationMCP(ctx context.Context, handle *store.Handle, call 
 	if err != nil {
 		return store.Item{}, store.Binding{}, err
 	}
-	hostLabel := defaultMCPHostLabel(call)
-	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), hostLabel)
+	session, err := ensureMCPSession(ctx, call, projectRoot)
 	if err != nil {
 		return store.Item{}, store.Binding{}, err
 	}

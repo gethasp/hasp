@@ -685,3 +685,34 @@ func waitForSocket(path string, timeout time.Duration) error {
 	}
 	return context.DeadlineExceeded
 }
+
+// TestOpenSessionInternalGatedToInProcess pins hasp-83ed: a socket caller cannot
+// open a dashboard/audit-hidden "Internal" session; only the daemon's in-process
+// broker can.
+func TestOpenSessionInternalGatedToInProcess(t *testing.T) {
+	resolved, err := paths.Resolve()
+	if err != nil {
+		t.Fatalf("resolve paths: %v", err)
+	}
+
+	socketBroker := &brokerRPC{paths: resolved, startedAt: time.Now().UTC(), sessions: NewSessionStore()}
+	var reply OpenSessionResponse
+	if err := socketBroker.OpenSession(OpenSessionRequest{HostLabel: "attacker", TTLSeconds: 60, Internal: true}, &reply); err != nil {
+		t.Fatalf("socket open: %v", err)
+	}
+	if reply.Internal {
+		t.Fatal("socket caller must not open an Internal (hidden) session")
+	}
+	if sess, ok := socketBroker.sessions.Resolve(reply.SessionToken); !ok || sess.Internal {
+		t.Fatalf("socket session should be visible, got %+v ok=%v", sess, ok)
+	}
+
+	inproc := &brokerRPC{paths: resolved, startedAt: time.Now().UTC(), sessions: NewSessionStore(), inProcess: true}
+	var reply2 OpenSessionResponse
+	if err := inproc.OpenSession(OpenSessionRequest{HostLabel: "HASP.app", TTLSeconds: 60, Internal: true}, &reply2); err != nil {
+		t.Fatalf("in-process open: %v", err)
+	}
+	if !reply2.Internal {
+		t.Fatal("in-process Internal request should yield an internal session")
+	}
+}

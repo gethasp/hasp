@@ -14,7 +14,9 @@ package redactor
 import (
 	"bytes"
 	"encoding/base32"
+	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -198,4 +200,115 @@ func formatNeedles(needles [][]byte) []string {
 		out[i] = string(n)
 	}
 	return out
+}
+
+// ── Unpadded base64 + PathEscape coverage (hasp-g84c hardening) ────────────────
+//
+// JWTs, OAuth Bearer tokens, and k8s/iOS secret exporters emit base64 WITHOUT
+// padding. URLs encode spaces as %20 (PathEscape) as often as '+' (QueryEscape).
+// The padded-base64 and QueryEscape-only forms missed both; these guard the fix.
+
+func needlesContain(needles [][]byte, want string) bool {
+	for _, n := range needles {
+		if string(n) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEncodingGapNeedlesIncludesRawBase64(t *testing.T) {
+	// High bytes so the std alphabet ('+','/') and url alphabet ('-','_')
+	// produce DIFFERENT output — proving both raw variants are emitted, not
+	// just one.
+	secret := []byte{0xFB, 0xFF, 0xFF, 0xFB, 0xFF, 0xFF}
+	raw := base64.RawStdEncoding.EncodeToString(secret)
+	rawURL := base64.RawURLEncoding.EncodeToString(secret)
+	if raw == rawURL {
+		t.Fatalf("test setup: chose a secret where std==url base64 (%q)", raw)
+	}
+	needles := Needles(secret)
+
+	if !needlesContain(needles, raw) {
+		t.Fatalf("Needles missing raw-std base64 form %q; got %v", raw, formatNeedles(needles))
+	}
+	if !needlesContain(needles, rawURL) {
+		t.Fatalf("Needles missing raw-url base64 form %q; got %v", rawURL, formatNeedles(needles))
+	}
+
+	// Also pin the unpadded-vs-padded divergence for a typical token length.
+	tok := []byte("AKIAIOSFODNN7EXAMPLE") // len%3==2 → padded ends in '='
+	if !needlesContain(Needles(tok), base64.RawStdEncoding.EncodeToString(tok)) {
+		t.Fatalf("Needles missing unpadded form of %q", tok)
+	}
+}
+
+func TestEncodingGapApplyMasksRawBase64Form(t *testing.T) {
+	secret := []byte("AKIAIOSFODNN7EXAMPLE")
+	it := gapItem("raw-b64-secret", secret)
+	raw := base64.RawStdEncoding.EncodeToString(secret)
+	input := []byte("authorization: Bearer " + raw + " trailing")
+
+	result := Apply(input, []store.Item{it})
+
+	if !result.Redacted {
+		t.Fatal("expected Redacted=true for unpadded base64 secret")
+	}
+	if bytes.Contains(result.Output, []byte(raw)) {
+		t.Fatalf("output still contains raw base64 form %q; output: %s", raw, result.Output)
+	}
+}
+
+func TestEncodingGapNeedlesIncludesPathEscape(t *testing.T) {
+	secret := []byte("my secret pass") // spaces → %20 under PathEscape, '+' under QueryEscape
+	pe := url.PathEscape(string(secret))
+	needles := Needles(secret)
+
+	for _, n := range needles {
+		if string(n) == pe {
+			return
+		}
+	}
+	t.Fatalf("Needles missing PathEscape (%%20) form %q; got %v", pe, formatNeedles(needles))
+}
+
+func TestEncodingGapApplyMasksPathEscapeForm(t *testing.T) {
+	secret := []byte("my secret pass")
+	it := gapItem("pathescape-secret", secret)
+	pe := url.PathEscape(string(secret))
+	input := []byte("GET /q?v=" + pe + " HTTP/1.1")
+
+	result := Apply(input, []store.Item{it})
+
+	if !result.Redacted {
+		t.Fatal("expected Redacted=true for %20-encoded secret")
+	}
+	if bytes.Contains(result.Output, []byte(pe)) {
+		t.Fatalf("output still contains PathEscape form %q; output: %s", pe, result.Output)
+	}
+}
+
+// TestEncodingGapApplyMasksPercentEncodedBase64Padding pins that base64 with
+// percent-encoded padding (c2VjcmV0IQ%3D%3D in a URL) is redacted. This works
+// because the unpadded base64 needle is a prefix substring of the %3D form, so
+// the raw-base64 coverage (commit ad71efa2) already closes hasp-1kc4's %3D item.
+func TestEncodingGapApplyMasksPercentEncodedBase64Padding(t *testing.T) {
+	secret := []byte("super-secret-value")
+	it := gapItem("pct-pad-secret", secret)
+	std := base64.StdEncoding.EncodeToString(secret) // has '=' padding
+	pct := strings.ReplaceAll(std, "=", "%3D")
+	if pct == std {
+		t.Skip("secret produced no padding; pick a value with len%3 != 0")
+	}
+	input := []byte("token=" + pct + "&next=1")
+
+	result := Apply(input, []store.Item{it})
+
+	if !result.Redacted {
+		t.Fatal("expected Redacted=true for %3D-padded base64 secret")
+	}
+	// The unpadded base64 form must be gone from the output.
+	if bytes.Contains(result.Output, []byte(base64.RawStdEncoding.EncodeToString(secret))) {
+		t.Fatalf("output still exposes the base64 body of the secret: %s", result.Output)
+	}
 }

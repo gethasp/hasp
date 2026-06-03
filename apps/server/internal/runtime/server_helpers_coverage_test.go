@@ -1601,13 +1601,24 @@ func TestRuntimeStoreAndBrokerResidualBranches(t *testing.T) {
 	rec := httptest.NewRecorder()
 	called := false
 	hmacValidatorMiddleware(nil, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(rec, req)
-	if !called {
-		t.Fatal("nil validator should call next handler")
+	if called {
+		t.Fatal("nil validator must fail closed, not call next (hasp-yx6d)")
 	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("nil validator status = %d, want 500", rec.Code)
+	}
+	key := bytes.Repeat([]byte{0x24}, 32)
+	hmacNow := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	validator, err := httpapi.NewValidator(key, httpapi.ValidatorOptions{Now: func() time.Time { return hmacNow }})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	signRequest(req, key, nil, hmacNow)
 	rec = httptest.NewRecorder()
-	hmacValidatorMiddleware(nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	hmacValidatorMiddleware(validator, nil, nil).ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("nil next status = %d", rec.Code)
+		t.Fatalf("nil next handler status = %d, want 404", rec.Code)
 	}
 
 	normalized := normalizeHTTPPaths(paths.Paths{HTTPPortFilePath: filepath.Join(t.TempDir(), "portfile")})

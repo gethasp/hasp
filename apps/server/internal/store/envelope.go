@@ -155,6 +155,8 @@ func (s *Store) writeEnvelopeFile(envelope fileEnvelope) error {
 
 	// Atomic rename of temp to main.
 	if err := renameEnvelopeFn(tmp, s.paths.StatePath); err != nil {
+		// Match the other error paths: do not leave the sealed .tmp behind.
+		_ = removeEnvelopeFileFn(tmp)
 		return fmt.Errorf("rename vault: %w", err)
 	}
 

@@ -150,18 +150,32 @@ func TestAppConsumerRemainingBranches(t *testing.T) {
 		t.Fatalf("expected execute missing dotenv env failure, got %v", err)
 	}
 	consumer.DotenvEnv = "ENV_FILE"
+	newlineDeps := defaultExecDeps()
+	newlineDeps.AuthorizeItem = func(_ *store.Handle, _ string, _ string, item store.Item, _ store.Operation, _ store.GrantScope, _ store.GrantScope, _ time.Duration) (store.Item, error) {
+		item.Value = []byte("safe\nINJECTED=evil")
+		return item, nil
+	}
+	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", newlineDeps); err == nil || !strings.Contains(err.Error(), "newline") {
+		t.Fatalf("expected execute dotenv newline failure, got %v", err)
+	}
 	failRunDeps := defaultExecDeps()
-	failRunDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) { return runner.Result{}, errors.New("runner fail") }
+	failRunDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
+		return runner.Result{}, errors.New("runner fail")
+	}
 	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, io.Discard, &fakeStarter{}, "run", failRunDeps); err == nil || err.Error() != "runner fail" {
 		t.Fatalf("expected execute runner failure, got %v", err)
 	}
 	stdoutDeps := defaultExecDeps()
-	stdoutDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) { return runner.Result{Stdout: []byte("abc123")}, nil }
+	stdoutDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
+		return runner.Result{Stdout: []byte("abc123")}, nil
+	}
 	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, errWriter{err: errors.New("stdout fail")}, io.Discard, &fakeStarter{}, "run", stdoutDeps); err == nil || err.Error() != "stdout fail" {
 		t.Fatalf("expected execute stdout failure, got %v", err)
 	}
 	stderrDeps := defaultExecDeps()
-	stderrDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) { return runner.Result{Stderr: []byte("abc123")}, nil }
+	stderrDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
+		return runner.Result{Stderr: []byte("abc123")}, nil
+	}
 	if _, err := executeAppConsumer(context.Background(), handle, consumer, consumer.Command, io.Discard, errWriter{err: errors.New("stderr fail")}, &fakeStarter{}, "run", stderrDeps); err == nil || err.Error() != "stderr fail" {
 		t.Fatalf("expected execute stderr failure, got %v", err)
 	}

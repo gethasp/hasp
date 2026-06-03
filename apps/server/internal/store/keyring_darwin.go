@@ -18,7 +18,17 @@ func NewDefaultKeyring() Keyring {
 	return DarwinKeyring{}
 }
 
+// nativeKeychainSet is wired by the cgo build (keyring_darwin_hmac.go) to store
+// via the in-process Security API. nil in the cgo-less test build
+// (hasp_test_fastkdf), where Set falls back to the `security` CLI.
+var nativeKeychainSet func(service, account, value string) error
+
 func (DarwinKeyring) Set(ctx context.Context, service string, account string, value string) error {
+	// Prefer the native API so the value is never a `security -w <value>` process
+	// argument readable by same-uid `ps` for the subprocess lifetime (hasp-4rqu).
+	if nativeKeychainSet != nil {
+		return nativeKeychainSet(service, account, value)
+	}
 	keychainPath, err := defaultKeychainPath(ctx)
 	if err != nil {
 		return err

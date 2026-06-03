@@ -2,6 +2,9 @@
 # Dolt database files (added by bd init)
 .dolt/
 
+# Beads local credential key (never commit)
+.beads-credential-key
+
 # OS
 .DS_Store
 
@@ -10,9 +13,13 @@
 codedb.snapshot
 bin/
 dist/
+.build/
 __pycache__/
 .testtmp/
 .testsock/
+
+# Runtime/test lock files (created by local server runs and go test in package dirs)
+.lock
 
 # IDE / tools
 .omx/

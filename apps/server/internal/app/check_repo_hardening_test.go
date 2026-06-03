@@ -81,31 +81,37 @@ func TestCheckRepoDegradesWhenVaultCannotUnlock(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{name: "keyring unavailable", err: store.ErrKeyringUnavailable},
-		{name: "vault not initialized", err: store.ErrVaultNotInitialized},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			origOpen := openVaultHandleFn
-			t.Cleanup(func() { openVaultHandleFn = origOpen })
-			openVaultHandleFn = func(context.Context) (*store.Handle, error) {
-				return nil, fmt.Errorf("open vault: %w", tt.err)
-			}
+	// Vault not initialized: nothing to match against, fail OPEN with a note.
+	t.Run("vault not initialized degrades", func(t *testing.T) {
+		origOpen := openVaultHandleFn
+		t.Cleanup(func() { openVaultHandleFn = origOpen })
+		openVaultHandleFn = func(context.Context) (*store.Handle, error) {
+			return nil, fmt.Errorf("open vault: %w", store.ErrVaultNotInitialized)
+		}
+		var out bytes.Buffer
+		if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out, io.Discard); err != nil {
+			t.Fatalf("check-repo should degrade when no vault exists, got %v; body=%s", err, out.String())
+		}
+		if body := out.String(); !strings.Contains(body, `"matches":null`) || !strings.Contains(body, "vault not initialized") {
+			t.Fatalf("expected degraded clean JSON response, got %s", body)
+		}
+	})
 
-			var out bytes.Buffer
-			if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out, io.Discard); err != nil {
-				t.Fatalf("check-repo should degrade when vault is unavailable, got %v; body=%s", err, out.String())
-			}
-			body := out.String()
-			if !strings.Contains(body, `"matches":null`) || !strings.Contains(body, `"warning":"vault unavailable; managed-value matching was skipped"`) {
-				t.Fatalf("expected degraded clean JSON response, got %s", body)
-			}
-		})
-	}
+	// Vault locked (keyring unavailable): a security gate must FAIL CLOSED (hasp-pik3).
+	t.Run("vault locked fails closed", func(t *testing.T) {
+		origOpen := openVaultHandleFn
+		t.Cleanup(func() { openVaultHandleFn = origOpen })
+		openVaultHandleFn = func(context.Context) (*store.Handle, error) {
+			return nil, fmt.Errorf("open vault: %w", store.ErrKeyringUnavailable)
+		}
+		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot}, io.Discard, io.Discard); err == nil {
+			t.Fatal("expected check-repo to fail closed when the vault is locked")
+		}
+		// ...unless explicitly overridden.
+		if err := checkRepoCommand(context.Background(), []string{"--project-root", projectRoot, "--allow-managed-secrets"}, io.Discard, io.Discard); err != nil {
+			t.Fatalf("expected --allow-managed-secrets to bypass the locked-vault block, got %v", err)
+		}
+	})
 
 	origOpen := openVaultHandleFn
 	t.Cleanup(func() { openVaultHandleFn = origOpen })
@@ -256,5 +262,61 @@ func TestCheckRepoFallsBackToWalkDirOutsideGitRepo(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "leak.txt") {
 		t.Fatalf("check-repo must include leak.txt; body=%s", out.String())
+	}
+}
+
+// TestCheckRepoStagedScansIndexNotWorkingTree pins hasp-8buu end-to-end: a secret
+// that is `git add`-ed and then overwritten in the working tree is missed by the
+// default (working-tree) scan but caught by --staged, which reads the index blob
+// that the commit will actually contain.
+func TestCheckRepoStagedScansIndexNotWorkingTree(t *testing.T) {
+	lockAppSeams(t)
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	if out, err := run("git", "-C", projectRoot, "init"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Setenv("HASP_HOME", homeDir)
+	t.Setenv("HASP_MASTER_PASSWORD", "correct horse battery staple")
+	origEnsureSession := ensureSessionAppFn
+	defer func() { ensureSessionAppFn = origEnsureSession }()
+	ensureSessionAppFn = func(context.Context, brokerops.Connector, string, string, string) (brokerops.Session, error) {
+		return brokerops.Session{Token: "test-session"}, nil
+	}
+
+	secret := []byte("abc123secret")
+	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if err := Run(context.Background(), []string{"set", "--name", "api_token", "--value", string(secret)}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run set: %v", err)
+	}
+	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot, "--alias", "secret_01=api_token"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run project bind: %v", err)
+	}
+
+	leakPath := filepath.Join(projectRoot, "config.txt")
+	// Stage the secret, then overwrite the working tree with clean content WITHOUT
+	// re-staging — the classic gate bypass.
+	if err := os.WriteFile(leakPath, []byte("API_TOKEN="+string(secret)+"\n"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	if out, err := run("git", "-C", projectRoot, "add", "config.txt"); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	if err := os.WriteFile(leakPath, []byte("API_TOKEN=placeholder\n"), 0o600); err != nil {
+		t.Fatalf("overwrite working tree: %v", err)
+	}
+
+	// Default working-tree scan: sees only the clean working tree -> passes (the bug).
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("working-tree scan should pass on the clean working tree, got %v", err)
+	}
+	// Staged scan: reads the index blob containing the secret -> must fail.
+	var out bytes.Buffer
+	if err := checkRepoCommand(context.Background(), []string{"--json", "--staged", "--project-root", projectRoot}, &out, io.Discard); err == nil {
+		t.Fatalf("--staged scan must flag the staged secret; body=%s", out.String())
+	} else if !strings.Contains(out.String(), "config.txt") {
+		t.Fatalf("--staged JSON must include config.txt; body=%s", out.String())
 	}
 }

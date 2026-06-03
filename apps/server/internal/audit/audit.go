@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,11 +16,32 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
+// maxAuditLineBytes is the per-event scan buffer ceiling. bufio.Scanner's
+// 64 KiB default would surface bufio.ErrTooLong on a large details map and,
+// for readLastLocked, permanently block Append. 1 MiB is far above any real
+// event while still bounding memory.
+const maxAuditLineBytes = 1 << 20
+
+func newAuditScanner(file *os.File) *bufio.Scanner {
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxAuditLineBytes)
+	return scanner
+}
+
 type VerifyReport struct {
 	OK                bool
 	TotalEntries      int
 	FirstCorruptionAt *int64
 	Err               error
+	// UnauthenticatedAfterKeyed counts entries written under the unkeyed sha256
+	// scheme that appear AFTER the chain has adopted the keyed HMAC scheme. The
+	// chain hashes still link (OK stays true), but those entries carry no HMAC and
+	// are forgeable by anyone who can write the log file — so they are not
+	// cryptographically authenticated. This happens legitimately when the vault is
+	// locked (appends fall back to sha256) and is also the shape a downgrade
+	// forgery would take; the operator must treat these entries as untrusted.
+	UnauthenticatedAfterKeyed int
+	FirstUnauthenticatedAt    *int64
 }
 
 var resolveAuditPaths = paths.Resolve
@@ -198,9 +220,12 @@ func (l *Log) VerifyDetailed() (VerifyReport, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := newAuditScanner(file)
 	var previous string
 	var sequence int64
+	var seenKeyed bool
+	var unauthenticated int
+	var firstUnauth *int64
 	for scanner.Scan() {
 		var event Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -229,16 +254,33 @@ func (l *Log) VerifyDetailed() (VerifyReport, error) {
 			Details:   event.Details,
 			PrevHash:  event.PrevHash,
 		}, key)
-		if event.Hash != expected {
+		if subtle.ConstantTimeCompare([]byte(event.Hash), []byte(expected)) != 1 {
 			first := event.Sequence
 			return VerifyReport{OK: false, TotalEntries: int(sequence), FirstCorruptionAt: &first, Err: fmt.Errorf("audit hash mismatch at %d", event.Sequence)}, nil
+		}
+		// Track the keyed→unkeyed boundary. Once the chain has adopted the HMAC
+		// scheme, any later unkeyed (sha256) entry is not cryptographically
+		// authenticated — report it without failing the chain (it links cleanly).
+		if event.Scheme == SchemeHMACSHA256V1 {
+			seenKeyed = true
+		} else if seenKeyed {
+			unauthenticated++
+			if firstUnauth == nil {
+				at := event.Sequence
+				firstUnauth = &at
+			}
 		}
 		previous = event.Hash
 	}
 	if err := scanner.Err(); err != nil {
 		return VerifyReport{}, fmt.Errorf("scan audit log: %w", err)
 	}
-	return VerifyReport{OK: true, TotalEntries: int(sequence)}, nil
+	return VerifyReport{
+		OK:                        true,
+		TotalEntries:              int(sequence),
+		UnauthenticatedAfterKeyed: unauthenticated,
+		FirstUnauthenticatedAt:    firstUnauth,
+	}, nil
 }
 
 func (l *Log) Events() ([]Event, error) {
@@ -251,7 +293,7 @@ func (l *Log) Events() ([]Event, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := newAuditScanner(file)
 	events := []Event{}
 	for scanner.Scan() {
 		var event Event
@@ -310,7 +352,7 @@ func (l *Log) readLastLocked() (*Event, int64, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := newAuditScanner(file)
 	var last *Event
 	var count int64
 	for scanner.Scan() {

@@ -32,6 +32,12 @@ func (h *Handle) GrantProjectLease(bindingID string, sessionToken string, scope 
 		}
 		key := leaseKey(bindingID, sessionToken)
 		if existing, ok := h.state.ProjectLeases[key]; ok {
+			// A GrantOnce is minted at most once per (binding, session, item): even
+			// after it is consumed, return the existing entry rather than minting a
+			// fresh one. This is load-bearing for concurrency — two contenders racing
+			// for the same once-grant must share one grant so exactly one wins the
+			// atomic consume. (Reverted hasp-zqzv F3: the apparent "re-grant lockout"
+			// is the intended one-shot-per-key semantics, not a bug.)
 			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
 				return existing, nil
 			}
@@ -96,6 +102,12 @@ func (h *Handle) GrantSecretUse(bindingID string, sessionToken string, itemName 
 		}
 		key := secretGrantKey(bindingID, sessionToken, itemName)
 		if existing, ok := h.state.SecretGrants[key]; ok {
+			// A GrantOnce is minted at most once per (binding, session, item): even
+			// after it is consumed, return the existing entry rather than minting a
+			// fresh one. This is load-bearing for concurrency — two contenders racing
+			// for the same once-grant must share one grant so exactly one wins the
+			// atomic consume. (Reverted hasp-zqzv F3: the apparent "re-grant lockout"
+			// is the intended one-shot-per-key semantics, not a bug.)
 			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
 				return existing, nil
 			}
@@ -176,6 +188,12 @@ func (h *Handle) GrantConvenience(bindingID string, sessionToken string, destina
 		}
 		key := convenienceGrantKey(bindingID, destinationPath, resolvedSet)
 		if existing, ok := h.state.ConvenienceGrants[key]; ok {
+			// A GrantOnce is minted at most once per (binding, session, item): even
+			// after it is consumed, return the existing entry rather than minting a
+			// fresh one. This is load-bearing for concurrency — two contenders racing
+			// for the same once-grant must share one grant so exactly one wins the
+			// atomic consume. (Reverted hasp-zqzv F3: the apparent "re-grant lockout"
+			// is the intended one-shot-per-key semantics, not a bug.)
 			if existing.Scope == GrantOnce || grantIsActive(existing.Scope, existing.ExpiresAt, existing.RevokedAt, existing.UsedAt, h.store.now()) {
 				return existing, nil
 			}

@@ -46,9 +46,12 @@ func Needles(value []byte) [][]byte {
 		value,
 		[]byte(base64.StdEncoding.EncodeToString(value)),
 		[]byte(base64.URLEncoding.EncodeToString(value)),
+		[]byte(base64.RawStdEncoding.EncodeToString(value)),
+		[]byte(base64.RawURLEncoding.EncodeToString(value)),
 		[]byte(hex.EncodeToString(value)),
 		[]byte(strings.ToUpper(hex.EncodeToString(value))),
 		[]byte(url.QueryEscape(string(value))),
+		[]byte(url.PathEscape(string(value))),
 		[]byte(base32.StdEncoding.EncodeToString(value)),
 		[]byte(encodeHTMLEntity(value)),
 		[]byte(encodeDoublePercent(value)),
@@ -189,9 +192,15 @@ func buildForms(val []byte) []formDef {
 		{needle: val, marker: []byte("[REDACTED]")},
 		{needle: []byte(base64.StdEncoding.EncodeToString(val)), marker: []byte("[REDACTED_B64]")},
 		{needle: []byte(base64.URLEncoding.EncodeToString(val)), marker: []byte("[REDACTED_B64U]")},
+		// Unpadded base64 — JWTs, Bearer tokens, and k8s/iOS exporters routinely
+		// drop the '=' padding, so the padded forms above miss them.
+		{needle: []byte(base64.RawStdEncoding.EncodeToString(val)), marker: []byte("[REDACTED_B64]")},
+		{needle: []byte(base64.RawURLEncoding.EncodeToString(val)), marker: []byte("[REDACTED_B64U]")},
 		{needle: []byte(hex.EncodeToString(val)), marker: []byte("[REDACTED_HEX]")},
 		{needle: []byte(strings.ToUpper(hex.EncodeToString(val))), marker: []byte("[REDACTED_HEX]")},
 		{needle: []byte(url.QueryEscape(string(val))), marker: []byte("[REDACTED_URL]")},
+		// PathEscape encodes spaces as %20 (QueryEscape uses '+'); both appear in URLs.
+		{needle: []byte(url.PathEscape(string(val))), marker: []byte("[REDACTED_URL]")},
 		{needle: []byte(base32.StdEncoding.EncodeToString(val)), marker: []byte("[REDACTED_B32]")},
 		{needle: []byte(encodeHTMLEntity(val)), marker: []byte("[REDACTED_HTML]")},
 		{needle: []byte(encodeDoublePercent(val)), marker: []byte("[REDACTED_DPE]")},

@@ -62,7 +62,7 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 	case "hasp_targets":
 		return callTargets(ctx, handle, call)
 	case "hasp_target_explain":
-		return callTargetExplain(ctx, call)
+		return callTargetExplain(ctx, handle, call)
 	case "hasp_run", "hasp_inject":
 		return callExecute(ctx, handle, call)
 	case "hasp_capture":
@@ -121,7 +121,7 @@ func unsafeSecretWriteToolDisabled(name string) error {
 func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
 	grantProject := stringArg(call.Arguments, "grant_project", "")
-	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
+	session, err := ensureMCPSession(ctx, call, projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -221,11 +221,22 @@ func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	return map[string]any{"manifest_hash": identity, "targets": targets}, nil
 }
 
-func callTargetExplain(ctx context.Context, call toolCall) (map[string]any, error) {
+func callTargetExplain(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
 	targetName := strings.TrimSpace(stringArg(call.Arguments, "target", ""))
 	if targetName == "" {
 		return nil, errors.New("target is required")
+	}
+	// Require the project to be hasp-managed before exposing its manifest's secret
+	// aliases / destinations. This is a light binding check (no approval prompt, no
+	// grant consumption) so onboarding isn't disrupted, but an unauthorized agent
+	// can no longer enumerate any project_root's manifest structure (hasp-adm3).
+	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
+		return nil, err
 	}
 	root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 	if err != nil {
@@ -260,7 +271,7 @@ func callTargetExplain(ctx context.Context, call toolCall) (map[string]any, erro
 
 func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
-	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
+	session, err := ensureMCPSession(ctx, call, projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +371,7 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 
 func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
-	session, err := ensureSessionFn(ctx, projectRoot, defaultMCPSessionToken(call), defaultMCPHostLabel(call))
+	session, err := ensureMCPSession(ctx, call, projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -471,8 +482,57 @@ func defaultOptionalMCPProjectRoot() string {
 	return strings.TrimSpace(os.Getenv(mcpEnvAgentProjectRoot))
 }
 
+type mcpSessionTokenSource int
+
+const (
+	mcpSessionTokenNone mcpSessionTokenSource = iota
+	mcpSessionTokenExplicit
+	mcpSessionTokenEnv
+)
+
 func defaultMCPSessionToken(call toolCall) string {
-	return stringArg(call.Arguments, "session_token", strings.TrimSpace(os.Getenv(mcpEnvSessionToken)))
+	token, _ := mcpSessionToken(call)
+	return token
+}
+
+func mcpSessionToken(call toolCall) (string, mcpSessionTokenSource) {
+	if value, ok := call.Arguments["session_token"]; ok {
+		text, _ := value.(string)
+		token := strings.TrimSpace(text)
+		if token == "" {
+			return "", mcpSessionTokenNone
+		}
+		return token, mcpSessionTokenExplicit
+	}
+	if token := strings.TrimSpace(os.Getenv(mcpEnvSessionToken)); token != "" {
+		return token, mcpSessionTokenEnv
+	}
+	return "", mcpSessionTokenNone
+}
+
+func ensureMCPSession(ctx context.Context, call toolCall, projectRoot string) (brokerops.Session, error) {
+	token, source := mcpSessionToken(call)
+	hostLabel := defaultMCPHostLabel(call)
+	session, err := ensureSessionFn(ctx, projectRoot, token, hostLabel)
+	if err == nil {
+		return session, nil
+	}
+	if source == mcpSessionTokenEnv && isRecoverableInheritedSessionError(err) {
+		return ensureSessionFn(ctx, projectRoot, "", hostLabel)
+	}
+	if source == mcpSessionTokenExplicit && isRecoverableInheritedSessionError(err) {
+		return brokerops.Session{}, fmt.Errorf("%w; explicit session_token is stale or bound to another project, omit session_token to let MCP open a fresh local session", err)
+	}
+	return brokerops.Session{}, err
+}
+
+func isRecoverableInheritedSessionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "resolve session:") && strings.Contains(message, "session not found") ||
+		strings.Contains(message, "session project root mismatch:")
 }
 
 func defaultMCPHostLabel(call toolCall) string {

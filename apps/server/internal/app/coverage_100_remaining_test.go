@@ -100,8 +100,17 @@ func TestCoverage100RemainingCommandBranches(t *testing.T) {
 	if err := checkRepoCommandWithDeps(context.Background(), []string{"--project-root", projectRoot}, io.Discard, &stderr, checkDeps); err != nil {
 		t.Fatalf("check repo vault warning: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "vault unavailable") {
+	if !strings.Contains(stderr.String(), "managed-value matching was skipped") {
 		t.Fatalf("expected vault warning on stderr, got %q", stderr.String())
+	}
+	hugePath := filepath.Join(projectRoot, "huge.bin")
+	if err := os.WriteFile(hugePath, make([]byte, 4<<20+1), 0o600); err != nil {
+		t.Fatalf("write oversized repo file: %v", err)
+	}
+	checkDeps.GitLsFiles = func(context.Context, string) ([]string, error) { return []string{"huge.bin"}, nil }
+	var strictOut bytes.Buffer
+	if err := checkRepoCommandWithDeps(context.Background(), []string{"--project-root", projectRoot, "--fail-on-skipped"}, &strictOut, io.Discard, checkDeps); err == nil || !strings.Contains(err.Error(), "skipped") {
+		t.Fatalf("expected strict skipped-file failure, got %v output=%q", err, strictOut.String())
 	}
 	openVaultHandleFn = origOpenVault
 	appCanonicalProjectRootFn = origCanonical
@@ -263,6 +272,35 @@ func TestCoverage100AuditExportAndVerifyBranches(t *testing.T) {
 	}
 	if err := auditCommandWithArgs(context.Background(), []string{"--verify"}, errWriter{err: errors.New("verify render fail")}); err == nil {
 		t.Fatal("expected audit verify render failure")
+	}
+
+	key := bytes.Repeat([]byte{9}, 32)
+	untrustedPath := filepath.Join(t.TempDir(), "audit-untrusted.jsonl")
+	untrustedLog := audit.NewForPaths(paths.Paths{AuditPath: untrustedPath})
+	if _, err := untrustedLog.Append(audit.EventInit, "user", nil); err != nil {
+		t.Fatalf("append legacy audit event: %v", err)
+	}
+	if _, err := untrustedLog.WithKey(key).Append(audit.EventImport, "user", nil); err != nil {
+		t.Fatalf("append keyed audit event: %v", err)
+	}
+	if _, err := untrustedLog.WithKey(nil).Append(audit.EventRead, "user", nil); err != nil {
+		t.Fatalf("append untrusted audit event: %v", err)
+	}
+	newAuditLogFn = func() (*audit.Log, error) { return untrustedLog, nil }
+	setAuditHMACKey(key)
+	var verifyJSON bytes.Buffer
+	if err := auditCommandWithArgs(context.Background(), []string{"--verify", "--json"}, &verifyJSON); err != nil {
+		t.Fatalf("audit verify json with unauthenticated entries: %v", err)
+	}
+	if !strings.Contains(verifyJSON.String(), `"unauthenticated_after_keyed":1`) {
+		t.Fatalf("expected unauthenticated JSON field, got %q", verifyJSON.String())
+	}
+	var verifyHuman bytes.Buffer
+	if err := auditCommandWithArgs(context.Background(), []string{"--verify"}, &verifyHuman); err != nil {
+		t.Fatalf("audit verify human with unauthenticated entries: %v", err)
+	}
+	if !strings.Contains(verifyHuman.String(), "Unauthenticated entries") {
+		t.Fatalf("expected unauthenticated human field, got %q", verifyHuman.String())
 	}
 }
 

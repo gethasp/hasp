@@ -16,6 +16,38 @@ import (
 	"unsafe"
 )
 
+func init() {
+	// Route DarwinKeyring.Set through the in-process Security API in cgo builds,
+	// so the value is never a `security -w <value>` process argument (hasp-4rqu).
+	nativeKeychainSet = func(service, account, value string) error {
+		return DarwinKeyring{}.setNative(service, account, value)
+	}
+}
+
+// setNative stores value (verbatim — matching the `security` CLI, which stored
+// the raw string) as a generic-password item via the legacy file-keychain API,
+// with an ACL trusting /usr/bin/security so the existing CLI Get/Delete still
+// work. No designated requirement (the convenience device key has none).
+func (DarwinKeyring) setNative(service string, account string, value string) error {
+	serviceC := C.CString(service)
+	accountC := C.CString(account)
+	defer C.free(unsafe.Pointer(serviceC))
+	defer C.free(unsafe.Pointer(accountC))
+
+	valueBytes := []byte(value)
+	var valuePtr *C.uchar
+	if len(valueBytes) > 0 {
+		valuePtr = (*C.uchar)(C.CBytes(valueBytes))
+		defer C.free(unsafe.Pointer(valuePtr))
+	}
+
+	status := C.HASPKeychainAddTrustingCLI(serviceC, accountC, valuePtr, C.CFIndex(len(valueBytes)))
+	if status != C.errSecSuccess { //nolint:gocritic // cgo constants can trigger dupSubExpr falsely here.
+		return fmt.Errorf("%w: native keychain write failed: OSStatus %d", ErrKeyringUnavailable, int(status))
+	}
+	return nil
+}
+
 func (DarwinKeyring) SetWithDesignatedRequirements(_ context.Context, service string, account string, value string, requirements []string) error {
 	if len(requirements) != 2 {
 		return fmt.Errorf("%w: expected exactly two designated requirements", ErrKeyringUnavailable)

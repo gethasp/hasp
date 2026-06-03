@@ -15,7 +15,7 @@ func TestInstallNoopsOutsideGitRepo(t *testing.T) {
 
 func TestInstallHookWriteFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing", "pre-commit")
-	if err := installHook(path, t.TempDir()); err == nil {
+	if err := installHook(path, t.TempDir(), true); err == nil {
 		t.Fatal("expected installHook write failure")
 	}
 }
@@ -56,7 +56,7 @@ func TestInstallHookBackupFailureAndInstallPropagation(t *testing.T) {
 	if err := os.Mkdir(hookPath+".pre-hasp", 0o755); err != nil {
 		t.Fatalf("mkdir backup path: %v", err)
 	}
-	if err := installHook(hookPath, projectRoot); err == nil {
+	if err := installHook(hookPath, projectRoot, true); err == nil {
 		t.Fatal("expected backup failure")
 	}
 	if err := Install(projectRoot); err == nil {

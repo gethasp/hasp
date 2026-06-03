@@ -14,11 +14,13 @@ import (
 )
 
 type VerifyResponse struct {
-	ChainOK           bool       `json:"chain_ok"`
-	LastVerifiedAt    *time.Time `json:"last_verified_at,omitempty"`
-	TotalEntries      int        `json:"total_entries"`
-	FirstCorruptionAt *int64     `json:"first_corruption_at,omitempty"`
-	Error             string     `json:"error,omitempty"`
+	ChainOK                   bool       `json:"chain_ok"`
+	LastVerifiedAt            *time.Time `json:"last_verified_at,omitempty"`
+	TotalEntries              int        `json:"total_entries"`
+	FirstCorruptionAt         *int64     `json:"first_corruption_at,omitempty"`
+	UnauthenticatedAfterKeyed int        `json:"unauthenticated_after_keyed,omitempty"`
+	FirstUnauthenticatedAt    *int64     `json:"first_unauthenticated_at,omitempty"`
+	Error                     string     `json:"error,omitempty"`
 }
 
 type ExportOptions struct {
@@ -47,10 +49,12 @@ func Verify(log *audit.Log, now time.Time) (VerifyResponse, error) {
 		now = time.Now().UTC()
 	}
 	response := VerifyResponse{
-		ChainOK:           report.OK,
-		LastVerifiedAt:    &now,
-		TotalEntries:      report.TotalEntries,
-		FirstCorruptionAt: report.FirstCorruptionAt,
+		ChainOK:                   report.OK,
+		LastVerifiedAt:            &now,
+		TotalEntries:              report.TotalEntries,
+		FirstCorruptionAt:         report.FirstCorruptionAt,
+		UnauthenticatedAfterKeyed: report.UnauthenticatedAfterKeyed,
+		FirstUnauthenticatedAt:    report.FirstUnauthenticatedAt,
 	}
 	if !report.OK && report.Err != nil {
 		response.Error = report.Err.Error()

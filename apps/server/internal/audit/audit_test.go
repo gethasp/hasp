@@ -436,3 +436,88 @@ func TestMultipleLogsConcurrentAppend(t *testing.T) {
 		t.Fatalf("verify multi-log concurrent append: %v", err)
 	}
 }
+
+// TestAppendAndVerifyLargeEvent guards the scan-buffer ceiling (hasp-g84c):
+// a details map whose JSON exceeds bufio.Scanner's 64 KiB default must not
+// brick readLastLocked (which would permanently block Append) or Verify.
+func TestAppendAndVerifyLargeEvent(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new audit log: %v", err)
+	}
+	fixed := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
+	log.now = func() time.Time { return fixed }
+
+	big := strings.Repeat("x", 200*1024) // 200 KiB, well over the 64 KiB default
+	if _, err := log.Append(EventImport, "user", map[string]any{"blob": big}); err != nil {
+		t.Fatalf("append large event: %v", err)
+	}
+	// A follow-up append must still read the (oversized) last line to chain.
+	log.now = func() time.Time { return fixed.Add(time.Minute) }
+	if _, err := log.Append(EventRead, "user", map[string]any{"ok": true}); err != nil {
+		t.Fatalf("append after large event (chain read bricked?): %v", err)
+	}
+	if err := log.Verify(); err != nil {
+		t.Fatalf("verify with large event: %v", err)
+	}
+	events, err := log.Events()
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+}
+
+// TestVerifyFlagsUnkeyedAfterKeyed pins hasp-q6h3: once the chain is keyed, a
+// later unkeyed (sha256) entry links cleanly but is reported as unauthenticated
+// (it carries no HMAC and is forgeable), without failing the chain. Unkeyed
+// entries BEFORE the keyed section (the legacy upgrade) are not flagged.
+func TestVerifyFlagsUnkeyedAfterKeyed(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv(paths.EnvHome, baseDir)
+	key := []byte("audit-hmac-key-0123456789abcdef")
+
+	log, err := New()
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	fixed := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
+	log.now = func() time.Time { return fixed }
+
+	// 1 legacy unkeyed entry, then 2 keyed entries.
+	if _, err := log.Append(EventInit, "user", nil); err != nil {
+		t.Fatalf("append legacy: %v", err)
+	}
+	keyed := log.WithKey(key)
+	if _, err := keyed.Append(EventImport, "user", nil); err != nil {
+		t.Fatalf("append keyed1: %v", err)
+	}
+	if _, err := keyed.Append(EventRead, "user", nil); err != nil {
+		t.Fatalf("append keyed2: %v", err)
+	}
+	// Vault "locks": a later unkeyed append (no key).
+	unkeyed := log.WithKey(nil)
+	if _, err := unkeyed.Append(EventRead, "user", nil); err != nil {
+		t.Fatalf("append unkeyed-after-keyed: %v", err)
+	}
+
+	// Re-install the key for verification (the WithKey(nil) above cleared it on
+	// the shared *Log instance).
+	report, err := log.WithKey(key).VerifyDetailed()
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !report.OK {
+		t.Fatalf("chain should still link OK, got %+v", report)
+	}
+	if report.UnauthenticatedAfterKeyed != 1 {
+		t.Fatalf("expected 1 unauthenticated-after-keyed entry, got %d", report.UnauthenticatedAfterKeyed)
+	}
+	if report.FirstUnauthenticatedAt == nil || *report.FirstUnauthenticatedAt != 4 {
+		t.Fatalf("expected first unauthenticated at seq 4, got %v", report.FirstUnauthenticatedAt)
+	}
+}

@@ -126,10 +126,13 @@ func NewServer(runtimePaths paths.Paths, opts Options) (*Server, error) {
 		httpServer: &http.Server{
 			Handler: handler,
 			ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
-				if opts.PeerPID == nil {
+				if _, ok := conn.(*net.UnixConn); !ok {
 					return ctx
 				}
-				if _, ok := conn.(*net.UnixConn); !ok {
+				// Mark unix-socket transport regardless of whether the peer-PID
+				// lookup succeeds, so admin-transport gating can rely on it.
+				ctx = WithUnixTransport(ctx)
+				if opts.PeerPID == nil {
 					return ctx
 				}
 				pid, err := opts.PeerPID(conn)

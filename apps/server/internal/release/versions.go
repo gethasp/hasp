@@ -59,9 +59,10 @@ func ParseSemVer(s string) (SemVer, error) {
 
 // Compare returns -1/0/+1 in the usual sense. A version with a
 // prerelease tag sorts BELOW the same MAJOR.MINOR.PATCH without one
-// (1.0.0-rc.1 < 1.0.0), per semver 11.3. Two prereleases compare
-// lexically — good enough for refuse-downgrade; we don't need full
-// dot-segment numeric comparison.
+// (1.0.0-rc.1 < 1.0.0), per semver 11.3. Prereleases compare by
+// dot-segment per semver 11.4, so rc.9 < rc.10 (numeric segments compare
+// numerically). A purely lexical compare would wrongly rank rc.10 < rc.9
+// and let a signed older RC pass the downgrade guard.
 func (a SemVer) Compare(b SemVer) int {
 	if a.Major != b.Major {
 		if a.Major < b.Major {
@@ -88,10 +89,49 @@ func (a SemVer) Compare(b SemVer) int {
 		return 1
 	case b.Prerelease == "":
 		return -1
-	case a.Prerelease < b.Prerelease:
-		return -1
 	default:
+		return comparePrerelease(a.Prerelease, b.Prerelease)
+	}
+}
+
+// comparePrerelease orders two non-empty prerelease strings per semver 11.4:
+// split on '.', compare identifier by identifier. Numeric identifiers compare
+// numerically; numeric always sorts below alphanumeric; alphanumeric compare in
+// ASCII order; and when all leading identifiers match, the longer set wins.
+func comparePrerelease(a, b string) int {
+	aSeg := strings.Split(a, ".")
+	bSeg := strings.Split(b, ".")
+	for i := 0; i < len(aSeg) && i < len(bSeg); i++ {
+		if aSeg[i] == bSeg[i] {
+			continue
+		}
+		aNum, aErr := strconv.Atoi(aSeg[i])
+		bNum, bErr := strconv.Atoi(bSeg[i])
+		aIsNum := aErr == nil
+		bIsNum := bErr == nil
+		switch {
+		case aIsNum && bIsNum:
+			if aNum != bNum {
+				if aNum < bNum {
+					return -1
+				}
+				return 1
+			}
+		case aIsNum: // numeric identifiers sort below alphanumeric
+			return -1
+		case bIsNum:
+			return 1
+		default:
+			return strings.Compare(aSeg[i], bSeg[i])
+		}
+	}
+	switch {
+	case len(aSeg) < len(bSeg):
+		return -1
+	case len(aSeg) > len(bSeg):
 		return 1
+	default:
+		return 0
 	}
 }
 

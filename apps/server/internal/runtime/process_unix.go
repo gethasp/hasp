@@ -34,6 +34,28 @@ var (
 	daemonStopPollInterval = 50 * time.Millisecond
 )
 
+// filterDaemonEnv drops credentials from the environment handed to the long-lived
+// daemon so they don't linger in /proc/<daemon>/environ, readable by same-UID
+// processes (hasp-f373): the per-run session bearer token (which the daemon never
+// consumes) and the vault-unlocking secrets (master password / backup passphrase),
+// which are instead passed over a one-shot pipe and read once at startup.
+func filterDaemonEnv(parent []string) []string {
+	out := parent[:0:0]
+outer:
+	for _, kv := range parent {
+		if strings.HasPrefix(kv, "HASP_SESSION_TOKEN=") {
+			continue
+		}
+		for _, name := range sensitiveDaemonEnvNames {
+			if strings.HasPrefix(kv, name+"=") {
+				continue outer
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 func startDetachedProcess(_ context.Context) error {
 	if runningTestBinaryWithoutHelper() {
 		return errors.New("refusing to start test daemon without HASP_TEST_HELPER_DAEMON=1")
@@ -46,9 +68,26 @@ func startDetachedProcess(_ context.Context) error {
 		return fmt.Errorf("create runtime dir: %w", err)
 	}
 	cmd := execCommand(os.Args[0], "daemon", "serve")
-	cmd.Env = os.Environ()
+	parentEnviron := os.Environ()
+	// Strip credentials from the daemon's inherited env (session token + the
+	// vault-unlocking secrets) so they don't sit in /proc/<daemon>/environ
+	// (hasp-f373). The unlocking secrets, if present, are passed over a one-shot
+	// pipe (fd) below and read once at daemon startup, never via the environment.
+	cmd.Env = filterDaemonEnv(parentEnviron)
 	if os.Getenv("HASP_TEST_HELPER_DAEMON") == "1" {
 		cmd.Env = append(cmd.Env, "HASP_TEST_HELPER_PARENT_PID="+strconv.Itoa(os.Getpid()))
+	}
+	var secretReadEnd, secretWriteEnd *os.File
+	var secretBlob []byte
+	if hasSensitiveEnv(parentEnviron) {
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			return fmt.Errorf("create secret env pipe: %w", perr)
+		}
+		secretReadEnd, secretWriteEnd = pr, pw
+		secretBlob = encodeSecretEnvBlob(parentEnviron)
+		cmd.ExtraFiles = append(cmd.ExtraFiles, pr) // first ExtraFile => fd 3 in child
+		cmd.Env = append(cmd.Env, secretEnvFDVar+"=3")
 	}
 	var stdoutFile *os.File
 	var stderrFile *os.File
@@ -73,7 +112,20 @@ func startDetachedProcess(_ context.Context) error {
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		if secretReadEnd != nil {
+			_ = secretReadEnd.Close()
+		}
+		if secretWriteEnd != nil {
+			_ = secretWriteEnd.Close()
+		}
 		return fmt.Errorf("start daemon: %w", err)
+	}
+	if secretWriteEnd != nil {
+		// The child holds the read end now; the parent writes the secrets and
+		// closes both ends so the child sees EOF after the (tiny) blob.
+		_ = secretReadEnd.Close()
+		_, _ = secretWriteEnd.Write(secretBlob)
+		_ = secretWriteEnd.Close()
 	}
 	if err := writeFile(resolved.PidFilePath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
 		return fmt.Errorf("write pid file: %w", err)

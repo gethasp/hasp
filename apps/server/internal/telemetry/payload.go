@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -135,6 +136,10 @@ func topRootCommands(counts Counts, limit int) []CommandCount {
 	for _, key := range keys {
 		out = append(out, CommandCount{Name: key, Count: counts[key]})
 	}
+	// Send the most-used commands, not the alphabetically-first ones (hasp-8xrx).
+	// keys is already name-sorted, so a stable sort by descending count yields a
+	// deterministic name order within equal counts.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
 	if len(out) <= limit {
 		return out
 	}
