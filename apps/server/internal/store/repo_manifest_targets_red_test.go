@@ -72,6 +72,45 @@ func TestLoadRepoManifestRejectsUnknownRequirementClassifications(t *testing.T) 
 }`)
 }
 
+func TestLoadRepoManifestRejectsBrowserSessionDelivery(t *testing.T) {
+	projectRoot := t.TempDir()
+	if _, err := DecodeRepoManifest(projectRoot, []byte(`{
+  "version": "v1",
+  "references": [{"alias": "session_01", "item": "BROWSER_SESSION"}],
+  "requirements": [{"ref": "session_01", "kind": "kv", "classification": "browser_session", "required": true}]
+}`)); err != nil {
+		t.Fatalf("browser-session requirement declaration should remain value-free: %v", err)
+	}
+
+	_, err := DecodeRepoManifest(projectRoot, []byte(`{
+  "version": "v1",
+  "references": [{"alias": "session_01", "item": "BROWSER_SESSION"}],
+  "requirements": [{"ref": "session_01", "kind": "kv", "classification": "browser_session", "required": true}],
+  "targets": [
+    {"name": "browser.dev", "delivery": [{"as": "env", "name": "BROWSER_SESSION", "ref": "session_01"}]}
+  ]
+}`))
+	if err == nil || !strings.Contains(err.Error(), "requires an explicit high-risk capability path") {
+		t.Fatalf("expected browser-session delivery rejection, got %v", err)
+	}
+}
+
+func TestRepoManifestRejectsBrowserSessionValueFields(t *testing.T) {
+	for _, body := range []string{
+		`{"version":"v1","references":[],"cookies":[]}`,
+		`{"version":"v1","references":[],"localStorage":{}}`,
+		`{"version":"v1","references":[],"sessionStorage":{}}`,
+		`{"version":"v1","references":[],"indexedDB":{}}`,
+		`{"version":"v1","references":[],"browserSession":{}}`,
+		`{"version":"v1","references":[],"browserSessionState":{}}`,
+		`{"version":"v1","references":[],"browser_session_state":{}}`,
+	} {
+		if _, err := DecodeRepoManifest(t.TempDir(), []byte(body)); err == nil {
+			t.Fatalf("expected browser/session value field rejection for %s", body)
+		}
+	}
+}
+
 func TestLoadRepoManifestRejectsUnknownDeliveryFormats(t *testing.T) {
 	assertLoadRepoManifestRejected(t, `{
   "version": "v1",

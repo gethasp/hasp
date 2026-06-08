@@ -16,15 +16,16 @@ import (
 )
 
 const (
-	ManifestClassificationSecret       = "secret"
-	ManifestClassificationPublicConfig = "public_config"
-	ManifestDeliveryEnv                = "env"
-	ManifestDeliveryFile               = "file"
-	ManifestDeliveryXCConfig           = "xcconfig"
-	ManifestExampleEnv                 = "env"
-	ManifestExampleXCConfig            = "xcconfig"
-	ManifestCredentialSetGeneric       = "generic"
-	ManifestCredentialSetGoogleOAuth   = "google_oauth_client"
+	ManifestClassificationSecret         = "secret"
+	ManifestClassificationPublicConfig   = "public_config"
+	ManifestClassificationBrowserSession = "browser_session"
+	ManifestDeliveryEnv                  = "env"
+	ManifestDeliveryFile                 = "file"
+	ManifestDeliveryXCConfig             = "xcconfig"
+	ManifestExampleEnv                   = "env"
+	ManifestExampleXCConfig              = "xcconfig"
+	ManifestCredentialSetGeneric         = "generic"
+	ManifestCredentialSetGoogleOAuth     = "google_oauth_client"
 )
 
 var (
@@ -233,7 +234,7 @@ func (m RepoManifest) Validate(root string) error {
 			return fmt.Errorf("unknown manifest requirement kind %q for %s", req.Kind, ref)
 		}
 		switch strings.TrimSpace(req.Classification) {
-		case ManifestClassificationSecret, ManifestClassificationPublicConfig:
+		case ManifestClassificationSecret, ManifestClassificationPublicConfig, ManifestClassificationBrowserSession:
 		default:
 			return fmt.Errorf("unknown manifest requirement classification %q for %s", req.Classification, ref)
 		}
@@ -429,6 +430,9 @@ func validateManifestDelivery(targetName string, delivery ManifestDelivery, requ
 	if req.Kind == ItemKindFile && as != ManifestDeliveryFile {
 		return fmt.Errorf("file requirement %q cannot be delivered as %s in target %q", ref, as, targetName)
 	}
+	if strings.TrimSpace(req.Classification) == ManifestClassificationBrowserSession {
+		return fmt.Errorf("browser-session requirement %q in target %q requires an explicit high-risk capability path", ref, targetName)
+	}
 	return nil
 }
 
@@ -556,7 +560,9 @@ func rejectManifestLocalAuthorityFields(data []byte) error {
 		case map[string]any:
 			for key, child := range v {
 				switch strings.ToLower(strings.TrimSpace(key)) {
-				case "value", "values", "grant", "grants", "convenience_grants", "tokens", "session_token", "workspace_trust":
+				case "value", "values", "grant", "grants", "convenience_grants", "tokens", "session_token", "workspace_trust",
+					"cookie", "cookies", "localstorage", "local_storage", "sessionstorage", "session_storage", "indexeddb", "indexed_db",
+					"browsersession", "browser_session", "browsersessionstate", "browser_session_state":
 					return fmt.Errorf("repo manifest must not contain local authority or secret value field %q", key)
 				}
 				if err := walk(child); err != nil {
