@@ -116,7 +116,7 @@ func TestToolsListAndCall(t *testing.T) {
 	if callResp["error"] != nil {
 		t.Fatalf("unexpected tool error: %+v", callResp["error"])
 	}
-	result := callResp["result"].(map[string]any)
+	result := mustMCPToolPayload(t, callResp)
 	if _, ok := result["binding"]; ok {
 		t.Fatalf("expected safe list response without binding payload")
 	}
@@ -192,11 +192,11 @@ func TestHaspRunAndInjectParity(t *testing.T) {
 		t.Fatalf("run mcp requests: %v", err)
 	}
 
-	runResult := responses[0]["result"].(map[string]any)
+	runResult := mustMCPToolPayload(t, responses[0])
 	if strings.Contains(runResult["stdout"].(string), "abc123") {
 		t.Fatalf("expected run output to be redacted, got %q", runResult["stdout"])
 	}
-	injectResult := responses[1]["result"].(map[string]any)
+	injectResult := mustMCPToolPayload(t, responses[1])
 	if strings.Contains(injectResult["stdout"].(string), "certificate-data") {
 		t.Fatalf("expected inject output to be redacted, got %q", injectResult["stdout"])
 	}
@@ -1209,6 +1209,31 @@ func mustJSONMap(t *testing.T, value map[string]any) string {
 		t.Fatalf("marshal map: %v", err)
 	}
 	return string(data)
+}
+
+func mustMCPToolPayload(t *testing.T, resp map[string]any) map[string]any {
+	t.Helper()
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing MCP result envelope: %+v", resp)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("MCP tool result missing content array: %+v", result)
+	}
+	first, ok := content[0].(map[string]any)
+	text, hasText := first["text"].(string)
+	if !ok || first["type"] != "text" || !hasText || strings.TrimSpace(text) == "" {
+		t.Fatalf("MCP tool result first content is not non-empty text: %+v", result)
+	}
+	if isError, ok := result["isError"].(bool); !ok || isError {
+		t.Fatalf("MCP tool result isError = %v, want false: %+v", result["isError"], result)
+	}
+	payload, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP tool result missing structuredContent payload: %+v", result)
+	}
+	return payload
 }
 
 func runMCPRequests(requests []map[string]any) ([]map[string]any, error) {

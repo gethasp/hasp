@@ -114,10 +114,7 @@ func TestProfileReleaseGateEval(t *testing.T) {
 		if len(responses) != 2 {
 			t.Fatalf("expected initialize + tool response for %s, got %d", profile.ID, len(responses))
 		}
-		toolResponse, ok := responses[1]["result"].(map[string]any)
-		if !ok {
-			t.Fatalf("missing tool result for %s: %v", profile.ID, responses[1])
-		}
+		toolResponse := mustMCPToolPayload(t, responses[1])
 		if stdoutValue, ok := toolResponse["stdout"].(string); ok {
 			if strings.Contains(stdoutValue, "abc123") || strings.Contains(stdoutValue, "certificate-data") {
 				t.Fatalf("fixture path leaked managed values for %s: %v", profile.ID, toolResponse)

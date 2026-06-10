@@ -20,6 +20,7 @@ The gate verifies:
   - generated Claude/Codex MCP config does not pin HASP_AGENT_HASP
   - managed wrappers ignore stale HASP_AGENT_HASP when their configured binary exists
   - doctor detects already-running stale managed-agent MCP processes
+  - tools/call returns a standard MCP CallToolResult envelope
   - managed wrappers can execute hasp_run after recovering a stale inherited session
   - managed wrappers can initialize and list tools within the timeout
 EOF
@@ -349,7 +350,18 @@ by_id = {response.get("id"): response for response in responses}
 run = by_id.get(2)
 if not run or run.get("error"):
     raise SystemExit(f"MCP release gate: {label} hasp_run failed: {run!r}")
-result = run.get("result", {})
+envelope = run.get("result", {})
+content = envelope.get("content")
+if not isinstance(content, list) or not content:
+    raise SystemExit(f"MCP release gate: {label} hasp_run returned non-MCP result envelope: {run!r}")
+first = content[0]
+if not isinstance(first, dict) or first.get("type") != "text" or not isinstance(first.get("text"), str) or not first.get("text").strip():
+    raise SystemExit(f"MCP release gate: {label} hasp_run returned invalid text content: {run!r}")
+if envelope.get("isError") is not False:
+    raise SystemExit(f"MCP release gate: {label} hasp_run isError should be false: {run!r}")
+result = envelope.get("structuredContent")
+if not isinstance(result, dict):
+    raise SystemExit(f"MCP release gate: {label} hasp_run missing structuredContent payload: {run!r}")
 if result.get("exit_code") != 0 or result.get("stdout") != "ok":
     raise SystemExit(f"MCP release gate: {label} unexpected hasp_run result: {result!r}")
 if "resolve session" in json.dumps(result):

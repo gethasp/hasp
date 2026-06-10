@@ -92,23 +92,23 @@ func TestMCPEndToEndEval(t *testing.T) {
 	if !strings.Contains(mustJSON(t, responses[0]), "protocolVersion") {
 		t.Fatalf("initialize response malformed: %s", mustJSON(t, responses[0]))
 	}
-	listResult := responses[2]["result"].(map[string]any)
+	listResult := mustMCPToolPayload(t, responses[2])
 	if _, ok := listResult["visible"]; !ok {
 		t.Fatalf("hasp_list missing visible result: %v", listResult)
 	}
-	runResult := responses[3]["result"].(map[string]any)
+	runResult := mustMCPToolPayload(t, responses[3])
 	if strings.Contains(runResult["stdout"].(string), "abc123") {
 		t.Fatalf("mcp run leaked secret: %v", runResult)
 	}
-	injectResult := responses[4]["result"].(map[string]any)
+	injectResult := mustMCPToolPayload(t, responses[4])
 	if strings.Contains(injectResult["stdout"].(string), "certificate-data") {
 		t.Fatalf("mcp inject leaked file content: %v", injectResult)
 	}
-	captureResult := responses[5]["result"].(map[string]any)
+	captureResult := mustMCPToolPayload(t, responses[5])
 	if captureResult["item_name"] != "generated_token" {
 		t.Fatalf("unexpected capture result: %v", captureResult)
 	}
-	redactResult := responses[6]["result"].(map[string]any)
+	redactResult := mustMCPToolPayload(t, responses[6])
 	if strings.Contains(redactResult["text"].(string), "abc123") {
 		t.Fatalf("mcp redact leaked value: %v", redactResult)
 	}
@@ -119,7 +119,7 @@ func TestMCPEndToEndEval(t *testing.T) {
 	}
 	checkResponses, err := runMCPBinaryRequests(t, env, []map[string]any{
 		{"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": map[string]any{
-			"name":      "hasp_check",
+			"name": "hasp_check",
 			"arguments": map[string]any{
 				"project_root":  env.projectRoot,
 				"session_token": sessionToken,
@@ -214,6 +214,31 @@ func runMCPBinaryRequestsWithEnv(t *testing.T, env evalEnv, extra map[string]str
 		responses = append(responses, resp)
 	}
 	return responses, nil
+}
+
+func mustMCPToolPayload(t *testing.T, resp map[string]any) map[string]any {
+	t.Helper()
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing MCP result envelope: %+v", resp)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("MCP tool result missing content array: %+v", result)
+	}
+	first, ok := content[0].(map[string]any)
+	text, hasText := first["text"].(string)
+	if !ok || first["type"] != "text" || !hasText || strings.TrimSpace(text) == "" {
+		t.Fatalf("MCP tool result first content is not non-empty text: %+v", result)
+	}
+	if isError, ok := result["isError"].(bool); !ok || isError {
+		t.Fatalf("MCP tool result isError = %v, want false: %+v", result["isError"], result)
+	}
+	payload, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP tool result missing structuredContent payload: %+v", result)
+	}
+	return payload
 }
 
 func mustJSON(t *testing.T, value any) string {

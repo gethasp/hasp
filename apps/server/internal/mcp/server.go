@@ -44,6 +44,17 @@ type toolCall struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
+type toolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type toolResult struct {
+	Content           []toolContent  `json:"content"`
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+	IsError           bool           `json:"isError"`
+}
+
 const currentProtocolVersion = "2025-06-18"
 
 var supportedProtocolVersions = map[string]struct{}{
@@ -94,9 +105,24 @@ func dispatch(ctx context.Context, req request) response {
 		if err != nil {
 			return fail(req.ID, -32000, err.Error())
 		}
-		return response{JSONRPC: "2.0", ID: req.ID, Result: result}
+		return response{JSONRPC: "2.0", ID: req.ID, Result: wrapToolResult(result)}
 	default:
 		return fail(req.ID, -32601, "method not found")
+	}
+}
+
+func wrapToolResult(result map[string]any) toolResult {
+	text, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		text = []byte(`{"error":"failed to encode tool result"}`)
+	}
+	return toolResult{
+		Content: []toolContent{{
+			Type: "text",
+			Text: string(text),
+		}},
+		StructuredContent: result,
+		IsError:           false,
 	}
 }
 
