@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,9 +99,12 @@ func TestProjectBindValidationAllowNonGit(t *testing.T) {
 
 	plainDir := t.TempDir()
 
-	_, err := runBind("--project-root", plainDir, "--allow-non-git")
+	out, err := runBind("--json", "--project-root", plainDir, "--allow-non-git")
 	if err != nil {
 		t.Fatalf("expected success with --allow-non-git, got: %v", err)
+	}
+	if !strings.Contains(out, `"hook_installed":false`) {
+		t.Fatalf("non-git bind must not report hooks installed, got: %s", out)
 	}
 }
 
@@ -120,8 +122,8 @@ func TestProjectBindValidationGitDirSuccess(t *testing.T) {
 	initHaspForBindTest(t)
 
 	gitDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(gitDir, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	if out, err := initTestGitRepo(gitDir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 
 	out, err := runBind("--project-root", gitDir, "--hooks=true")
@@ -147,8 +149,8 @@ func TestProjectBindValidationHookInstallError(t *testing.T) {
 	initHaspForBindTest(t)
 
 	gitDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(gitDir, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	if out, err := initTestGitRepo(gitDir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 
 	_, err := runBind("--project-root", gitDir, "--hooks=true")

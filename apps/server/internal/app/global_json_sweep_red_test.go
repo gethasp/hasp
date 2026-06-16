@@ -11,8 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
@@ -22,7 +20,7 @@ import (
 // connectIfRunning() to return nil and trip the renderNotRunning branch.
 type notRunningStarter struct{}
 
-func (notRunningStarter) EnsureDaemon(context.Context) error      { return nil }
+func (notRunningStarter) EnsureDaemon(context.Context) error { return nil }
 func (notRunningStarter) Connect(context.Context) (*runtime.Client, error) {
 	return nil, errors.New("not running")
 }
@@ -86,8 +84,8 @@ func TestTUIHonorsAmbientJSON(t *testing.T) {
 	t.Setenv("HASP_HOME", t.TempDir())
 	t.Setenv("HASP_MASTER_PASSWORD", "test-password-123")
 	tempDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(tempDir, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	if out, err := initTestGitRepo(tempDir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	// Initialise the vault so tuiCommand can open it.
 	if err := initCommandWithArgs(context.Background(), nil, io.Discard); err != nil {

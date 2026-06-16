@@ -228,8 +228,9 @@ func projectBindCommand(ctx context.Context, args []string, stdout io.Writer) er
 		return fmt.Errorf("project root %q is not a directory", expandedRoot)
 	}
 
+	isGitRepo := pathLooksLikeGitRepo(expandedRoot)
 	// Require a git working tree unless --allow-non-git is set.
-	if !*allowNonGit && !pathLooksLikeGitRepo(expandedRoot) {
+	if !*allowNonGit && !isGitRepo {
 		return fmt.Errorf("project root %q is not a git repository; pass --allow-non-git to bind anyway", expandedRoot)
 	}
 
@@ -237,7 +238,8 @@ func projectBindCommand(ctx context.Context, args []string, stdout io.Writer) er
 	if err != nil {
 		return err
 	}
-	binding, err := bindProject(ctx, handle, expandedRoot, aliases, store.SecretPolicy(*defaultPolicy), *installHooks)
+	effectiveInstallHooks := *installHooks && isGitRepo
+	binding, err := bindProject(ctx, handle, expandedRoot, aliases, store.SecretPolicy(*defaultPolicy), effectiveInstallHooks)
 	if err != nil {
 		return err
 	}

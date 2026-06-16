@@ -14,6 +14,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
@@ -722,7 +723,11 @@ func pathLooksLikeGitRepoMCP(root string) bool {
 	if err != nil {
 		return false
 	}
-	return info.IsDir() || info.Mode().IsRegular()
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return false
+	}
+	_, err = gitsafe.TopLevel(context.Background(), root)
+	return err == nil
 }
 
 func cloneAliasSetMCP(input map[string]string) map[string]string {

@@ -253,8 +253,8 @@ func TestProjectAdoptCommandErrorBranches(t *testing.T) {
 	if err := handle.DeleteBinding(context.Background(), repoRoot); err != nil {
 		t.Fatalf("delete bad binding: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	if out, err := initTestGitRepo(repoRoot); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	installHooksFn = func(string) error { return errors.New("hook fail") }
 	loadCLIConfigAppFn = func() (paths.CLIConfig, error) {

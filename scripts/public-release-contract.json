@@ -3,6 +3,18 @@
     "verify-ci": {
       "deps_exact": ["check-links", "check-tidy", "check-generated-docs", "check-telemetry-release-gate", "workflow-lint", "shellcheck", "osv-scan", "test-scripts", "test", "lint"]
     },
+    "release-preflight-fast": {
+      "recipe_in_order": [
+        "$(MAKE) check-links",
+        "$(MAKE) check-tidy",
+        "$(MAKE) release-preflight-build",
+        "$(MAKE) check-telemetry-release-gate",
+        "$(MAKE) shellcheck",
+        "HASP_DOCS_VERSIONING_SKIP=1 $(MAKE) test-scripts",
+        "$(MAKE) test",
+        "bash ./scripts/check-mcp-release-gate.sh --bin ./bin/hasp"
+      ]
+    },
     "release-gate": {
       "recipe_in_order": [
         "$(MAKE) verify-ci",
@@ -48,6 +60,13 @@
     "public_release": {
       "path": ".github/workflows/release.yml",
       "jobs": {
+        "release-preflight": {
+          "runs_on_contains": "ubuntu-latest",
+          "run_contains": [
+            "bash ./scripts/bootstrap_go_tools.sh release-preflight",
+            "make release-preflight-fast"
+          ]
+        },
         "release-smoke": {
           "run_contains": ["bash ./scripts/bootstrap_go_tools.sh release-smoke", "make test", "make test-race", "make coverage-audit-platform"]
         },

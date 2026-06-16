@@ -93,6 +93,35 @@ func TestBuildCommandPreservesGitCeilingDirectories(t *testing.T) {
 	}
 }
 
+func TestBuildConfigCommandReadsUserConfigWithoutEnvInjectedConfig(t *testing.T) {
+	t.Setenv("HOME", "/tmp/hasp-home")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/tmp/evil-global")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_0", "/tmp/evil-hooks")
+
+	cmd := buildConfigCommand(context.Background(), "/tmp/proj", "config", "--path", "--get", "core.hooksPath")
+
+	argsJoined := strings.Join(cmd.Args, " ")
+	if strings.Contains(argsJoined, "core.hooksPath=/dev/null") {
+		t.Fatalf("config lookup must not disable core.hooksPath while reading it; argv=%v", cmd.Args)
+	}
+	if !strings.Contains(argsJoined, "-c safe.directory=*") {
+		t.Fatalf("config lookup should keep safe.directory override; argv=%v", cmd.Args)
+	}
+	if !envContains(cmd.Env, "HOME=/tmp/hasp-home") {
+		t.Fatalf("config lookup must preserve HOME so normal global git config is visible; env=%v", cmd.Env)
+	}
+	if !envContains(cmd.Env, "GIT_CONFIG_SYSTEM=/dev/null") {
+		t.Fatalf("config lookup must ignore system git config; env=%v", cmd.Env)
+	}
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "GIT_CONFIG_GLOBAL=") || strings.HasPrefix(kv, "GIT_CONFIG_COUNT=") {
+			t.Fatalf("config lookup must scrub env-injected git config, leaked %q in %v", kv, cmd.Env)
+		}
+	}
+}
+
 // TestRevParseTopLevelAppliesFallbackTimeoutWhenContextHasNone ensures the
 // helper always runs git under a deadline even when the caller passes an
 // untimed context, so a hung git child cannot block the daemon.

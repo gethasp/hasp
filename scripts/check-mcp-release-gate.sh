@@ -309,6 +309,7 @@ request = "\n".join([
         "method": "tools/call",
         "params": {
             "name": "hasp_run",
+            "_meta": {"progressToken": 2},
             "arguments": {
                 "project_root": project_root,
                 "host_label": "hasp-release-gate-stale-session",

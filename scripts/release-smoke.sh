@@ -386,11 +386,12 @@ git -C "$hook_repo" init >/dev/null 2>&1
   cd "$hook_repo"
   HASP_ROOT_OVERRIDE="$install_root" bash "$install_root/scripts/hasp-install-hooks.sh" >/dev/null
 )
-test -f "$hook_repo/.git/hooks/pre-commit"
+hook_repo_git_common="$(git -C "$hook_repo" rev-parse --path-format=absolute --git-common-dir)"
+test -f "$hook_repo_git_common/hooks/pre-commit"
 bash ./scripts/hasp-uninstall-release.sh --remove-hooks-from "$hook_repo" "$install_root" >/dev/null
 test ! -d "$install_root"
 test -d "$temp_home"
-test ! -f "$hook_repo/.git/hooks/pre-commit"
+test ! -f "$hook_repo_git_common/hooks/pre-commit"
 
 if command -v ruby >/dev/null 2>&1; then
   ruby -c "$release_dir/Formula/hasp.rb" >/dev/null

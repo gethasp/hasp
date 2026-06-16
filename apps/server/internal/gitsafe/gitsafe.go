@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -54,6 +55,14 @@ var safeEnvOverrides = []string{
 	"LC_ALL=C",
 }
 
+var configEnvOverrides = []string{
+	"GIT_TERMINAL_PROMPT=0",
+	"GIT_PAGER=cat",
+	"GIT_OPTIONAL_LOCKS=0",
+	"GIT_CONFIG_SYSTEM=/dev/null",
+	"LC_ALL=C",
+}
+
 // pathFromEnv is the seam tests use to substitute a deterministic PATH.
 var pathFromEnv = func() string { return os.Getenv("PATH") }
 
@@ -76,6 +85,18 @@ func BuildCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
+func buildConfigCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	full := make([]string, 0, 4+len(args))
+	full = append(full, "-c", "safe.directory=*")
+	if dir != "" {
+		full = append(full, "-C", dir)
+	}
+	full = append(full, args...)
+	cmd := commandContextFn(ctx, "git", full...)
+	cmd.Env = buildConfigEnv()
+	return cmd
+}
+
 func buildSafeEnv() []string {
 	env := make([]string, 0, len(safeEnvOverrides)+1)
 	if path := pathFromEnv(); path != "" {
@@ -85,6 +106,23 @@ func buildSafeEnv() []string {
 		env = append(env, "GIT_CEILING_DIRECTORIES="+ceiling)
 	}
 	env = append(env, safeEnvOverrides...)
+	return env
+}
+
+func buildConfigEnv() []string {
+	env := make([]string, 0, len(configEnvOverrides)+5)
+	if path := pathFromEnv(); path != "" {
+		env = append(env, "PATH="+path)
+	}
+	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "USERPROFILE"} {
+		if value := os.Getenv(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	if ceiling := os.Getenv("GIT_CEILING_DIRECTORIES"); ceiling != "" {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+ceiling)
+	}
+	env = append(env, configEnvOverrides...)
 	return env
 }
 
@@ -114,6 +152,31 @@ func TopLevel(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func CommonDir(ctx context.Context, dir string) (string, error) {
+	ctx, cancel := withFallbackTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	cmd := BuildCommand(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
+	}
+	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+func CoreHooksPath(ctx context.Context, dir string) (string, bool, error) {
+	ctx, cancel := withFallbackTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	cmd := buildConfigCommand(ctx, dir, "config", "--path", "--get", "core.hooksPath")
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("git config --get core.hooksPath: %w", err)
+	}
+	return strings.TrimSpace(string(out)), true, nil
 }
 
 func withFallbackTimeout(ctx context.Context, fallback time.Duration) (context.Context, context.CancelFunc) {

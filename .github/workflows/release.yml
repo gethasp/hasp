@@ -84,37 +84,9 @@ jobs:
           go-version: '1.26.4'
           cache: false
       - name: Bootstrap Go tools
-        run: bash ./scripts/bootstrap_go_tools.sh verify
-      - name: Check links
-        run: make check-links
-      - name: Check Go module tidy
-        run: make check-tidy
-      - name: Check generated docs
-        run: make check-generated-docs
-      - name: Check telemetry release gate
-        run: make check-telemetry-release-gate
-      - name: Lint workflows
-        run: make workflow-lint
-      - name: Shellcheck scripts
-        run: make shellcheck
-      - name: Test go mod tidy script
-        run: bash scripts/test-check-go-mod-tidy.sh
-      - name: Test public installer
-        run: bash scripts/test-public-installer.sh
-      - name: Test public docs versioning
-        run: bash scripts/test-public-docs-versioning.sh
-      - name: Test release metadata parser
-        run: bash scripts/test-release-metadata-parser.sh
-      - name: Test release targets
-        run: bash scripts/test-release-targets.sh
-      - name: Check public release contract
-        run: python3 scripts/check-public-release-contract.py
-      - name: Test public release package
-        run: bash scripts/test-package-public-release.sh
-      - name: Test server
-        run: make test
-      - name: Lint server
-        run: make lint
+        run: bash ./scripts/bootstrap_go_tools.sh release-preflight
+      - name: Fast release preflight
+        run: make release-preflight-fast
 
   build-public-release:
     needs:

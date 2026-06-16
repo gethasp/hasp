@@ -9,7 +9,7 @@ Run local pre-tag checks that predict whether a HASP public release is ready to
 cut. This command does not create, move, push, or publish tags.
 
 Options:
-  --full               Run the heavy release gate instead of the fast readiness gate
+  --full               Run the full release gate instead of the fast local preflight
   --skip-docs-dry-run  Skip the generated docs snapshot simulation
   -h, --help           Show this help
 EOF
@@ -172,7 +172,7 @@ say "Local gates"
 if [[ "$full" == "1" ]]; then
   HASP_COVERAGE_TARGET="${HASP_COVERAGE_TARGET:-100}" HASP_DOCS_VERSIONING_SKIP=1 make release-gate
 else
-  HASP_DOCS_VERSIONING_SKIP=1 make release-preflight
+  HASP_DOCS_VERSIONING_SKIP=1 HASP_RELEASE_PREFLIGHT_SKIP_GENERATED_DOCS=1 make release-preflight-fast
 fi
 
 printf 'release readiness passed for %s\n' "$release_tag"

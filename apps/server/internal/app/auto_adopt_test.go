@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -263,7 +264,11 @@ func TestEnsureProjectBindingAutoAdoptsGitRepoAndCommandsUseIt(t *testing.T) {
 		t.Fatalf("expected auto-adopted binding id, got %+v", payload)
 	}
 
-	hookPath := filepath.Join(projectRoot, ".git", "hooks", "pre-commit")
+	plan, err := hooks.ResolveInstallPlan(projectRoot)
+	if err != nil {
+		t.Fatalf("resolve hooks path: %v", err)
+	}
+	hookPath := filepath.Join(plan.HooksDir, "pre-commit")
 	if _, err := os.Stat(hookPath); err != nil {
 		t.Fatalf("expected auto-installed hook: %v", err)
 	}

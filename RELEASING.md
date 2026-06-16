@@ -35,23 +35,29 @@ git push origin v1.0.0
    source being tagged. The canonical `make cut-public-release TAG=vX.Y.Z`
    driver regenerates the CLI reference and docs snapshot automatically before
    it creates the tag.
-6. `make release-gate` passes. This runs the maintainer verification suite,
-   integration-tagged tests, conformance, release smoke, and the Go coverage
-   gate with `HASP_COVERAGE_TARGET=100`.
+6. `make release-readiness TAG=vX.Y.Z` passes for the routine maintainer loop.
+   This uses the resource-bounded `make release-preflight-fast` lane after
+   metadata, release eligibility, and docs dry-run checks. Use
+   `make release-readiness FULL=1 TAG=vX.Y.Z` or `make release-gate` when you
+   need the full local gate before pushing.
+7. the full release gate has passed in CI, or has been run locally when the
+   release risk requires it. `make release-gate` runs the maintainer
+   verification suite, integration-tagged tests, conformance, release smoke,
+   and the Go coverage gate with `HASP_COVERAGE_TARGET=100`.
    The Go test wrapper defaults package parallelism to `-p 1` so daemon
    lifecycle tests stay process-bounded during release verification; only raise
    `HASP_GO_TEST_PACKAGE_PARALLELISM` for explicitly process-safe lanes.
-7. the release-smoke matrix passes on every supported target. The workflow
+8. the release-smoke matrix passes on every supported target. The workflow
    builds the signed multi-target release set once, then each smoke job tests
    the packaged tarball for its native target with
    `scripts/release-smoke.sh --release-dir ...`. Smoke-only jobs use
    `scripts/bootstrap_go_tools.sh release-smoke`; the full `verify` bootstrap
-   remains reserved for release-gate and build jobs.
-8. the published live smoke passes. The release workflow checks the hosted
+   remains reserved for CI verification jobs.
+9. the published live smoke passes. The release workflow checks the hosted
    download metadata, runs `https://gethasp.com/install.sh` into a temporary
    install directory, and installs from the published Homebrew tap before the
    GitHub Release is created.
-9. the public release secrets are available:
+10. the public release secrets are available:
    - base64-encoded GPG signing key material
    - `HASP_RELEASE_GPG_PASSPHRASE` if that key is passphrase-protected
    - `HASP_UPGRADE_TRUST_ROOTS_HEX` and `HASP_UPGRADE_SIGNING_KEY_B64`
@@ -69,7 +75,7 @@ For manual verification before every tag:
 ```bash
 make build
 ./bin/hasp docs markdown --out public/docs/cli-reference.md
-make release-gate
+make release-readiness TAG=vX.Y.Z
 ```
 
 Canonical-source maintainers should use the guarded release driver rather than
@@ -105,14 +111,13 @@ The public release workflow builds and packages from this public repo, then
 publishes immutable release assets.
 
 The release workflow intentionally separates expensive validation from
-publication. `build-public-release` runs the full public `make release-gate`
-before exposing signing secrets, produces one signed release set, and uploads
-that set as the `public-release` artifact. The release-smoke matrix downloads
-that artifact and validates the exact bytes that later go to R2, Homebrew, and
-GitHub Releases. Homebrew installation is intentionally verified only after R2
-publication, and the live verifier polls the published tap before fetching or
-installing from it, so generated formulas never point at unpublished artifact
-URLs.
+publication. It keeps the pre-signing checks in a separate `release-preflight`
+job, produces one signed release set, and uploads that set as the
+`public-release` artifact. The release-smoke matrix downloads that artifact and
+validates the exact bytes that later go to R2, Homebrew, and GitHub Releases.
+Homebrew installation is intentionally verified only after R2 publication, and
+the live verifier polls the published tap before fetching or installing from
+it, so generated formulas never point at unpublished artifact URLs.
 
 If the release signing key is passphrase-protected, the workflow supplies the
 passphrase through `HASP_RELEASE_GPG_PASSPHRASE` and the signing scripts use

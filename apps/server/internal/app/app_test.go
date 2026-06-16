@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 	"github.com/gethasp/hasp/apps/server/internal/testutil"
@@ -312,7 +313,7 @@ func TestProjectBindStatusAndUnbindCommands(t *testing.T) {
 	if err := Run(context.Background(), []string{"project", "bind", "--project-root", projectRoot, "--alias", "secret_01=api_token"}, bytes.NewBuffer(nil), &bindOut, &bindOut); err != nil {
 		t.Fatalf("run project bind: %v", err)
 	}
-	hookData, err := os.ReadFile(filepath.Join(projectRoot, ".git", "hooks", "pre-commit"))
+	hookData, err := readManagedHookForTest(projectRoot, "pre-commit")
 	if err != nil {
 		t.Fatalf("expected installed hook: %v", err)
 	}
@@ -696,6 +697,14 @@ func run(name string, args ...string) ([]byte, error) {
 
 func initTestGitRepo(root string) ([]byte, error) {
 	return testutil.InitMinimalGitRepo(root)
+}
+
+func readManagedHookForTest(projectRoot string, hookName string) ([]byte, error) {
+	plan, err := hooks.ResolveInstallPlan(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(plan.HooksDir, hookName))
 }
 
 func newDaemonTestStarter(t *testing.T) starter {

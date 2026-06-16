@@ -12,8 +12,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,8 +20,8 @@ func TestTUIPrintsDeprecationWarningOnInvocation(t *testing.T) {
 	t.Setenv("HASP_HOME", t.TempDir())
 	t.Setenv("HASP_MASTER_PASSWORD", "test-password-123")
 	tempDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(tempDir, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
+	if out, err := initTestGitRepo(tempDir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	if err := initCommandWithArgs(context.Background(), nil, io.Discard); err != nil {
 		t.Fatalf("init: %v", err)

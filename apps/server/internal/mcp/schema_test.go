@@ -39,6 +39,14 @@ func TestCatalogDoesNotExposeRawSecretWriteToolsByDefault(t *testing.T) {
 	}
 }
 
+func TestCatalogSchemasAvoidClientRejectedCombinators(t *testing.T) {
+	for _, tool := range catalog() {
+		if path := schemaCombinatorPath(tool.InputSchema); path != "" {
+			t.Fatalf("tool %s advertises schema combinator at %s", tool.Name, path)
+		}
+	}
+}
+
 func TestSecretGetSchemaAdvertisesRecoverableAuthorizationFields(t *testing.T) {
 	for _, tool := range catalog() {
 		if tool.Name != "hasp_secret_get" {
@@ -56,6 +64,33 @@ func TestSecretGetSchemaAdvertisesRecoverableAuthorizationFields(t *testing.T) {
 		return
 	}
 	t.Fatal("hasp_secret_get missing from catalog")
+}
+
+func schemaCombinatorPath(value any) string {
+	return schemaCombinatorPathAt(value, "$")
+}
+
+func schemaCombinatorPathAt(value any, path string) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"oneOf", "anyOf", "allOf"} {
+			if _, ok := typed[key]; ok {
+				return path + "." + key
+			}
+		}
+		for key, child := range typed {
+			if found := schemaCombinatorPathAt(child, path+"."+key); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if found := schemaCombinatorPathAt(child, path+"[]"); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
 }
 
 func TestCatalogCanExposeUnsafeSecretWriteToolsForTrustedHarness(t *testing.T) {

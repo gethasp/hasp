@@ -1,21 +1,22 @@
 package hooks
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestInstallNoopsOutsideGitRepo(t *testing.T) {
-	if err := Install(t.TempDir()); err != nil {
-		t.Fatalf("expected non-git install to noop, got %v", err)
+func TestInstallFailsOutsideGitRepo(t *testing.T) {
+	if err := Install(t.TempDir()); !errors.Is(err, ErrNotGitRepo) {
+		t.Fatalf("expected non-git install failure, got %v", err)
 	}
 }
 
 func TestInstallHookWriteFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing", "pre-commit")
-	if err := installHook(path, t.TempDir(), true); err == nil {
+	if err := installHook(path, true); err == nil {
 		t.Fatal("expected installHook write failure")
 	}
 }
@@ -49,17 +50,30 @@ func TestInstallFailsWhenMkdirFails(t *testing.T) {
 func TestInstallHookBackupFailureAndInstallPropagation(t *testing.T) {
 	projectRoot := t.TempDir()
 	runGit(t, projectRoot, "init")
-	hookPath := filepath.Join(projectRoot, ".git", "hooks", "pre-commit")
+	hookPath := filepath.Join(mustHooksDir(t, projectRoot), "pre-commit")
 	if err := os.WriteFile(hookPath, []byte("#!/usr/bin/env bash\necho legacy\n"), 0o755); err != nil {
 		t.Fatalf("write legacy hook: %v", err)
 	}
 	if err := os.Mkdir(hookPath+".pre-hasp", 0o755); err != nil {
 		t.Fatalf("mkdir backup path: %v", err)
 	}
-	if err := installHook(hookPath, projectRoot, true); err == nil {
+	if err := installHook(hookPath, true); err == nil {
 		t.Fatal("expected backup failure")
 	}
 	if err := Install(projectRoot); err == nil {
 		t.Fatal("expected install failure to propagate")
+	}
+}
+
+func TestInstallRefusesSymlinkHook(t *testing.T) {
+	projectRoot := t.TempDir()
+	runGit(t, projectRoot, "init")
+	hookPath := filepath.Join(mustHooksDir(t, projectRoot), "pre-commit")
+	target := filepath.Join(t.TempDir(), "outside-hook")
+	if err := os.Symlink(target, hookPath); err != nil {
+		t.Fatalf("symlink hook: %v", err)
+	}
+	if err := Install(projectRoot); err == nil {
+		t.Fatal("expected symlink hook refusal")
 	}
 }

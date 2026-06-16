@@ -1,4 +1,4 @@
-.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate check-mcp-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap osv-scan install-hooks help
+.PHONY: build build-debug build-min-size check-links check-tidy check-generated-docs check-telemetry-release-gate check-telemetry-live-release-gate check-mcp-release-gate workflow-lint shellcheck test-scripts test test-integration test-race evals coverage coverage-audit-platform benchmarks benchmark-smoke lint staticcheck vulncheck lint-full verify-ci verify release-readiness release-preflight-build release-preflight-fast release-preflight release-gate conformance release-smoke package-release package-public-release publish-r2 publish-tap osv-scan install-hooks help
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
@@ -110,11 +110,30 @@ verify-ci: check-links check-tidy check-generated-docs check-telemetry-release-g
 ## verify: Default public verification gate
 verify: verify-ci release-smoke coverage vulncheck
 
-## release-readiness: Local pre-tag release readiness audit (TAG=vX.Y.Z, FULL=1 for heavy gates)
+## release-readiness: Local pre-tag release readiness audit (TAG=vX.Y.Z, FULL=1 for the full gate)
 release-readiness:
 	@bash ./scripts/check-release-readiness.sh $(if $(FULL),--full,) $(TAG)
 
-## release-preflight: Fast local preflight before publishing a release tag
+## release-preflight-build: Build the release preflight binary, optionally skipping generated-doc drift
+release-preflight-build:
+	@if [ "$${HASP_RELEASE_PREFLIGHT_SKIP_GENERATED_DOCS:-0}" = "1" ]; then \
+		HASP_TEAM_ID="$${HASP_TEAM_ID:-TEAMID1234}" bash ./scripts/build.sh >/dev/null; \
+	else \
+		$(MAKE) check-generated-docs; \
+	fi
+
+## release-preflight-fast: Resource-bounded local release preflight for routine patch releases
+release-preflight-fast:
+	@$(MAKE) check-links
+	@$(MAKE) check-tidy
+	@$(MAKE) release-preflight-build
+	@$(MAKE) check-telemetry-release-gate
+	@$(MAKE) shellcheck
+	@HASP_DOCS_VERSIONING_SKIP=1 $(MAKE) test-scripts
+	@$(MAKE) test
+	@bash ./scripts/check-mcp-release-gate.sh --bin ./bin/hasp
+
+## release-preflight: Extended local preflight with live and eval checks
 release-preflight:
 	@$(MAKE) verify-ci
 	@$(MAKE) check-mcp-release-gate

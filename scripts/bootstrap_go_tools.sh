@@ -54,6 +54,13 @@ case "$profile" in
     require_tool git "GitHub Actions release-smoke jobs must run after actions/checkout on an image with git."
     require_gnupg
     ;;
+  release-preflight|preflight)
+    require_tool go "GitHub Actions release-preflight jobs must run actions/setup-go before this script."
+    require_tool python3 "GitHub Actions release-preflight jobs must run on an image with Python 3."
+    require_tool git "GitHub Actions release-preflight jobs must run after actions/checkout on an image with git."
+    require_shellcheck
+    require_gnupg
+    ;;
   *)
     echo "Unknown profile: $profile" >&2
     exit 1

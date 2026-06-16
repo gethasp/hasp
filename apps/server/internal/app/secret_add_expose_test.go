@@ -9,14 +9,13 @@ import (
 	"testing"
 )
 
-// withinTempRepoForSecretAdd builds a throwaway git repo (just an empty
-// `.git` dir is enough for pathLooksLikeGitRepo) and returns its path so
-// the caller can pass `--project-root <root>` to drive the in-repo branch.
+// withinTempRepoForSecretAdd builds a throwaway git repo and returns its path
+// so the caller can pass `--project-root <root>` to drive the in-repo branch.
 func withinTempRepoForSecretAdd(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-		t.Fatalf("seed .git: %v", err)
+	if out, err := initTestGitRepo(dir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	return dir
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -77,7 +78,11 @@ func TestEnsureProjectBindingExplicitMCPInstallsHookBeforeRecordingHookInstalled
 	if !binding.HookInstalled {
 		t.Fatalf("binding=%+v, want HookInstalled true", binding)
 	}
-	if _, err := os.Stat(filepath.Join(gitRoot, ".git", "hooks", "pre-commit")); err != nil {
+	plan, err := hooks.ResolveInstallPlan(gitRoot)
+	if err != nil {
+		t.Fatalf("resolve hooks path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(plan.HooksDir, "pre-commit")); err != nil {
 		t.Fatalf("expected installed pre-commit hook: %v", err)
 	}
 }

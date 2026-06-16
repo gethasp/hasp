@@ -69,7 +69,8 @@ func TestToolsListAndCall(t *testing.T) {
 		"id":      2,
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "hasp_list",
+			"name":  "hasp_list",
+			"_meta": map[string]any{"progressToken": 2},
 			"arguments": map[string]any{
 				"project_root":  projectRoot,
 				"grant_project": "window",

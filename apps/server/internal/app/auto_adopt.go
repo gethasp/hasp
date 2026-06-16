@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/projectcontext"
 	"github.com/gethasp/hasp/apps/server/internal/store"
@@ -64,7 +65,11 @@ func pathLooksLikeGitRepo(root string) bool {
 	if err != nil {
 		return false
 	}
-	return info.IsDir() || info.Mode().IsRegular()
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return false
+	}
+	_, err = gitsafe.TopLevel(context.Background(), root)
+	return err == nil
 }
 
 func requireProjectBinding(binding store.Binding, projectRoot string) error {

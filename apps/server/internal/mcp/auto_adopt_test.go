@@ -66,17 +66,24 @@ func TestMCPAutoAdoptHelpers(t *testing.T) {
 			t.Fatal("expected root without .git to be false")
 		}
 		if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
-			t.Fatalf("mkdir .git: %v", err)
+			t.Fatalf("mkdir fake .git: %v", err)
 		}
-		if !pathLooksLikeGitRepoMCP(root) {
-			t.Fatal("expected .git dir to be detected")
+		if pathLooksLikeGitRepoMCP(root) {
+			t.Fatal("expected fake .git dir to be rejected")
 		}
 		fileRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(fileRoot, ".git"), []byte("gitdir: elsewhere\n"), 0o600); err != nil {
 			t.Fatalf("write .git file: %v", err)
 		}
-		if !pathLooksLikeGitRepoMCP(fileRoot) {
-			t.Fatal("expected .git file to be detected")
+		if pathLooksLikeGitRepoMCP(fileRoot) {
+			t.Fatal("expected invalid .git file to be rejected")
+		}
+		realRoot := t.TempDir()
+		if out, err := initTestGitRepo(realRoot); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+		if !pathLooksLikeGitRepoMCP(realRoot) {
+			t.Fatal("expected real git repo to be detected")
 		}
 	})
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/profiles"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -47,14 +48,11 @@ func TestBootstrapOptionAndHelperCoverage(t *testing.T) {
 		if out, err := run("git", "-C", gitRoot, "init"); err != nil {
 			t.Fatalf("git init: %v: %s", err, out)
 		}
-		if err := os.MkdirAll(filepath.Join(gitRoot, ".git", "hooks"), 0o755); err != nil {
-			t.Fatalf("mkdir hooks: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(gitRoot, ".git", "hooks", "pre-commit"), []byte("#!/bin/sh\n"), 0o700); err != nil {
-			t.Fatalf("write hook: %v", err)
+		if err := hooks.Install(gitRoot); err != nil {
+			t.Fatalf("install managed hooks: %v", err)
 		}
 		if !bootstrapHookPresent(gitRoot) {
-			t.Fatal("expected bootstrapHookPresent to detect hook")
+			t.Fatal("expected bootstrapHookPresent to detect managed hook")
 		}
 	}
 

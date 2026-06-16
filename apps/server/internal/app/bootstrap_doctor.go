@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/profiles"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -274,8 +274,7 @@ func bootstrapHookPresent(projectRoot string) bool {
 	if strings.TrimSpace(projectRoot) == "" {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(projectRoot, ".git", "hooks", "pre-commit"))
-	return err == nil
+	return hooks.ManagedHooksPresent(projectRoot)
 }
 
 func bootstrapAliasContext(ctx context.Context, projectRoot string, deps bootstrapDeps) (map[string]string, store.Binding, []store.VisibleReference, error) {
