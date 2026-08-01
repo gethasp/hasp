@@ -14,6 +14,10 @@ import (
 const marker = "# HASP-MANAGED-HOOK"
 
 var hooksMkdirAll = os.MkdirAll
+var hooksAbs = filepath.Abs
+var hooksEvalSymlinks = filepath.EvalSymlinks
+var hooksCommonDir = gitsafe.CommonDir
+var hooksCoreHooksPath = gitsafe.CoreHooksPath
 
 var (
 	ErrNotGitRepo     = errors.New("not a git working tree")
@@ -52,11 +56,11 @@ func ResolveInstallPlan(projectRoot string) (InstallPlan, error) {
 	if err != nil {
 		return InstallPlan{}, fmt.Errorf("%w: %v", ErrNotGitRepo, err)
 	}
-	commonDir, err := gitsafe.CommonDir(context.Background(), projectRoot)
+	commonDir, err := hooksCommonDir(context.Background(), projectRoot)
 	if err != nil {
 		return InstallPlan{}, err
 	}
-	hooksPath, hasHooksPath, err := gitsafe.CoreHooksPath(context.Background(), projectRoot)
+	hooksPath, hasHooksPath, err := hooksCoreHooksPath(context.Background(), projectRoot)
 	if err != nil {
 		return InstallPlan{}, err
 	}
@@ -117,14 +121,14 @@ func resolveCustomHooksDir(projectRoot, commonDir, hooksPath string) (string, er
 }
 
 func canonicalBoundaryPath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := hooksAbs(path)
 	if err != nil {
 		return "", err
 	}
 	probe := filepath.Clean(abs)
 	missing := make([]string, 0)
 	for {
-		resolved, err := filepath.EvalSymlinks(probe)
+		resolved, err := hooksEvalSymlinks(probe)
 		if err == nil {
 			for i := len(missing) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, missing[i])

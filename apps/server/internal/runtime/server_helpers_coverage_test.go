@@ -659,6 +659,58 @@ func TestHTTPServerResidualRouteBranches(t *testing.T) {
 	}
 }
 
+func TestHTTPServerAdminRoutesRejectUntrustedTCP(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	oldHTTPHMACKey := httpHMACKey
+	oldAdminOverTCPAllowed := adminOverTCPAllowed
+	t.Cleanup(func() {
+		httpHMACKey = oldHTTPHMACKey
+		adminOverTCPAllowed = oldAdminOverTCPAllowed
+	})
+	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
+	adminOverTCPAllowed = func() bool { return false }
+
+	home := t.TempDir()
+	runtimePaths := paths.Paths{
+		HomeDir:            home,
+		StatePath:          filepath.Join(home, "vault.json"),
+		AuditPath:          filepath.Join(home, "audit.jsonl"),
+		RuntimeDir:         filepath.Join(home, "runtime"),
+		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
+		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
+		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
+	}
+	rpcSrv := newRPCServer(runtimePaths)
+	rpcSrv.keyring = newHTTPTestKeyring()
+	rpcSrv.auditState = newAuditState(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	httpSrv, err := startHTTPServer(ctx, runtimePaths, rpcSrv, make(chan error, 1))
+	if err != nil {
+		t.Fatalf("start http server: %v", err)
+	}
+	defer func() { _ = httpSrv.Close() }()
+	base := fmt.Sprintf("http://127.0.0.1:%d", httpSrv.Ports().V4)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   []byte
+	}{
+		{http.MethodPost, "/v1/approvals/approval-1/decide", []byte(`{"decision":"deny"}`)},
+		{http.MethodPut, "/v1/policy", []byte(`{}`)},
+		{http.MethodPut, "/v1/config/test", []byte(`{"value":"x"}`)},
+		{http.MethodPost, "/v1/vault/unlock", []byte(`{"method":"device-owner"}`)},
+		{http.MethodPost, "/v1/vault/master-password", []byte(`{"current_password":"old","new_password":"new"}`)},
+		{http.MethodPost, "/v1/vault/lock", []byte(`{}`)},
+	} {
+		body, status := signedHTTPJSONStatus(t, ctx, key, tc.method, base+tc.path, tc.body)
+		if status != http.StatusForbidden {
+			t.Fatalf("%s %s status=%d want 403 body=%s", tc.method, tc.path, status, body)
+		}
+	}
+}
+
 func TestHTTPServerSeamedFailureBranches(t *testing.T) {
 	lockRuntimeSeams(t)
 

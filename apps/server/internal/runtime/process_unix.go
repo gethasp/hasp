@@ -18,6 +18,7 @@ import (
 var (
 	execCommand      = exec.Command
 	processReadFile  = os.ReadFile
+	runtimePipe      = os.Pipe
 	findProcessByPID = os.FindProcess
 	releaseProcess   = func(proc *os.Process) error { return proc.Release() }
 	signalProcess    = func(proc *os.Process, sig os.Signal) error { return proc.Signal(sig) }
@@ -80,7 +81,7 @@ func startDetachedProcess(_ context.Context) error {
 	var secretReadEnd, secretWriteEnd *os.File
 	var secretBlob []byte
 	if hasSensitiveEnv(parentEnviron) {
-		pr, pw, perr := os.Pipe()
+		pr, pw, perr := runtimePipe()
 		if perr != nil {
 			return fmt.Errorf("create secret env pipe: %w", perr)
 		}

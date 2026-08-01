@@ -74,6 +74,34 @@ func TestLoadDaemonSecretEnvFromFDNoopBranches(t *testing.T) {
 	}
 }
 
+func TestLoadDaemonSecretEnvFromFDNilFile(t *testing.T) {
+	lockRuntimeSeams(t)
+	origFile := daemonSecretFile
+	t.Cleanup(func() {
+		daemonSecretFile = origFile
+		daemonSecretEnvMu.Lock()
+		daemonSecretEnv = nil
+		daemonSecretEnvMu.Unlock()
+	})
+	daemonSecretFile = func(uintptr, string) *os.File { return nil }
+	t.Setenv(secretEnvFDVar, "3")
+	daemonSecretEnvMu.Lock()
+	daemonSecretEnv = nil
+	daemonSecretEnvMu.Unlock()
+
+	loadDaemonSecretEnvFromFD()
+
+	daemonSecretEnvMu.RLock()
+	got := daemonSecretEnv
+	daemonSecretEnvMu.RUnlock()
+	if got != nil {
+		t.Fatalf("daemonSecretEnv = %#v", got)
+	}
+	if os.Getenv(secretEnvFDVar) != "" {
+		t.Fatal("secret env fd marker should be unset even when fd cannot be wrapped")
+	}
+}
+
 func TestLoadDaemonSecretEnvFromFDErrorsLeaveNoParsedSecrets(t *testing.T) {
 	dir := t.TempDir()
 	fd, err := syscall.Open(dir, syscall.O_RDONLY, 0)

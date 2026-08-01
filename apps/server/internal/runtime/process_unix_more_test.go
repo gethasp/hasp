@@ -117,6 +117,35 @@ func TestStartDetachedProcessFailurePaths(t *testing.T) {
 		}
 	})
 
+	t.Run("sensitive env pipe creation failure", func(t *testing.T) {
+		origResolve := resolveRuntimePaths
+		origMkdir := runtimeMkdirAll
+		origPipe := runtimePipe
+		defer func() {
+			resolveRuntimePaths = origResolve
+			runtimeMkdirAll = origMkdir
+			runtimePipe = origPipe
+		}()
+
+		resolveRuntimePaths = func() (paths.Paths, error) {
+			dir := t.TempDir()
+			return paths.Paths{
+				RuntimeDir:  dir,
+				PidFilePath: filepath.Join(dir, "daemon.pid"),
+			}, nil
+		}
+		runtimeMkdirAll = func(string, os.FileMode) error { return nil }
+		runtimePipe = func() (*os.File, *os.File, error) {
+			return nil, nil, errors.New("pipe failed")
+		}
+		t.Setenv("HASP_TEST_HELPER_DAEMON", "1")
+		t.Setenv("HASP_MASTER_PASSWORD", "pipe-secret")
+
+		if err := startDetachedProcess(context.Background()); err == nil || !strings.Contains(err.Error(), "create secret env pipe: pipe failed") {
+			t.Fatalf("expected pipe creation error, got %v", err)
+		}
+	})
+
 	t.Run("write pid failure", func(t *testing.T) {
 		origResolve := resolveRuntimePaths
 		origMkdir := runtimeMkdirAll

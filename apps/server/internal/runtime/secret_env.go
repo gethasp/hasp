@@ -26,6 +26,7 @@ var sensitiveDaemonEnvNames = []string{
 var (
 	daemonSecretEnvMu sync.RWMutex
 	daemonSecretEnv   map[string]string
+	daemonSecretFile  = os.NewFile
 )
 
 // daemonSecretGetenv returns a sensitive value provided over the one-shot fd when
@@ -56,7 +57,7 @@ func loadDaemonSecretEnvFromFD() {
 	if err != nil || fd < 0 {
 		return
 	}
-	f := os.NewFile(uintptr(fd), "hasp-secret-env")
+	f := daemonSecretFile(uintptr(fd), "hasp-secret-env")
 	if f == nil {
 		return
 	}

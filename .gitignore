@@ -23,3 +23,6 @@ __pycache__/
 
 # IDE / tools
 .omx/
+
+# Scanner databases (osv-scanner offline cache, hundreds of MB)
+.cache/

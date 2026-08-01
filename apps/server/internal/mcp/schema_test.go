@@ -1,6 +1,9 @@
 package mcp
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestToolNamesIncludesShippedTools(t *testing.T) {
 	names := ToolNames()
@@ -64,6 +67,36 @@ func TestSecretGetSchemaAdvertisesRecoverableAuthorizationFields(t *testing.T) {
 		return
 	}
 	t.Fatal("hasp_secret_get missing from catalog")
+}
+
+func TestGrantSchemasDocumentTheirRecoveryPath(t *testing.T) {
+	wanted := map[string][]string{
+		"grant_project": {"project_lease_required", "once", "session", "window", "15 minutes"},
+		"grant_secret":  {"secret_session_grant_required", "once", "session", "window", "15 minutes"},
+	}
+	seen := map[string]bool{}
+	for _, tool := range catalog() {
+		props, _ := tool.InputSchema["properties"].(map[string]any)
+		for field, phrases := range wanted {
+			raw, ok := props[field]
+			if !ok {
+				continue
+			}
+			seen[field] = true
+			fieldSchema, _ := raw.(map[string]any)
+			description, _ := fieldSchema["description"].(string)
+			for _, phrase := range phrases {
+				if !strings.Contains(description, phrase) {
+					t.Fatalf("tool %s field %s description %q missing %q", tool.Name, field, description, phrase)
+				}
+			}
+		}
+	}
+	for field := range wanted {
+		if !seen[field] {
+			t.Fatalf("default catalog never advertised %q", field)
+		}
+	}
 }
 
 func schemaCombinatorPath(value any) string {

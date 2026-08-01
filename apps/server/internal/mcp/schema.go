@@ -9,12 +9,12 @@ func catalog() []tool {
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
+			"grant_project": grantProjectSchema(),
 		})},
 		{Name: "hasp_check", Description: "Scan the project for managed secret leaks", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": optionalSessionToken,
-			"grant_project": grantSchema(),
+			"grant_project": grantProjectSchema(),
 		})},
 		{Name: "hasp_targets", Description: "List sanitized manifest targets for a project. Returns target names, refs, delivery kinds, and prerequisite status, never values or repo-controlled command argv.", InputSchema: schema(map[string]any{
 			"project_root": stringSchema("Bound project root"),
@@ -27,8 +27,8 @@ func catalog() []tool {
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
-			"grant_secret":  grantSchema(),
+			"grant_project": grantProjectSchema(),
+			"grant_secret":  grantSecretSchema(),
 			"target":        stringSchema("Optional manifest target to expand into env/file refs. Command argv is still explicit."),
 			"env":           mapSchema("Environment variable to reference mappings. Values may be opaque repo refs like secret_01 or named refs like @OPENAI_API_KEY."),
 			"command":       stringArraySchema("Command argv"),
@@ -37,8 +37,8 @@ func catalog() []tool {
 			"project_root":  stringSchema("Bound project root"),
 			"session_token": optionalSessionToken,
 			"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-			"grant_project": grantSchema(),
-			"grant_secret":  grantSchema(),
+			"grant_project": grantProjectSchema(),
+			"grant_secret":  grantSecretSchema(),
 			"target":        stringSchema("Optional manifest target to expand into file refs. Command argv is still explicit."),
 			"files":         mapSchema("Environment variable to file reference mappings. Values may be opaque repo refs like file_01 or named refs like @GOOGLE_APPLICATION_CREDENTIALS."),
 			"command":       stringArraySchema("Command argv"),
@@ -50,8 +50,8 @@ func catalog() []tool {
 				"project_root":  stringSchema("Bound project root"),
 				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-				"grant_project": grantSchema(),
-				"grant_secret":  grantSchema(),
+				"grant_project": grantProjectSchema(),
+				"grant_secret":  grantSecretSchema(),
 				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
 				"name":          stringSchema("Secret name"),
 				"kind":          stringSchema("Secret kind"),
@@ -62,8 +62,8 @@ func catalog() []tool {
 				"project_root":  stringSchema("Optional repo root to expose into"),
 				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-				"grant_project": grantSchema(),
-				"grant_secret":  grantSchema(),
+				"grant_project": grantProjectSchema(),
+				"grant_secret":  grantSecretSchema(),
 				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
 				"name":          stringSchema("Secret name"),
 				"value":         stringSchema("Secret value"),
@@ -75,8 +75,8 @@ func catalog() []tool {
 				"project_root":  stringSchema("Optional repo root to keep exposed in"),
 				"session_token": optionalSessionToken,
 				"host_label":    stringSchema("Optional caller label for auto-opened sessions"),
-				"grant_project": grantSchema(),
-				"grant_secret":  grantSchema(),
+				"grant_project": grantProjectSchema(),
+				"grant_secret":  grantSecretSchema(),
 				"grant_write":   boolSchema("Explicit audited write-grant acknowledgement for new secrets"),
 				"name":          stringSchema("Secret name"),
 				"value":         stringSchema("Updated secret value"),
@@ -107,7 +107,7 @@ func catalog() []tool {
 		tool{Name: "hasp_secret_get", Description: "Get metadata for a secret without returning its raw value. Use this to confirm a vault secret exists and to obtain its safe named_reference for hasp_run or hasp_inject.", InputSchema: schema(map[string]any{
 			"project_root":  stringSchema("Optional repo root to check availability in"),
 			"session_token": optionalSessionToken,
-			"grant_project": grantSchema(),
+			"grant_project": grantProjectSchema(),
 			"host_label":    stringSchema("Optional caller label"),
 			"name":          stringSchema("Secret name"),
 		}, "name")},
@@ -162,10 +162,20 @@ func mapSchema(description string) map[string]any {
 	}
 }
 
-func grantSchema() map[string]any {
+func grantProjectSchema() map[string]any {
+	return grantSchema("Audited project-lease grant. A fresh MCP session holds no lease, so send this on the first call against a repo; without an active lease the call fails with project_lease_required. " + grantScopeHelp)
+}
+
+func grantSecretSchema() map[string]any {
+	return grantSchema("Audited grant for access to the referenced secrets. Send this when a call fails with secret_session_grant_required or access_secret_prompt_required. " + grantScopeHelp)
+}
+
+const grantScopeHelp = "Scopes: once authorizes this call only, session lasts for the rest of this MCP session, window lasts 15 minutes."
+
+func grantSchema(description string) map[string]any {
 	return map[string]any{
 		"type":        "string",
-		"description": "Audited grant choice",
+		"description": description,
 		"enum":        []string{string(store.GrantOnce), string(store.GrantSession), string(store.GrantWindow)},
 	}
 }
