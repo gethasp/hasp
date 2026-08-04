@@ -238,3 +238,17 @@ func TestExistingLegacyHomeErrorBranches(t *testing.T) {
 		t.Fatalf("expected pathStat failure, got %v", err)
 	}
 }
+
+func TestDaemonLockPathFor(t *testing.T) {
+	socket := "/tmp/hasp/runtime/daemon.sock"
+	if got, want := DaemonLockPathFor(socket), socket+DaemonLockSuffix; got != want {
+		t.Fatalf("DaemonLockPathFor(%q) = %q, want %q", socket, got, want)
+	}
+	// No socket means no lock path: callers holding a partially-populated Paths
+	// must get an empty string rather than a lock on a bare ".lock" file.
+	for _, empty := range []string{"", "   ", "\t\n"} {
+		if got := DaemonLockPathFor(empty); got != "" {
+			t.Fatalf("DaemonLockPathFor(%q) = %q, want empty", empty, got)
+		}
+	}
+}

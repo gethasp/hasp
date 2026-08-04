@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ var (
 	chmodSocket       = os.Chmod
 	openExclusiveFile = os.OpenFile
 	removeFile        = os.Remove
+	readFile          = os.ReadFile
 	portFileMarshal   = json.Marshal
 	nowUTC            = func() time.Time { return time.Now().UTC() }
 )
@@ -59,6 +61,9 @@ type Server struct {
 
 	closeOnce     sync.Once
 	wrotePortFile bool
+	// portFileBytes is exactly what we wrote, so shutdown can tell our port
+	// file from a successor's and decline to delete someone else's.
+	portFileBytes []byte
 }
 
 func NewServer(runtimePaths paths.Paths, opts Options) (*Server, error) {
@@ -230,10 +235,12 @@ func (s *Server) writePortFile() error {
 	if err := mkdirAll(filepath.Dir(s.portFilePath), 0o700); err != nil {
 		return fmt.Errorf("create port file directory: %w", err)
 	}
-	if err := writePortFileExclusive(s.portFilePath, s.portState); err != nil {
+	written, err := writePortFileExclusive(s.portFilePath, s.portState)
+	if err != nil {
 		return fmt.Errorf("write port file: %w", err)
 	}
 	s.wrotePortFile = true
+	s.portFileBytes = written
 	return nil
 }
 
@@ -255,6 +262,11 @@ func (s *Server) removePortFile() error {
 	if !s.wrotePortFile {
 		return nil
 	}
+	// Only delete the file if it is still byte-for-byte the one we wrote. A
+	// successor daemon's port file at the same path is not ours to remove.
+	if current, err := readFile(s.portFilePath); err != nil || !bytes.Equal(current, s.portFileBytes) {
+		return nil
+	}
 	if err := removeFile(s.portFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -265,20 +277,20 @@ func (s *Server) removeUnixSocket() error {
 	return removeUnixSocket(s.unixSocketPath)
 }
 
-func writePortFileExclusive(path string, state PortFileState) error {
+func writePortFileExclusive(path string, state PortFileState) ([]byte, error) {
 	data, err := portFileMarshal(state)
 	if err != nil {
-		return fmt.Errorf("marshal port file: %w", err)
+		return nil, fmt.Errorf("marshal port file: %w", err)
 	}
 	file, err := openExclusiveFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 	if _, err := file.Write(data); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return data, nil
 }
 
 func bindLoopbackListener(addr string) (net.Listener, error) {

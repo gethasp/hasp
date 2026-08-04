@@ -128,9 +128,10 @@ func startDetachedProcess(_ context.Context) error {
 		_, _ = secretWriteEnd.Write(secretBlob)
 		_ = secretWriteEnd.Close()
 	}
-	if err := writeFile(resolved.PidFilePath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
-		return fmt.Errorf("write pid file: %w", err)
-	}
+	// The daemon writes its own pid file once it holds the singleton lock and
+	// has bound the socket. Writing it here too meant a child that loses the
+	// race still stamped its pid over the running daemon's, so `hasp daemon
+	// stop` then refused to signal anyone (hasp-20vs).
 	return releaseProcess(cmd.Process)
 }
 

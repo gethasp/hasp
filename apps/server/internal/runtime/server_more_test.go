@@ -510,22 +510,14 @@ func TestRemoveStaleSocketStatAndRemoveErrors(t *testing.T) {
 			t.Fatalf("mkdir socket dir: %v", err)
 		}
 		defer os.RemoveAll(dir)
-		socketPath := filepath.Join(dir, "daemon.sock")
-		listener, err := net.Listen("unix", socketPath)
-		if err != nil {
-			t.Fatalf("listen socket: %v", err)
-		}
-		defer listener.Close()
-		if _, err := os.Stat(socketPath); err != nil {
-			t.Fatalf("stat socket file: %v", err)
-		}
+		socketPath := abandonUnixSocket(t, dir)
 
 		if err := os.Chmod(dir, 0o500); err != nil {
 			t.Fatalf("chmod dir: %v", err)
 		}
 		defer func() { _ = os.Chmod(dir, 0o700) }()
 
-		err = removeStaleSocket(socketPath)
+		err := removeStaleSocket(socketPath)
 		if err == nil || !strings.Contains(err.Error(), "remove stale socket") {
 			t.Fatalf("expected remove error, got %v", err)
 		}
@@ -537,14 +529,33 @@ func TestRemoveStaleSocketStatAndRemoveErrors(t *testing.T) {
 			t.Fatalf("mkdir socket dir: %v", err)
 		}
 		defer os.RemoveAll(dir)
-		socketPath := filepath.Join(dir, "daemon.sock")
-		listener, err := net.Listen("unix", socketPath)
-		if err != nil {
-			t.Fatalf("listen socket: %v", err)
-		}
-		defer listener.Close()
+		socketPath := abandonUnixSocket(t, dir)
 		if err := removeStaleSocket(socketPath); err != nil {
 			t.Fatalf("remove stale socket: %v", err)
 		}
 	})
+}
+
+// abandonUnixSocket leaves a socket file at dir/daemon.sock with no listener
+// behind it, which is what "stale" means now that removeStaleSocket refuses to
+// unlink a socket someone is still serving.
+func abandonUnixSocket(t *testing.T, dir string) string {
+	t.Helper()
+	socketPath := filepath.Join(dir, "daemon.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen socket: %v", err)
+	}
+	unixListener, ok := listener.(*net.UnixListener)
+	if !ok {
+		t.Fatalf("listener type = %T, want *net.UnixListener", listener)
+	}
+	unixListener.SetUnlinkOnClose(false)
+	if err := unixListener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("stat abandoned socket file: %v", err)
+	}
+	return socketPath
 }

@@ -151,11 +151,11 @@ func TestHTTPServerSeamsCoverPortAndSocketFailures(t *testing.T) {
 	mkdirAll = origMkdir
 
 	openExclusiveFile = func(string, int, os.FileMode) (*os.File, error) { return nil, errors.New("open failed") }
-	if err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
+	if _, err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
 		t.Fatal("expected port file open failure")
 	}
 	portFileMarshal = func(any) ([]byte, error) { return nil, errors.New("marshal failed") }
-	if err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
+	if _, err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
 		t.Fatal("expected port file marshal failure")
 	}
 	portFileMarshal = origPortFileMarshal
@@ -164,7 +164,7 @@ func TestHTTPServerSeamsCoverPortAndSocketFailures(t *testing.T) {
 		t.Fatalf("open temp dir: %v", err)
 	}
 	openExclusiveFile = func(string, int, os.FileMode) (*os.File, error) { return dirFile, nil }
-	if err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
+	if _, err := writePortFileExclusive(filepath.Join(t.TempDir(), "port"), PortFileState{}); err == nil {
 		t.Fatal("expected port file write failure")
 	}
 	_ = dirFile.Close()
@@ -577,3 +577,71 @@ type fakeListener struct {
 func (l fakeListener) Accept() (net.Conn, error) { return nil, errors.New("closed") }
 func (l fakeListener) Close() error              { return nil }
 func (l fakeListener) Addr() net.Addr            { return l.addr }
+
+// TestRemovePortFileOnlyRemovesOwnFile covers the shutdown ownership guard: a
+// daemon deletes daemon.http.port only when it is still byte-for-byte the file
+// it wrote, so a dying loser cannot wipe a live successor's port file.
+func TestRemovePortFileOnlyRemovesOwnFile(t *testing.T) {
+	origRemove := removeFile
+	t.Cleanup(func() { removeFile = origRemove })
+
+	newServer := func(t *testing.T) (*Server, string) {
+		t.Helper()
+		portPath := filepath.Join(t.TempDir(), "port")
+		written, err := writePortFileExclusive(portPath, PortFileState{V4: 1, V6: 2})
+		if err != nil {
+			t.Fatalf("write port file: %v", err)
+		}
+		return &Server{
+			httpServer:    &http.Server{},
+			portFilePath:  portPath,
+			wrotePortFile: true,
+			portFileBytes: written,
+		}, portPath
+	}
+
+	t.Run("removes our own file", func(t *testing.T) {
+		removeFile = origRemove
+		server, portPath := newServer(t)
+		if err := server.removePortFile(); err != nil {
+			t.Fatalf("removePortFile: %v", err)
+		}
+		if _, err := os.Stat(portPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("own port file survived: %v", err)
+		}
+	})
+
+	t.Run("leaves a successor's file alone", func(t *testing.T) {
+		removeFile = func(string) error {
+			t.Fatal("removePortFile deleted a file it did not write")
+			return nil
+		}
+		server, portPath := newServer(t)
+		if err := os.WriteFile(portPath, []byte(`{"v4":9999,"v6":9999}`), 0o600); err != nil {
+			t.Fatalf("overwrite with successor's file: %v", err)
+		}
+		if err := server.removePortFile(); err != nil {
+			t.Fatalf("removePortFile: %v", err)
+		}
+	})
+
+	t.Run("surfaces a remove failure through Close", func(t *testing.T) {
+		removeFile = func(string) error { return errors.New("remove port failed") }
+		server, _ := newServer(t)
+		if err := server.removePortFile(); err == nil || !strings.Contains(err.Error(), "remove port failed") {
+			t.Fatalf("removePortFile = %v, want the remove failure", err)
+		}
+		server, _ = newServer(t)
+		if err := server.Close(); err == nil || !strings.Contains(err.Error(), "remove port failed") {
+			t.Fatalf("Close = %v, want the port file remove failure", err)
+		}
+	})
+
+	t.Run("tolerates an already-removed file", func(t *testing.T) {
+		removeFile = func(string) error { return os.ErrNotExist }
+		server, _ := newServer(t)
+		if err := server.removePortFile(); err != nil {
+			t.Fatalf("removePortFile on vanished file = %v, want nil", err)
+		}
+	})
+}

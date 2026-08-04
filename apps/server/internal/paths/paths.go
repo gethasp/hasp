@@ -34,10 +34,26 @@ type Paths struct {
 	RuntimeDir         string
 	SocketPath         string
 	PidFilePath        string
+	DaemonLockPath     string
 	HTTPPortFilePath   string
 	HTTPUnixSocketPath string
 	StatePath          string
 	AuditPath          string
+}
+
+// DaemonLockSuffix is appended to the socket path to name the file whose
+// advisory lock makes `hasp daemon serve` a singleton.
+const DaemonLockSuffix = ".lock"
+
+// DaemonLockPathFor derives the daemon lock path from a socket path. The lock
+// is keyed to the socket rather than the home or runtime directory because the
+// socket is the contended resource: two daemons bound to different sockets are
+// distinct daemons, while two bound to the same socket are the leak.
+func DaemonLockPathFor(socketPath string) string {
+	if strings.TrimSpace(socketPath) == "" {
+		return ""
+	}
+	return socketPath + DaemonLockSuffix
 }
 
 // Resolve computes the set of well-known paths used by the hasp server and
@@ -101,6 +117,7 @@ func Resolve() (Paths, error) {
 		RuntimeDir:         runtimeDir,
 		SocketPath:         socketPath,
 		PidFilePath:        filepath.Join(runtimeDir, "daemon.pid"),
+		DaemonLockPath:     DaemonLockPathFor(socketPath),
 		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
 		HTTPUnixSocketPath: filepath.Join(runtimeDir, "daemon.http.sock"),
 		StatePath:          filepath.Join(home, "vault.json.enc"),

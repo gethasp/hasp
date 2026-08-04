@@ -123,7 +123,16 @@ var (
 var (
 	errVaultLocked                 = errors.New("vault is locked")
 	errApprovalTrustedPathRequired = errors.New("approval operations require the trusted local app or HTTP path")
+
+	// errDaemonAlreadyRunning reports that another daemon holds the runtime
+	// lock. A process that sees this must exit having touched nothing: the
+	// socket, the pid file and the HTTP port file all belong to the holder.
+	errDaemonAlreadyRunning = errors.New("hasp daemon already running")
 )
+
+// socketOwnershipCheckInterval is how often a serving daemon re-checks that its
+// socket path still resolves to the inode it bound.
+var socketOwnershipCheckInterval = 30 * time.Second
 
 const (
 	headerRequestID       = "HASP-Request-Id"
@@ -188,7 +197,31 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 		if ok {
 			return nil
 		}
+		// A listener answered but did not identify as this daemon. Unlinking
+		// the socket here is what stranded hundreds of daemons (hasp-20vs):
+		// the listener survives on the now-unlinked inode, unreachable and
+		// immortal, while a replacement binds the freed name. Refuse instead.
+		// `hasp daemon stop` runs this same verification and would also refuse,
+		// so name the socket and let the operator identify the holder.
+		return fmt.Errorf(
+			"a process is listening on %s but did not identify as the hasp daemon; "+
+				"refusing to unlink a live socket. Find the holder with `lsof %s` and stop it, "+
+				"or point HASP_SOCKET at a different path",
+			m.paths.SocketPath, m.paths.SocketPath,
+		)
 	}
+	// A failed dial is not proof that nothing is listening. The caller's
+	// context is often only a few hundred milliseconds wide (the MCP preflight
+	// budget, for one) and a busy daemon misses that window. Unlinking on that
+	// evidence strands the incumbent on an unreachable inode, and now also
+	// wedges startup: the replacement loses the singleton lock to the daemon we
+	// just made unreachable and nothing ends up serving the socket at all
+	// (hasp-20vs). Re-probe on the socket's own budget before removing it.
+	if socketHasListener(m.paths.SocketPath) {
+		return m.waitForDaemon(ctx)
+	}
+	// Nothing answered and nothing is listening, so the socket and its sidecars
+	// are genuinely stale.
 	if err := runtimeRemove(m.paths.SocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove untrusted socket: %w", err)
 	}
@@ -200,6 +233,12 @@ func (m *Manager) EnsureDaemon(ctx context.Context) error {
 	if err := spawnDaemonProcess(ctx); err != nil {
 		return err
 	}
+	return m.waitForDaemon(ctx)
+}
+
+// waitForDaemon polls the socket until a daemon answers and identifies itself
+// as ours, or the startup budget runs out.
+func (m *Manager) waitForDaemon(ctx context.Context) error {
 	deadline := time.Now().Add(daemonStartupTimeout())
 	for time.Now().Before(deadline) {
 		select {
@@ -247,6 +286,104 @@ func (m *Manager) StopDaemon() error {
 	return stopDetachedProcess()
 }
 
+// daemonLockPath derives the singleton lock path, tolerating a Paths built
+// without one (tests construct partial Paths, and Resolve predates the field).
+func (m *Manager) daemonLockPath() string {
+	if path := strings.TrimSpace(m.paths.DaemonLockPath); path != "" {
+		return path
+	}
+	return paths.DaemonLockPathFor(m.paths.SocketPath)
+}
+
+var (
+	// daemonLockWaitTimeout bounds how long a starting daemon waits for the
+	// singleton lock. `hasp daemon stop` returns once it has signalled the
+	// incumbent, so a daemon started right after a stop can find the lock still
+	// held by a process on its way out. Giving up instantly there left nothing
+	// listening at all.
+	daemonLockWaitTimeout = 3 * time.Second
+	// daemonLockRetryInterval is the gap between lock attempts while waiting.
+	daemonLockRetryInterval = 25 * time.Millisecond
+)
+
+// acquireSingletonLock takes the daemon lock, returning the release func. It
+// returns a nil release func and a nil error when another daemon already serves
+// the socket, which is the one case where starting up and doing nothing is
+// correct. Losing the lock to a process that is not serving is an error: exiting
+// 0 there is indistinguishable from a successful start and leaves the caller
+// waiting out its startup timeout for a daemon that never comes.
+func (m *Manager) acquireSingletonLock(ctx context.Context) (func(), error) {
+	deadline := time.Now().Add(daemonLockWaitTimeout)
+	for {
+		release, err := acquireDaemonLock(m.daemonLockPath())
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, errDaemonAlreadyRunning) {
+			return nil, err
+		}
+		if socketHasListener(m.paths.SocketPath) {
+			return nil, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf(
+				"another process holds the hasp daemon lock at %s but nothing is listening on %s",
+				m.daemonLockPath(), m.paths.SocketPath,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(daemonLockRetryInterval):
+		}
+	}
+}
+
+// daemonOwnsSocket reports whether socketPath still resolves to the inode this
+// daemon bound. False means someone unlinked us and bound a replacement.
+func daemonOwnsSocket(socketPath string, own socketIdentity) bool {
+	current, err := statSocketIdentity(socketPath)
+	if err != nil {
+		return false
+	}
+	return current == own
+}
+
+// daemonOwnsPidFile reports whether the pid file still names this process.
+func daemonOwnsPidFile(pidFilePath string) bool {
+	data, err := os.ReadFile(pidFilePath)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+	return pid == os.Getpid()
+}
+
+// watchSocketOwnership closes lost once socketPath stops resolving to the inode
+// this daemon bound.
+func watchSocketOwnership(ctx context.Context, socketPath string, own socketIdentity, lost chan<- struct{}) {
+	ticker := time.NewTicker(socketOwnershipCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if daemonOwnsSocket(socketPath, own) {
+				continue
+			}
+			select {
+			case lost <- struct{}{}:
+			case <-ctx.Done():
+			}
+			return
+		}
+	}
+}
+
 func (m *Manager) RunDaemon(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -258,6 +395,17 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 	if err := runtimeMkdirAll(m.paths.RuntimeDir, 0o700); err != nil {
 		return fmt.Errorf("create runtime dir: %w", err)
 	}
+	// Take the singleton lock before touching any shared runtime file. Losing
+	// the race must be a no-op: every removal below is guarded on still owning
+	// the thing being removed, and a loser never gets that far.
+	releaseLock, err := m.acquireSingletonLock(ctx)
+	if err != nil {
+		return err
+	}
+	if releaseLock == nil {
+		return nil
+	}
+	defer releaseLock()
 	if err := removeStaleSocket(m.paths.SocketPath); err != nil {
 		return err
 	}
@@ -265,8 +413,15 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on socket: %w", err)
 	}
+	// Record which inode we bound so shutdown can tell "our socket" from "a
+	// replacement's socket that happens to sit at the same path". Removing the
+	// latter is what left a live daemon unreachable with no socket file at all.
+	ownSocket, ownSocketErr := statSocketIdentity(m.paths.SocketPath)
 	defer func() {
 		_ = listener.Close()
+		if ownSocketErr == nil && !daemonOwnsSocket(m.paths.SocketPath, ownSocket) {
+			return
+		}
 		_ = runtimeRemove(m.paths.SocketPath)
 	}()
 	if err := chmodFile(m.paths.SocketPath, 0o600); err != nil {
@@ -276,6 +431,9 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 	defer func() {
+		if !daemonOwnsPidFile(m.paths.PidFilePath) {
+			return
+		}
 		_ = runtimeRemove(m.paths.PidFilePath)
 	}()
 
@@ -296,8 +454,21 @@ func (m *Manager) RunDaemon(ctx context.Context) error {
 		errCh <- server.serve(ctx, listener)
 	}()
 
+	lostSocket := make(chan struct{})
+	if ownSocketErr == nil {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		defer stopWatch()
+		go watchSocketOwnership(watchCtx, m.paths.SocketPath, ownSocket, lostSocket)
+	}
+
 	select {
 	case <-ctx.Done():
+		server.stop()
+		return nil
+	case <-lostSocket:
+		// Another process unlinked our socket and took the name. We are
+		// serving an inode nobody can reach, so shut down instead of idling
+		// forever: an unreachable daemon that never exits is the leak.
 		server.stop()
 		return nil
 	case err := <-errCh:
@@ -4040,8 +4211,27 @@ func removeStaleSocket(path string) error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("refusing to remove non-socket file at %s", path)
 	}
+	// "Stale" has to mean it: a socket with a live listener behind it is not
+	// stale, and unlinking one strands that listener on an unreachable inode
+	// for the rest of the machine's uptime (hasp-20vs).
+	if socketHasListener(path) {
+		return fmt.Errorf("refusing to remove socket at %s: a process is still listening on it", path)
+	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
 	return nil
+}
+
+// socketHasListener reports whether anything accepts connections on path.
+func socketHasListener(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "unix", path)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

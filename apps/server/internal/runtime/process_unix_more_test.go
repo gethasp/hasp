@@ -146,7 +146,10 @@ func TestStartDetachedProcessFailurePaths(t *testing.T) {
 		}
 	})
 
-	t.Run("write pid failure", func(t *testing.T) {
+	// The spawner must not write the pid file: the daemon writes it once it
+	// holds the singleton lock. A child that loses the race used to leave its
+	// own dead pid stamped over the running daemon's (hasp-20vs).
+	t.Run("does not write pid file", func(t *testing.T) {
 		origResolve := resolveRuntimePaths
 		origMkdir := runtimeMkdirAll
 		origExec := execCommand
@@ -158,21 +161,32 @@ func TestStartDetachedProcessFailurePaths(t *testing.T) {
 			writeFile = origWrite
 		}()
 
+		dir := t.TempDir()
+		pidFilePath := filepath.Join(dir, "daemon.pid")
 		resolveRuntimePaths = func() (paths.Paths, error) {
-			dir := t.TempDir()
 			return paths.Paths{
 				RuntimeDir:  dir,
-				PidFilePath: filepath.Join(dir, "daemon.pid"),
+				PidFilePath: pidFilePath,
 			}, nil
 		}
 		runtimeMkdirAll = func(string, os.FileMode) error { return nil }
 		execCommand = func(string, ...string) *exec.Cmd {
 			return exec.Command("sh", "-c", "exit 0")
 		}
-		writeFile = func(string, []byte, os.FileMode) error { return errors.New("write failed") }
+		wrote := false
+		writeFile = func(string, []byte, os.FileMode) error {
+			wrote = true
+			return nil
+		}
 
-		if err := startDetachedProcess(context.Background()); err == nil || !strings.Contains(err.Error(), "write pid file: write failed") {
-			t.Fatalf("expected write error, got %v", err)
+		if err := startDetachedProcess(context.Background()); err != nil {
+			t.Fatalf("startDetachedProcess = %v, want nil", err)
+		}
+		if wrote {
+			t.Fatal("startDetachedProcess wrote the pid file; the daemon owns that write")
+		}
+		if _, err := os.Stat(pidFilePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pid file exists after spawn: %v", err)
 		}
 	})
 
