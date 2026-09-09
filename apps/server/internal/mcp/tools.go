@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/auditlog"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
@@ -21,6 +23,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
+	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -34,10 +37,11 @@ var (
 	getItemMCPFn              = (*store.Handle).GetItem
 	captureMCPFn              = (*store.Handle).Capture
 	canonicalProjectRootMCPFn = store.CanonicalProjectRoot
-	authorizeReferenceMCPFn   = brokerops.AuthorizeReference
+	authorizeReferencesMCPFn  = brokerops.AuthorizeReferences
 	authorizeAndConsumeMCPFn  = (*store.Handle).AuthorizeAndConsume
 	runnerExecuteMCPFn        = runner.Execute
 	reposcanScanMCPFn         = reposcan.Scan
+	reposcanScanStagedMCPFn   = reposcan.ScanStaged
 	loadCLIConfigMCPFn        = paths.LoadConfig
 	installHooksMCPFn         = hooks.Install
 )
@@ -51,6 +55,9 @@ const (
 )
 
 func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
+	if call.Name == "hasp_status" {
+		return map[string]any{"connection": "connected", "scope": "this_mcp_transport", "client_shell_protection": "not_attested", "authorization": "not_checked"}, nil
+	}
 	handle, err := openHandle(ctx)
 	if err != nil {
 		return nil, err
@@ -64,7 +71,9 @@ func callTool(ctx context.Context, call toolCall) (map[string]any, error) {
 		return callTargets(ctx, handle, call)
 	case "hasp_target_explain":
 		return callTargetExplain(ctx, handle, call)
-	case "hasp_run", "hasp_inject":
+	case "hasp_job_status", "hasp_job_cancel":
+		return callJobStatus(ctx, call)
+	case "hasp_run", "hasp_inject", "hasp_job_start":
 		return callExecute(ctx, handle, call)
 	case "hasp_capture":
 		if !mcpUnsafeSecretWriteToolsEnabled() {
@@ -151,12 +160,24 @@ func callList(ctx context.Context, handle *store.Handle, call toolCall) (map[str
 		return nil, err
 	}
 	if !decision.Allowed {
-		return nil, approvalRequired(decision.Reason)
+		return nil, brokerops.NewAuthorizationError(handle, store.AccessRequest{Operation: store.OperationList, BindingID: binding.ID, SessionToken: session.Token}, decision)
 	}
-	return map[string]any{"visible": visible, "lease_active": true}, nil
+	return map[string]any{
+		"visible":            visible,
+		"lease_active":       true,
+		"session_id":         session.Info.ID,
+		"session_expires_at": session.Info.ExpiresAt,
+	}, nil
 }
 
 func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
+	for _, field := range []string{"staged", "fail_on_skipped"} {
+		if value, present := call.Arguments[field]; present {
+			if _, ok := value.(bool); !ok {
+				return nil, fmt.Errorf("%s must be a boolean", field)
+			}
+		}
+	}
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
 	if _, _, err := requireMCPProjectAuthorization(ctx, handle, call, projectRoot); err != nil {
 		return nil, err
@@ -165,11 +186,21 @@ func callCheck(ctx context.Context, handle *store.Handle, call toolCall) (map[st
 	if err != nil {
 		return nil, err
 	}
-	result, err := reposcanScanMCPFn(ctx, root, handle.ListItems(), reposcan.DefaultMaxFileBytes, reposcan.DefaultDeps())
-	if err != nil {
-		return nil, err
+	scan := reposcanScanMCPFn
+	if boolArg(call.Arguments, "staged", false) {
+		scan = reposcanScanStagedMCPFn
 	}
-	return map[string]any{"matches": result.Matches, "skipped": result.Skipped, "walker": result.Walker}, nil
+	result, err := scan(ctx, root, handle.ListItems(), reposcan.DefaultMaxFileBytes, reposcan.Deps{})
+	payload := map[string]any{"matches": result.Matches, "skipped": result.Skipped, "walker": result.Walker, "complete": result.Complete, "deleted": result.Deleted, "issues": result.Issues, "stats": result.Stats}
+	if err == nil && boolArg(call.Arguments, "fail_on_skipped", false) && len(result.Skipped) > 0 {
+		err = fmt.Errorf("%d source(s) skipped without being scanned", len(result.Skipped))
+	}
+	if err != nil {
+		payload["complete"] = false
+		payload["error"] = map[string]any{"code": "E_SCAN_INCOMPLETE", "message": err.Error()}
+		return payload, err
+	}
+	return payload, nil
 }
 
 func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
@@ -191,6 +222,9 @@ func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[
 		kinds := make([]string, 0, len(target.Delivery))
 		sets := make([]string, 0)
 		prereqs := make([]map[string]any, 0, len(target.Delivery))
+		if len(target.LiteralEnv) > 0 {
+			kinds = append(kinds, "literal_env")
+		}
 		for _, delivery := range target.Delivery {
 			ref, _ := manifest.DeliveryRef(delivery)
 			refs = append(refs, ref)
@@ -211,12 +245,13 @@ func callTargets(ctx context.Context, handle *store.Handle, call toolCall) (map[
 			prereqs = append(prereqs, prereq)
 		}
 		targets = append(targets, map[string]any{
-			"name":            target.Name,
-			"description":     sanitizeMCPDescription(target.Description),
-			"refs":            uniqueStrings(refs),
-			"credential_sets": uniqueStrings(sets),
-			"delivery_kinds":  uniqueStrings(kinds),
-			"prerequisites":   prereqs,
+			"name":              target.Name,
+			"description":       sanitizeMCPDescription(target.Description),
+			"refs":              uniqueStrings(refs),
+			"credential_sets":   uniqueStrings(sets),
+			"delivery_kinds":    uniqueStrings(kinds),
+			"prerequisites":     prereqs,
+			"literal_env_names": envmap.Names(target.LiteralEnv),
 		})
 	}
 	return map[string]any{"manifest_hash": identity, "targets": targets}, nil
@@ -247,7 +282,10 @@ func callTargetExplain(ctx context.Context, handle *store.Handle, call toolCall)
 	if err != nil {
 		return nil, err
 	}
-	kinds := make([]string, 0, 3)
+	kinds := make([]string, 0, 4)
+	if len(expansion.LiteralEnv) > 0 {
+		kinds = append(kinds, "literal_env")
+	}
 	if len(expansion.Env) > 0 {
 		kinds = append(kinds, store.ManifestDeliveryEnv)
 	}
@@ -264,6 +302,7 @@ func callTargetExplain(ctx context.Context, handle *store.Handle, call toolCall)
 		"refs":                  expansion.Refs,
 		"credential_sets":       expansion.CredentialSets,
 		"destinations":          expansion.Destinations,
+		"literal_env_names":     envmap.Names(expansion.LiteralEnv),
 		"delivery_kinds":        kinds,
 		"has_command":           len(expansion.Command) > 0,
 		"has_workspace_outputs": len(expansion.Outputs) > 0,
@@ -272,6 +311,13 @@ func callTargetExplain(ctx context.Context, handle *store.Handle, call toolCall)
 
 func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[string]any, error) {
 	projectRoot := stringArg(call.Arguments, "project_root", defaultMCPProjectRoot())
+	if call.Name == "hasp_job_start" {
+		root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		projectRoot = root
+	}
 	session, err := ensureMCPSession(ctx, call, projectRoot)
 	if err != nil {
 		return nil, err
@@ -280,19 +326,32 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if len(command) == 0 {
 		return nil, errors.New("command is required")
 	}
-	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), "")
 	if err != nil {
 		return nil, err
 	}
-	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), "")
 	if err != nil {
 		return nil, err
 	}
-	envRefs := stringMapArg(call.Arguments["env"])
-	fileRefs := stringMapArg(call.Arguments["files"])
+	envRefs, err := executionMapArg(call.Arguments, "env")
+	if err != nil {
+		return nil, err
+	}
+	fileRefs, err := executionMapArg(call.Arguments, "files")
+	if err != nil {
+		return nil, err
+	}
+	literalEnv, err := executionMapArg(call.Arguments, "literal_env")
+	if err != nil {
+		return nil, err
+	}
 	target := strings.TrimSpace(stringArg(call.Arguments, "target", ""))
 	expansion := store.ManifestTargetExpansion{}
 	if target != "" {
+		if len(literalEnv) > 0 {
+			return nil, errors.New("target cannot be combined with explicit literal_env mappings")
+		}
 		root, err := canonicalProjectRootMCPFn(ctx, projectRoot)
 		if err != nil {
 			return nil, err
@@ -304,7 +363,11 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 		expansion = expanded.Expansion
 		envRefs = expanded.EnvRefs
 		fileRefs = expanded.FileRefs
+		literalEnv = expanded.LiteralEnv
 		command = expanded.Command
+	}
+	if err := envmap.Validate(envRefs, fileRefs, literalEnv); err != nil {
+		return nil, err
 	}
 	if call.Name == "hasp_inject" && len(fileRefs) == 0 {
 		return nil, errors.New("files are required for hasp_inject")
@@ -316,6 +379,42 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	if err := requireProjectBindingMCP(binding, projectRoot); err != nil {
 		return nil, err
 	}
+	var jobClient *runtime.Client
+	var jobRequest runtime.JobStartRequest
+	var jobStatus runtime.JobStatus
+	if call.Name == "hasp_job_start" {
+		requestID := stringArg(call.Arguments, "request_id", "")
+		id, err := runtime.JobID(projectRoot, requestID)
+		if err != nil {
+			return nil, err
+		}
+		fingerprint := jobFingerprint(command, envRefs, fileRefs, literalEnv, expansion.ExecutionRoot(projectRoot), expansion.ManifestHash)
+		jobClient, err = connectJobDaemon(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer jobClient.Close()
+		existing, err := jobClient.GetJob(ctx, runtime.JobQuery{SessionToken: session.Token, ProjectRoot: projectRoot, JobID: id, Fingerprint: fingerprint})
+		if err != nil {
+			return nil, err
+		}
+		if existing.State != "not_found" {
+			return jobPayload(existing), nil
+		}
+		jobRequest = runtime.JobStartRequest{SessionToken: session.Token, ProjectRoot: projectRoot, RequestID: requestID, Fingerprint: fingerprint, ParentEnv: runner.InheritedEnv()}
+	}
+	runnerExecute := runnerExecuteMCPFn
+	if jobClient != nil {
+		runnerExecute = func(ctx context.Context, input runner.Input) (runner.Result, error) {
+			jobRequest.WorkingDir, jobRequest.Command, jobRequest.Env, jobRequest.Files = input.ProjectRoot, input.Command, input.Env, input.Files
+			var err error
+			jobStatus, err = jobClient.StartJob(ctx, jobRequest)
+			if err != nil {
+				return runner.Result{}, fmt.Errorf("job start response unavailable: %w; recover with hasp_job_status using the same request_id before requesting new work", err)
+			}
+			return runner.Result{}, nil
+		}
+	}
 	var stdoutCapture *mcpToolOutputCapture
 	var stderrCapture *mcpToolOutputCapture
 	execResult, err := brokerops.Execute(ctx, brokerops.ExecutionRequest{
@@ -326,11 +425,16 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 		Command:      command,
 		EnvRefs:      envRefs,
 		FileRefs:     fileRefs,
+		LiteralEnv:   literalEnv,
 		Expansion:    expansion,
 		ProjectGrant: projectGrant,
 		SecretGrant:  secretGrant,
 		Window:       15 * time.Minute,
 		ConfigureRunner: func(items []store.Item, input runner.Input) runner.Input {
+			if jobClient != nil {
+				jobRequest.Items = items
+				return input
+			}
 			stdoutCapture = newMCPToolOutputCapture(items)
 			stderrCapture = newMCPToolOutputCapture(items)
 			input.Stdout = stdoutCapture.Writer()
@@ -338,12 +442,15 @@ func callExecute(ctx context.Context, handle *store.Handle, call toolCall) (map[
 			return input
 		},
 		Deps: brokerops.ExecutionDeps{
-			AuthorizeReference: authorizeReferenceMCPFn,
-			RunnerExecute:      runnerExecuteMCPFn,
+			AuthorizeReferences: authorizeReferencesMCPFn,
+			RunnerExecute:       runnerExecute,
 		},
 	})
 	if err != nil {
 		return nil, err
+	}
+	if jobClient != nil {
+		return jobPayload(jobStatus), nil
 	}
 	runResult := execResult.RunResult
 	stdoutCapture.WriteBuffered(runResult.Stdout)
@@ -380,11 +487,11 @@ func callCapture(ctx context.Context, handle *store.Handle, call toolCall) (map[
 	kind := store.ItemKind(stringArg(call.Arguments, "kind", string(store.ItemKindKV)))
 	value := stringArg(call.Arguments, "value", "")
 	bind := boolArg(call.Arguments, "bind", false)
-	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+	projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), "")
 	if err != nil {
 		return nil, err
 	}
-	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+	secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), "")
 	if err != nil {
 		return nil, err
 	}
@@ -513,18 +620,47 @@ func mcpSessionToken(call toolCall) (string, mcpSessionTokenSource) {
 
 func ensureMCPSession(ctx context.Context, call toolCall, projectRoot string) (brokerops.Session, error) {
 	token, source := mcpSessionToken(call)
+	sessions, _ := ctx.Value(mcpSessionsKey{}).(*mcpSessions)
+	var root string
+	if sessions != nil && source != mcpSessionTokenExplicit {
+		var err error
+		root, err = canonicalProjectRootMCPFn(ctx, projectRoot)
+		if err != nil {
+			return brokerops.Session{}, err
+		}
+		sessions.mu.Lock()
+		defer sessions.mu.Unlock()
+		if cached := sessions.tokens[root]; cached != "" {
+			token = cached
+		}
+	}
 	hostLabel := defaultMCPHostLabel(call)
 	session, err := ensureSessionFn(ctx, projectRoot, token, hostLabel)
-	if err == nil {
-		return session, nil
+	if isRecoverableInheritedSessionError(err) {
+		if source == mcpSessionTokenExplicit {
+			return brokerops.Session{}, fmt.Errorf("%w; explicit session_token is stale or bound to another project, omit session_token to let MCP open a fresh local session", err)
+		}
+		if sessions != nil {
+			delete(sessions.tokens, root)
+		}
+		session, err = ensureSessionFn(ctx, projectRoot, "", hostLabel)
 	}
-	if source == mcpSessionTokenEnv && isRecoverableInheritedSessionError(err) {
-		return ensureSessionFn(ctx, projectRoot, "", hostLabel)
+	if err != nil {
+		return brokerops.Session{}, err
 	}
-	if source == mcpSessionTokenExplicit && isRecoverableInheritedSessionError(err) {
-		return brokerops.Session{}, fmt.Errorf("%w; explicit session_token is stale or bound to another project, omit session_token to let MCP open a fresh local session", err)
+	if sessions != nil && source != mcpSessionTokenExplicit {
+		sessions.tokens[root] = session.Token
 	}
-	return brokerops.Session{}, err
+	return session, nil
+}
+
+type mcpSessionsKey struct{}
+
+// One cache belongs to one MCP connection. Every reuse is resolved by the
+// daemon; replacing an expired token never copies the old session's grants.
+type mcpSessions struct {
+	mu     sync.Mutex
+	tokens map[string]string
 }
 
 func isRecoverableInheritedSessionError(err error) bool {
@@ -640,13 +776,9 @@ func ensureProjectBindingMCP(ctx context.Context, handle *store.Handle, projectR
 
 func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, call toolCall, projectRoot string) (brokerops.Session, store.Binding, error) {
 	grantProject := stringArg(call.Arguments, "grant_project", "")
-	session := brokerops.Session{Token: defaultMCPSessionToken(call)}
-	if strings.TrimSpace(session.Token) == "" || grantProject != "" {
-		ensured, err := ensureMCPSession(ctx, call, projectRoot)
-		if err != nil {
-			return brokerops.Session{}, store.Binding{}, err
-		}
-		session = ensured
+	session, err := ensureMCPSession(ctx, call, projectRoot)
+	if err != nil {
+		return brokerops.Session{}, store.Binding{}, err
 	}
 	binding, _, err := ensureProjectBindingMCP(ctx, handle, projectRoot)
 	if err != nil {
@@ -673,7 +805,7 @@ func requireMCPProjectAuthorization(ctx context.Context, handle *store.Handle, c
 		return brokerops.Session{}, store.Binding{}, err
 	}
 	if !decision.Allowed {
-		return brokerops.Session{}, store.Binding{}, approvalRequired(decision.Reason)
+		return brokerops.Session{}, store.Binding{}, brokerops.NewAuthorizationError(handle, store.AccessRequest{Operation: store.OperationList, BindingID: binding.ID, SessionToken: session.Token}, decision)
 	}
 	return session, binding, nil
 }
@@ -767,20 +899,6 @@ func boolArg(values map[string]any, key string, fallback bool) bool {
 	return fallback
 }
 
-func stringMapArg(value any) map[string]string {
-	result := map[string]string{}
-	source, ok := value.(map[string]any)
-	if !ok {
-		return result
-	}
-	for key, item := range source {
-		if text, ok := item.(string); ok {
-			result[key] = text
-		}
-	}
-	return result
-}
-
 func stringSliceArg(value any) []string {
 	source, ok := value.([]any)
 	if !ok {
@@ -823,4 +941,24 @@ func approvalRequired(reason string) error {
 
 func fmtUnsupportedTool(name string) error {
 	return fmt.Errorf("unsupported tool %q", name)
+}
+
+func executionMapArg(args map[string]any, key string) (map[string]string, error) {
+	value, exists := args[key]
+	if !exists {
+		return nil, nil
+	}
+	source, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object of string values", key)
+	}
+	result := make(map[string]string, len(source))
+	for name, value := range source {
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s value for %q must be a string", key, name)
+		}
+		result[name] = text
+	}
+	return result, nil
 }

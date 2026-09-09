@@ -71,10 +71,10 @@ func agentConnectHandler(ctx context.Context, deps Deps, args []string, stdout i
 			"consumer_name": consumer.Name,
 			"project_root":  consumer.ProjectRoot,
 			"config_path":   consumer.ConfigPath,
-			"outcome":       "connected",
+			"outcome":       "configured",
 		})
 	}
-	payload := map[string]any{"consumer": consumer, "config": outcome}
+	payload := map[string]any{"consumer": consumer, "config": outcome, "configuration": "installed", "connection": "not_observed", "process_protection": "not_checked"}
 	return deps.RenderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
 		return deps.RenderConnectResult(w, consumer, outcome)
 	})

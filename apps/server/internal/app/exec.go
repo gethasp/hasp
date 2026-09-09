@@ -17,7 +17,7 @@ import (
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
-	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
@@ -31,7 +31,7 @@ import (
 // can drive a single failure branch without holding the process-wide
 // app-seam mutex.
 type execDeps struct {
-	AuthorizeReference      func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
+	AuthorizeReferences     brokerops.ReferenceBatchAuthorizer
 	AuthorizeItem           func(handle *store.Handle, bindingID, sessionToken string, item store.Item, op store.Operation, projScope, secScope store.GrantScope, window time.Duration) (store.Item, error)
 	RunnerExecute           func(ctx context.Context, input runner.Input) (runner.Result, error)
 	ResolveBindingView      func(handle *store.Handle, ctx context.Context, projectRoot string) (store.Binding, []store.VisibleReference, error)
@@ -52,7 +52,7 @@ type execDeps struct {
 
 func defaultExecDeps() execDeps {
 	return execDeps{
-		AuthorizeReference:      brokerops.AuthorizeReference,
+		AuthorizeReferences:     brokerops.AuthorizeReferences,
 		AuthorizeItem:           brokerops.AuthorizeItem,
 		RunnerExecute:           runner.Execute,
 		ResolveBindingView:      (*store.Handle).ResolveBindingView,
@@ -66,22 +66,7 @@ func defaultExecDeps() execDeps {
 		EvalSymlinks:            filepath.EvalSymlinks,
 		RunnerStdin:             os.Stdin,
 		OpenWriteEnvFile:        openWriteEnvFile,
-		GitLsFiles: func(ctx context.Context, root string) ([]string, error) {
-			cmd := gitsafe.BuildCommand(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-			out, err := cmd.Output()
-			if err != nil {
-				return nil, err
-			}
-			parts := bytes.Split(out, []byte{0})
-			files := make([]string, 0, len(parts))
-			for _, p := range parts {
-				trimmed := strings.TrimSpace(string(p))
-				if trimmed != "" {
-					files = append(files, trimmed)
-				}
-			}
-			return files, nil
-		},
+		GitLsFiles:              reposcan.DefaultDeps().GitLsFiles,
 	}
 }
 
@@ -161,6 +146,8 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	explain := fs.Bool("explain", false, "")
 	dryRun := fs.Bool("dry-run", false, "")
 	explainFormat := fs.String("explain-format", "text", "")
+	var literalEnv envmap.LiteralFlag
+	fs.Var(&literalEnv, "literal-env", "")
 	var envRefs mappingFlag
 	var fileRefs mappingFlag
 	fs.Var(&envRefs, "env", "")
@@ -183,8 +170,8 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	}
 	targetExpansion := store.ManifestTargetExpansion{}
 	if strings.TrimSpace(*targetName) != "" {
-		if len(envRefs) > 0 || len(fileRefs) > 0 {
-			return errors.New("--target cannot be combined with explicit --env or --file mappings")
+		if len(envRefs) > 0 || len(fileRefs) > 0 || len(literalEnv) > 0 {
+			return errors.New("--target cannot be combined with explicit --env, --file, or --literal-env mappings")
 		}
 		target, err := brokerops.ExpandExecutionTarget(*projectRoot, strings.TrimSpace(*targetName), map[string]string(envRefs), map[string]string(fileRefs), command)
 		if err != nil {
@@ -193,10 +180,14 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		targetExpansion = target.Expansion
 		envRefs = mappingFlag(target.EnvRefs)
 		fileRefs = mappingFlag(target.FileRefs)
+		literalEnv = envmap.LiteralFlag(target.LiteralEnv)
 		command = slices.Clone(target.Command)
 	}
+	if err := envmap.Validate(envRefs, fileRefs, literalEnv); err != nil {
+		return err
+	}
 	if len(command) == 0 && !*dryRun {
-		return errors.New("usage: hasp run --project-root <path> [--target <name>|--env NAME=REF] [--file NAME=REF] [--session-token <token>] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-window 15m] [--explain [--dry-run]] -- <command>")
+		return errors.New("usage: hasp run --project-root <path> [--target <name>|--env NAME=REF] [--file NAME=REF] [--literal-env NAME=VALUE] [--session-token <token>] [--grant-project once|session|window|<duration>] [--grant-secret once|session|window|<duration>] [--grant-window 15m] [--explain [--dry-run]] -- <command>")
 	}
 	if injectOnly && len(fileRefs) == 0 {
 		return errors.New("inject requires at least one --file NAME=REFERENCE mapping (use hasp run for env-only delivery)")
@@ -219,19 +210,36 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		return err
 	}
 	if *explain {
+		checks := map[string]string{
+			"argument_syntax":        "passed",
+			"grant_syntax":           "passed",
+			"manifest_expansion":     "not_requested",
+			"project_binding":        "not_checked",
+			"reference_availability": "not_checked",
+			"target_review":          "not_requested",
+			"runtime_authorization":  "not_checked",
+			"command_execution":      "not_started",
+		}
+		if targetExpansion.TargetName != "" {
+			checks["manifest_expansion"] = "passed"
+			checks["target_review"] = "not_checked"
+		}
 		if err := writeExplainPayload(stderr, explainPayload{
-			Command:        commandLabel,
-			ProjectRoot:    *projectRoot,
-			Target:         strings.TrimSpace(*targetName),
-			ManifestHash:   targetExpansion.ManifestHash,
-			ProjectScope:   string(projScope),
-			SecretScope:    string(secScope),
-			GrantWindow:    effectiveWindow,
-			RedactorActive: true,
-			EnvRefs:        envRefs,
-			FileRefs:       fileRefs,
-			ChildCommand:   command,
-			DryRun:         *dryRun,
+			Phase:           "plan",
+			Checks:          checks,
+			Command:         commandLabel,
+			ProjectRoot:     *projectRoot,
+			Target:          strings.TrimSpace(*targetName),
+			ManifestHash:    targetExpansion.ManifestHash,
+			ProjectScope:    string(projScope),
+			SecretScope:     string(secScope),
+			GrantWindow:     effectiveWindow,
+			RedactorPlanned: true,
+			LiteralEnvNames: envmap.Names(literalEnv),
+			EnvRefs:         envRefs,
+			FileRefs:        fileRefs,
+			ChildCommand:    command,
+			DryRun:          *dryRun,
 		}, *explainFormat); err != nil {
 			return err
 		}
@@ -279,6 +287,7 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 		Command:          command,
 		EnvRefs:          map[string]string(envRefs),
 		FileRefs:         map[string]string(fileRefs),
+		LiteralEnv:       map[string]string(literalEnv),
 		Expansion:        targetExpansion,
 		ProjectGrant:     projScope,
 		SecretGrant:      secScope,
@@ -303,8 +312,8 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 			return input
 		},
 		Deps: brokerops.ExecutionDeps{
-			AuthorizeReference: deps.AuthorizeReference,
-			RunnerExecute:      deps.RunnerExecute,
+			AuthorizeReferences: deps.AuthorizeReferences,
+			RunnerExecute:       deps.RunnerExecute,
 		},
 	})
 	// Flush streaming writers regardless of error so buffered bytes are
@@ -343,6 +352,7 @@ func executeCommandWithDeps(ctx context.Context, args []string, stdout io.Writer
 	}
 	result := execResult.RunResult
 	runAudit := map[string]any{"project_root": *projectRoot, "exit_code": result.ExitCode, "args": command}
+	runAudit["literal_env_names"] = envmap.Names(literalEnv)
 	addTargetAuditFields(runAudit, targetExpansion)
 	appendAudit(audit.EventRun, "user", runAudit)
 	if result.ExitCode != 0 {
@@ -396,6 +406,9 @@ func writeEnvCommandWithDeps(ctx context.Context, args []string, stdout io.Write
 		targetExpansion, err = store.ExpandManifestTarget(*projectRoot, *targetName)
 		if err != nil {
 			return err
+		}
+		if len(targetExpansion.LiteralEnv) > 0 {
+			return fmt.Errorf("target %q contains literal_env; use hasp run --target for runtime configuration", *targetName)
 		}
 		if len(targetExpansion.Files) > 0 {
 			return fmt.Errorf("target %q contains safe file delivery; use hasp inject --target", *targetName)
@@ -634,44 +647,72 @@ func rejectWriteEnvSymlink(path string, label string) error {
 }
 
 func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, deps execDeps) error {
+	return checkRepoCommandWithInput(ctx, args, os.Stdin, stdout, stderr, deps)
+}
+
+func checkRepoCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, deps execDeps) error {
+	commandStart := time.Now()
 	fs := flag.NewFlagSet("check-repo", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "")
 	projectRoot := fs.String("project-root", ".", "")
 	allowManagedSecrets := fs.Bool("allow-managed-secrets", false, "")
 	stagedMode := fs.Bool("staged", false, "")
+	prePushMode := fs.Bool("pre-push", false, "")
 	failOnSkipped := fs.Bool("fail-on-skipped", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *stagedMode && *prePushMode {
+		return errors.New("--staged and --pre-push cannot be combined")
+	}
+	var updates []reposcan.RefUpdate
+	if *prePushMode {
+		var err error
+		updates, err = reposcan.ReadRefUpdates(stdin)
+		if err != nil {
+			return err
+		}
 	}
 	expandedRoot, err := expandUserPath(strings.TrimSpace(*projectRoot))
 	if err != nil {
 		return fmt.Errorf("--project-root: %w", err)
 	}
 	*projectRoot = expandedRoot
-	handle, err := openVaultHandleFn(ctx)
 	vaultWarning := ""
+	var vaultMS float64
 	var items []store.Item
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrVaultNotInitialized):
-			// No vault configured — there is nothing to match against. Fail open
-			// with a note; blocking commits when hasp isn't set up is absurd.
-			vaultWarning = "vault not initialized; managed-value matching was skipped"
-		case errors.Is(err, store.ErrKeyringUnavailable):
-			// Vault exists but is locked/inaccessible. A security gate must fail
-			// CLOSED here, otherwise locking the vault (or killing the daemon)
-			// silently disables all managed-secret detection.
-			if !*allowManagedSecrets {
-				return newAppError(errCodeVaultLocked, "vault is locked; cannot scan for managed secrets").
-					withHint("unlock the vault, or re-run with --allow-managed-secrets to bypass intentionally")
-			}
-			vaultWarning = "vault locked; managed-value matching was skipped (override)"
-		default:
-			return err
+	needsValues := !*prePushMode
+	for _, update := range updates {
+		if strings.Trim(update.LocalOID, "0") != "" {
+			needsValues = true
 		}
-	} else {
-		items = handle.ListItems()
+	}
+	if needsValues {
+		vaultStart := time.Now()
+		handle, err := openVaultHandleFn(ctx)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrVaultNotInitialized):
+				// No vault configured — there is nothing to match against. Fail open
+				// with a note; blocking commits when hasp isn't set up is absurd.
+				vaultWarning = "vault not initialized; managed-value matching was skipped"
+			case errors.Is(err, store.ErrKeyringUnavailable):
+				// Vault exists but is locked/inaccessible. A security gate must fail
+				// CLOSED here, otherwise locking the vault (or killing the daemon)
+				// silently disables all managed-secret detection.
+				if !*allowManagedSecrets {
+					return newAppError(errCodeVaultLocked, "vault is locked; cannot scan for managed secrets").
+						withHint("unlock the vault, or re-run with --allow-managed-secrets to bypass intentionally")
+				}
+				vaultWarning = "vault locked; managed-value matching was skipped (override)"
+			default:
+				return err
+			}
+		} else {
+			items = handle.ListItems()
+		}
+		vaultMS = float64(time.Since(vaultStart)) / float64(time.Millisecond)
 	}
 	root, err := appCanonicalProjectRootFn(ctx, *projectRoot)
 	if err != nil {
@@ -679,52 +720,53 @@ func checkRepoCommandWithDeps(ctx context.Context, args []string, stdout io.Writ
 	}
 	noteResolvedProjectRootIfImplicit(fs, *jsonOutput, root, stderr)
 	var scanResult reposcan.Result
-	if *stagedMode {
+	switch {
+	case *prePushMode:
+		scanResult, err = reposcan.ScanOutgoing(ctx, root, items, checkRepoMaxBytes, updates)
+	case *stagedMode:
 		// Pre-commit gate: scan the staged INDEX content, not the working tree, so
 		// a staged-then-overwritten secret cannot slip into the commit (hasp-8buu).
 		scanResult, err = reposcan.ScanStaged(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
-	} else {
+	default:
 		scanResult, err = reposcan.Scan(ctx, root, items, checkRepoMaxBytes, checkRepoScanDeps(deps))
 	}
-	if err != nil {
-		return err
+	scanErr := err
+	scanResult.Stats.VaultMS = vaultMS
+	scanResult.Stats.CommandMS = float64(time.Since(commandStart)) / float64(time.Millisecond)
+	if vaultWarning != "" {
+		scanResult.Complete = false
 	}
 	matches := scanMatchesAsMaps(scanResult.Matches)
 	payload := map[string]any{
-		"matches":  matches,
-		"override": *allowManagedSecrets,
-		"skipped":  scanResult.Skipped,
-		"walker":   scanResult.Walker,
+		"matches": matches, "override": *allowManagedSecrets,
+		"complete": scanResult.Complete, "skipped": scanResult.Skipped,
+		"deleted": scanResult.Deleted, "issues": scanResult.Issues,
+		"walker": scanResult.Walker, "stats": scanResult.Stats,
 	}
 	if vaultWarning != "" {
 		payload["warning"] = vaultWarning
-		if !*jsonOutput {
+		if !*jsonOutput && !globalFlagsFromContext(ctx).json {
 			_, _ = fmt.Fprintln(stderr, "warning: "+vaultWarning)
 		}
 	}
 	if len(matches) > 0 {
-		appendAudit(audit.EventRepoBlock, "user", map[string]any{"project_root": root, "matches": len(matches), "override": *allowManagedSecrets})
-		_ = renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
-		})
-		if *allowManagedSecrets {
-			return nil
-		}
-		return newAppError(errCodeRepoLeak, "managed secrets detected in repository files").
-			withHint("re-run with --allow-managed-secrets if the override is intentional")
+		appendAudit(audit.EventRepoBlock, "user", map[string]any{"project_root": root, "matches": len(matches), "override": *allowManagedSecrets, "complete": scanResult.Complete})
 	}
-	// Opt-in strict mode: a file skipped (e.g. over the size cap) was not scanned,
-	// so the gate cannot certify it. Fail closed when asked (hasp-7dx8).
+	if err := renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
+		return renderRepoScanResult(w, root, scanResult, *allowManagedSecrets, vaultWarning)
+	}); err != nil {
+		return err
+	}
+	if scanErr != nil {
+		return newAppError(errCodeScanIncomplete, "repository scan incomplete: "+scanErr.Error()).withHint("resolve the reported read errors and retry the same scan; --allow-managed-secrets does not bypass I/O failures")
+	}
+	if len(matches) > 0 && !*allowManagedSecrets {
+		return newAppError(errCodeRepoLeak, "managed secrets detected in repository content").withHint("re-run with --allow-managed-secrets if the override is intentional")
+	}
 	if *failOnSkipped && len(scanResult.Skipped) > 0 && !*allowManagedSecrets {
-		_ = renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-			return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
-		})
-		return newAppError(errCodeRepoLeak, fmt.Sprintf("%d file(s) skipped without being scanned", len(scanResult.Skipped))).
-			withHint("scan smaller files, raise the limit, or re-run with --allow-managed-secrets")
+		return newAppError(errCodeScanIncomplete, fmt.Sprintf("%d source(s) skipped without being scanned", len(scanResult.Skipped))).withHint("inspect the skipped content or re-run with --allow-managed-secrets if the override is intentional")
 	}
-	return renderJSONOrHuman(ctx, stdout, *jsonOutput, payload, func(w io.Writer) error {
-		return renderRepoCheckResult(w, root, matches, *allowManagedSecrets, vaultWarning)
-	})
+	return nil
 }
 
 // bytesIndex is a seam over bytes.Index so future refactors (e.g. swapping
@@ -922,6 +964,10 @@ func pathInsideProjectForWrite(path string, root string, deps execDeps) bool {
 // envelopes with actionable hints. Plain errors that don't match are
 // returned unchanged so callers further up the stack can still inspect them.
 func wrapAuthorizeReferenceError(err error) error {
+	var auth *brokerops.AuthorizationError
+	if errors.As(err, &auth) {
+		return classifyAppError(err)
+	}
 	var notExposed *store.ReferenceNotExposedError
 	if errors.As(err, &notExposed) {
 		name := strings.TrimSpace(notExposed.ItemName)
@@ -936,11 +982,11 @@ func wrapAuthorizeReferenceError(err error) error {
 	}
 	if errors.Is(err, store.ErrReferenceNotFound) {
 		return newAppError(errCodeUserInput, err.Error()).
-			withHint("run `hasp secret expose --project-root . <NAME>` to expose an existing secret, or `hasp secret add <NAME>` to create a new one")
+			withHint("check the reference with `hasp list`; use an exposed @NAME or repo alias. For an ordinary configuration value, use --literal-env NAME=VALUE. Reference mappings never fall back to literal values")
 	}
 	if strings.Contains(err.Error(), "project lease required for run") {
 		return newAppError(errCodeGrantDenied, err.Error()).
-			withHint("run `hasp project bind --project-root <dir>` to bind the project, or `hasp session grant --project <id>` to grant a project lease")
+			withHint("retry the same command with --grant-project once after approving this operation")
 	}
 	return err
 }

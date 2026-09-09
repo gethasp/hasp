@@ -106,6 +106,7 @@ func TestRunExplainWithoutDryRunStillWorks(t *testing.T) {
 	args := []string{
 		"--project-root", projectRoot,
 		"--explain",
+		"--grant-project", "once",
 		"--", "true",
 	}
 	var stdout, stderr bytes.Buffer

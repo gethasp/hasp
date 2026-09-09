@@ -36,6 +36,8 @@ func TestDoctorJSONContainsOnlyAllowlistedKeys(t *testing.T) {
 		"vault_state":               true,
 		"binding_state":             true,
 		"hooks_installed":           true,
+		"hooks":                     true,
+		"repo_protection_state":     true,
 		"path_shadowed":             true,
 		"path_has_newer":            true,
 		"agent_mcp_wrappers_ok":     true,

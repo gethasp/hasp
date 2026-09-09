@@ -17,8 +17,8 @@ func TestFindProfilesDirAndLoadDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load default profiles: %v", err)
 	}
-	if len(profiles) != 7 {
-		t.Fatalf("profiles = %d, want 7", len(profiles))
+	if len(profiles) != 8 {
+		t.Fatalf("profiles = %d, want 8", len(profiles))
 	}
 }
 
@@ -38,8 +38,8 @@ func TestLoadDefaultByIDAndReleaseGates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load release gates: %v", err)
 	}
-	if len(gates.Profiles) != 7 {
-		t.Fatalf("release gates = %d, want 7", len(gates.Profiles))
+	if len(gates.Profiles) != 8 {
+		t.Fatalf("release gates = %d, want 8", len(gates.Profiles))
 	}
 	gate, err := ReleaseGateForProfile("claude-code")
 	if err != nil {

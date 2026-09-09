@@ -7,7 +7,7 @@ source "$script_dir/hasp-common.sh"
 
 cd "$project_root"
 if [[ "${HASP_ALLOW_MANAGED_SECRETS:-}" == "1" ]]; then
-  run_hasp check-repo --project-root "$project_root" --allow-managed-secrets
+  run_hasp check-repo --project-root "$project_root" --staged --allow-managed-secrets
 else
-  run_hasp check-repo --project-root "$project_root"
+  run_hasp check-repo --project-root "$project_root" --staged
 fi

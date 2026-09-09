@@ -16,6 +16,7 @@ import (
 // transparently through the agentops handlers.
 func defaultAgentDeps() agentops.Deps {
 	return agentops.Deps{
+		AgentStatus: agentStatus,
 		// ── The 14 named seams pinned by the contract test ────────────────────
 
 		StoreGetAgent: func(handle *store.Handle, name string) (store.AgentConsumer, error) {
@@ -108,12 +109,12 @@ func defaultAgentDeps() agentops.Deps {
 				Changed:    o.Changed,
 			}, nil
 		},
-		AgentConfigPaths: supportedAgentConfigPaths,
-		GenericAgentView: genericAgentSupportedProfileView,
-		AppendAudit:      appendAudit,
+		AgentConfigPaths:  supportedAgentConfigPaths,
+		GenericAgentView:  genericAgentSupportedProfileView,
+		AppendAudit:       appendAudit,
 		RenderJSONOrHuman: renderJSONOrHuman,
 		RenderConnectResult: func(out io.Writer, consumer store.AgentConsumer, outcome agentops.AgentSetupOutcome) error {
-			return renderAgentConsumerSummary(out, "Agent connected", "Saved the agent configuration.", consumer, setupAgentOutcome{
+			return renderAgentConsumerSummary(out, "Agent configured", "Saved the client configuration. Restart the client and call hasp_status to verify its MCP connection. Use hasp agent launch to protect its shell tools.", consumer, setupAgentOutcome{
 				ID:         outcome.ID,
 				Label:      outcome.Label,
 				ConfigPath: outcome.ConfigPath,

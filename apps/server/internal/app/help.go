@@ -33,6 +33,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "secret diff", text: secretDiffHelpText},
 	{key: "secret expose", text: secretExposeHelpText},
 	{key: "secret hide", text: secretHideHelpText},
+	{key: "secret classify", text: secretClassifyHelpText},
 	{key: "app", text: appHelpText},
 	{key: "app connect", text: appConnectHelpText},
 	{key: "app run", text: appRunHelpText},
@@ -42,6 +43,7 @@ var helpTopicInventory = []helpTopicSpec{
 	{key: "app list", text: appListHelpText},
 	{key: "agent", text: agentHelpText},
 	{key: "agent connect", text: agentConnectHelpText},
+	{key: "agent status", text: agentStatusHelpText},
 	{key: "agent mcp", text: agentMCPHelpText},
 	{key: "agent launch", text: agentLaunchHelpText},
 	{key: "agent shell", text: agentShellHelpText},
@@ -454,6 +456,7 @@ Subcommands
   diff       compare a candidate .env file against the vault by name only
   expose     bind a secret to a repo boundary and create a reference
   hide       remove one repo exposure for a secret
+  classify   set confidential or configuration handling (local operator only)
 
 Common flags
   --json   emit machine-readable output on stdout (all subcommands that
@@ -564,8 +567,10 @@ Examples
 const secretShowHelpText = `hasp secret show
 
 Print metadata for a secret: name, kind, created/updated timestamps, and any
-exposures. The plaintext value is never printed by this command; use
-hasp secret reveal or hasp secret copy when you need the value.
+exposures. The output includes a named ref and a brokered run/inject example.
+Use that example from a project with the secret exposed to check delivery
+without printing its value. Human plaintext inspection uses hasp secret reveal
+or hasp secret copy; agent-safe mode still requires a plaintext grant.
 
 Examples
   hasp secret show OPENAI_API_KEY
@@ -669,6 +674,10 @@ Learn more
 
 const appConnectHelpText = `hasp app connect
 
+Use --literal-env NAME=VALUE for saved non-secret configuration. Use --env
+for KV secret contents and --file for temporary file paths. Both accept
+@NAME or a bare vault name; project aliases require --project-root.
+
 Save an app profile that maps vault secrets to env vars, temporary files, or a
 temporary dotenv bundle.
 
@@ -770,6 +779,7 @@ bind the integration to one repo boundary.
 
 Subcommands
   connect     write the agent config and save the agent record
+  status      inspect configuration and this command's protection
   mcp         run the agent-specific HASP MCP wrapper
   launch      run a command under an agent-safe HASP session
   shell       open a shell under an agent-safe HASP session
@@ -779,6 +789,7 @@ Subcommands
 
 Learn more
   hasp help agent connect
+  hasp help agent status
   hasp help agent mcp
   hasp help agent launch
   hasp help agent shell
@@ -788,11 +799,14 @@ const agentConnectHelpText = `hasp agent connect
 
 Write the local agent config needed for HASP integration and save the agent
 as a managed entry. Generated HASP MCP configs now point at a managed local
-wrapper instead of a raw ` + "`hasp mcp`" + ` command so HASP can bind the
-agent process tree to a protected session automatically.
+wrapper instead of a raw ` + "`hasp mcp`" + ` command. Use agent launch to
+protect the whole client, including its ordinary shell tools, and agent status
+from those tools to inspect their protection.
 
 Supported agent IDs:
   claude-code, codex-cli, cursor   write the agent's MCP config in place.
+  opencode                       write the OpenCode 1.x local MCP config.
+  pi                             install the persistent MCP bridge package.
   aider, hermes, openclaw          install the wrapper at
                                    $HASP_HOME/bin/hasp-agent-<id> and save the
                                    managed entry; wire the wrapper into the
@@ -805,17 +819,37 @@ Flags
 Examples
   hasp agent connect claude-code --project-root .
   hasp agent connect codex-cli --project-root .
+  hasp agent connect pi --project-root .
+  hasp agent connect opencode --project-root .
   hasp agent connect cursor --project-root .
   hasp agent connect aider --project-root .
   hasp agent connect hermes --project-root .
   hasp agent connect openclaw --project-root .
 `
 
+const agentStatusHelpText = `hasp agent status
+
+Inspect client installation, managed configuration, and the current command's
+daemon process identity or inherited agent-safe guard. This does not open the
+vault, start a client, create a session, or grant plaintext access.
+
+Flags:
+  --json    Emit structured diagnostic states
+
+Run through the client's ordinary shell tool to check that process tree.
+Call hasp_status through its HASP tools to verify the MCP transport separately.
+
+Examples:
+  hasp agent status pi --json
+  hasp agent launch codex-cli -- codex
+`
+
 const agentMCPHelpText = `hasp agent mcp
 
 Run the agent-specific HASP MCP wrapper. This opens an agent-safe session for
-the saved agent, registers the parent agent process with the daemon, and then
-serves MCP on stdin/stdout.
+the saved agent and serves MCP on stdin/stdout. A successful tool call attests
+this transport. Use agent launch and a shell-tool status check to verify
+protection of the whole client process tree.
 
 Use this as the generated config path instead of raw ` + "`hasp mcp`" + ` for
 first-class agent profiles.
@@ -848,7 +882,7 @@ shell inherits HASP_AGENT_SAFE_MODE and HASP_SESSION_TOKEN.
 
 Examples
   hasp agent shell claude-code
-  hasp agent shell codex-cli -c 'env | grep HASP_'
+  hasp agent shell codex-cli -c 'hasp agent status codex-cli --json'
 `
 
 const agentDisconnectHelpText = `hasp agent disconnect
@@ -894,6 +928,7 @@ Subcommands
   adopt     scan a directory tree and bind matching git repos
   bind      bind one repo and create its initial alias map
   doctor    audit manifest-backed project-target setup without exposing values
+  hooks     inspect or reinstall Git hooks without changing the project binding
   examples  check or write placeholder example files from the manifest
   init      create a value-free .hasp.manifest.json
   requirements  list manifest requirements, optionally filtered by target
@@ -915,6 +950,9 @@ project bind flags
   --hooks                   install git hooks in the repo (default: true)
   --allow-non-git           bind even if the path is not a git working tree
   --alias <alias=item>      add a repo alias mapping (repeatable)
+
+project hooks flags
+  --install                install or update hooks, preserving saved-hook modes
 
 project init flags
   --name <name>             project name stored in the value-free manifest
@@ -942,6 +980,7 @@ Examples
   hasp project target add release.build --root apps/gum --env GUM_OAUTH_CLIENT_SECRET=@GUM_OAUTH_CLIENT_SECRET -- goreleaser release
   hasp project target review release.build --project-root .
   hasp project bind --project-root .
+  hasp project hooks --project-root . --install
   hasp project requirements --project-root .
   hasp project targets --project-root . --json
   hasp project examples --project-root . --target server.dev --check
@@ -978,20 +1017,25 @@ Run one repo-scoped command through the broker with time-bound secret grants.
 Use run when you want the repo boundary, approval model, and audit trail. Use
 app run when you want a saved app.
 
+Reference maps accept exposed @NAME or repo aliases. Literal strings use
+--literal-env; empty values are allowed, with no shell or reference expansion.
+A destination can occur in only one map. Targets cannot take explicit maps.
+
 Flags
   --project-root <path>          repo root to use for binding and grant checks
   --target <name>                resolve env/file mappings from one manifest target
   --session-token <token>        use an existing session token instead of
                                  opening a new one
-  --grant-project <scope>        project grant scope: window or session
-  --grant-secret <scope>         secret grant scope: window or session
+  --grant-project <scope>        project grant scope: once, session, or window
+  --grant-secret <scope>         secret grant scope: once, session, or window
   --grant-window <duration>      maximum age for a grant (e.g. 15m, 1h)
-  --env <NAME=@REF>              inject a secret as an env var (repeatable)
+  --env <NAME=@REF>              inject a KV secret as an env var (repeatable)
+  --literal-env <NAME=VALUE>     pass explicit non-secret configuration (repeatable)
   --file <NAME=@REF>             inject a secret as a temp file (repeatable)
-  --explain                      print the resolved decision tree before
-                                 executing (output goes to stderr)
-  --dry-run                      print the decision tree and exit without
-                                 executing (use with --explain)
+  --explain                      print the plan and check states, then attempt
+                                 authorization and execution (on stderr)
+  --dry-run                      print the plan without opening the vault,
+                                 checking access, or starting the command
   --explain-format <fmt>         text (default) or json
 
 Examples
@@ -1004,14 +1048,17 @@ Examples
 const injectHelpText = `hasp inject
 
 Resolve repo-scoped refs into env vars or temporary files for one command.
+Requires at least one --file mapping. Accepts the run flags, including
+--env NAME=@REF and --literal-env NAME=VALUE. Destinations must be distinct.
 
 Use inject for low-level brokered execution. Saved apps (hasp app run) are
 the simpler path for repeatable non-repo apps.
 
 Authorization preview
-  --explain           print the resolved decision tree (project lease, secret
-                      grant, grant window, redactor) before executing.
-  --explain --dry-run print the decision tree and exit without executing.
+  --explain           print requested grants, mappings, and check states,
+                      then attempt authorization and execution.
+  --dry-run           print the plan without opening the vault, checking
+                      access, or starting the command.
 
 Examples
   hasp inject --project-root . --file GOOGLE_APPLICATION_CREDENTIALS=@GOOGLE_APPLICATION_CREDENTIALS -- gcloud auth list
@@ -1060,11 +1107,18 @@ Flags
                              contain) instead of the working tree; used by the
                              pre-commit hook so a staged-then-overwritten secret
                              cannot slip past
+  --pre-push                read Git ref updates from stdin and scan outgoing
+                             objects, including intermediate commits and tags;
+                             cannot be combined with --staged
   --fail-on-skipped          exit non-zero if any file was skipped (e.g. over the
                              size cap) and therefore not scanned
-  --allow-managed-secrets    suppress exit-1 even when managed values are found
-                             (also bypasses the locked-vault block); useful in CI
-                             scenarios that treat the scan as advisory only
+  --allow-managed-secrets    override matches, size skips, and the locked-vault
+                             block; I/O failures still fail closed
+
+Results retain matches even when another source cannot be read. complete=false
+means coverage is incomplete; issues report read failures and skipped lists
+sources over the size cap. Tracked working-tree deletions appear in deleted.
+I/O failures and strict size skips exit 4 (E_SCAN_INCOMPLETE); matches exit 5.
 
 Examples
   hasp check-repo --project-root .
@@ -1830,9 +1884,9 @@ machine-readable failure without parsing strings. The same buckets back the
   3  permission          vault locked, wrong password, grant denied
                          (E_PERMISSION, E_VAULT_LOCKED, E_PASSWORD_WRONG,
                           E_GRANT_DENIED)
-  4  daemon / I/O        daemon unreachable or broker timeout
-                         (E_DAEMON_UNREACHABLE)
-  5  leak detected       repo scan found managed values in the working tree
+  4  daemon / I/O        daemon unreachable, broker timeout, incomplete scan
+                         (E_DAEMON_UNREACHABLE, E_SCAN_INCOMPLETE)
+  5  leak detected       repo scan found managed values in repository content
                          (E_REPO_LEAK)
   6  not found           named secret/binding/grant is not in the vault
                          (E_NOT_FOUND)
@@ -1897,4 +1951,20 @@ Examples
   hasp upgrade --version v0.2.0 --json --yes
 
 Find releases at https://github.com/gethasp/hasp/releases.
+`
+
+const secretClassifyHelpText = `hasp secret classify
+
+Set an item's handling policy after the local operator reviews its value.
+Configuration values are excluded from managed-value scans and output redaction.
+Existing items are confidential. Every value upsert resets this classification.
+Exposure, runtime grants, and plaintext-read authorization remain required.
+Protected agent processes and connected-agent repositories cannot change it.
+
+Usage:
+  hasp secret classify NAME --classification confidential|configuration [--json]
+
+Examples:
+  hasp secret classify PROJECT_ID --classification configuration
+  hasp secret classify PROJECT_ID --classification confidential --json
 `

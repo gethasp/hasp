@@ -74,11 +74,11 @@ func callSecretUpsert(ctx context.Context, handle *store.Handle, call toolCall, 
 		if err != nil {
 			return nil, err
 		}
-		projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), store.GrantOnce)
+		projectGrant, err := parseScope(stringArg(call.Arguments, "grant_project", ""), "")
 		if err != nil {
 			return nil, err
 		}
-		secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), store.GrantOnce)
+		secretGrant, err := parseScope(stringArg(call.Arguments, "grant_secret", ""), "")
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +238,7 @@ func callSecretGet(ctx context.Context, handle *store.Handle, call toolCall) (ma
 		"name":                 item.Name,
 		"exists":               true,
 		"kind":                 item.Kind,
+		"classification":       item.EffectiveClassification(),
 		"created_at":           item.CreatedAt.Format(time.RFC3339),
 		"updated_at":           item.UpdatedAt.Format(time.RFC3339),
 		"available_in_project": available,

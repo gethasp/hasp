@@ -14,27 +14,58 @@ func (h *Handle) Authorize(req AccessRequest) AccessDecision {
 }
 
 func (h *Handle) AuthorizeAndConsume(req AccessRequest) (AccessDecision, error) {
+	decisions, err := h.AuthorizeBatchAndConsume([]AccessRequest{req})
+	if err != nil {
+		return AccessDecision{}, err
+	}
+	return decisions[0], nil
+}
+
+// AuthorizeBatchAndConsume checks one operation's requests against the same
+// state, then consumes their once grants together. A denied member consumes
+// nothing; a shared project or secret grant is consumed only once.
+func (h *Handle) AuthorizeBatchAndConsume(requests []AccessRequest) ([]AccessDecision, error) {
+	if len(requests) == 0 {
+		return nil, fmt.Errorf("authorization batch requires at least one request")
+	}
+	for _, req := range requests {
+		if req.BindingID != requests[0].BindingID || req.SessionToken != requests[0].SessionToken {
+			return nil, fmt.Errorf("authorization batch must share a project binding and session")
+		}
+	}
 	unlock := lockVaultStatePath(h.store.paths.StatePath)
 	defer unlock()
 
 	if err := h.refreshStateUnlocked(); err != nil {
-		return AccessDecision{}, err
+		return nil, err
 	}
 
-	decision := h.authorizeCurrent(req)
-	if !decision.Allowed {
-		return decision, nil
+	decisions := make([]AccessDecision, len(requests))
+	allowed := true
+	for i, req := range requests {
+		decisions[i] = h.authorizeCurrent(req)
+		allowed = allowed && decisions[i].Allowed
+	}
+	if !allowed {
+		return decisions, nil
 	}
 
-	consumed := h.consumeOnceGrantsForAuthorizedRequest(req)
-	if !consumed {
-		return decision, nil
+	consumed := make([]AccessRequest, 0, len(requests))
+	for _, req := range requests {
+		if h.consumeOnceGrantsForAuthorizedRequest(req) {
+			consumed = append(consumed, req)
+		}
+	}
+	if len(consumed) == 0 {
+		return decisions, nil
 	}
 	if err := h.persistUnlocked(); err != nil {
-		return AccessDecision{}, err
+		return nil, err
 	}
-	h.appendGrantConsumeAudit(req)
-	return decision, nil
+	for _, req := range consumed {
+		h.appendGrantConsumeAudit(req)
+	}
+	return decisions, nil
 }
 
 func (h *Handle) refreshStateUnlocked() error {

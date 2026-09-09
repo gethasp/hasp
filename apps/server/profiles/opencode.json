@@ -1,0 +1,17 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "transport": "mcp-stdio",
+  "command": [
+    "hasp",
+    "agent",
+    "mcp",
+    "opencode"
+  ],
+  "project_binding_recipe": "Bind the repo and explicitly expose the items it needs. Connect OpenCode 1.x to the managed wrapper through its local mcp.hasp configuration.",
+  "approval_path": "Use inline project and secret grants in HASP tools. Start the whole client with hasp agent launch opencode -- opencode for daemon-backed shell protection and operator-issued plaintext grants.",
+  "safe_inject_path": "Use hasp_run for environment delivery and hasp_inject for temporary credential files; pass named references instead of retrieving plaintext.",
+  "write_env_path": "Use hasp write-env only after explicit convenience approval for the destination.",
+  "regression_fixture": "apps/server/testdata/profiles/opencode.json",
+  "docs_path": "docs/agent-profiles/opencode.md"
+}

@@ -26,6 +26,7 @@ type bootstrapDoctorResult struct {
 	VaultStatus          string                           `json:"vault_status"`
 	HooksRequested       bool                             `json:"hooks_requested"`
 	HooksPresent         bool                             `json:"hooks_present"`
+	Hooks                hooks.Diagnostics                `json:"hooks"`
 	ExistingBinding      store.Binding                    `json:"existing_binding"`
 	ExistingVisible      []store.VisibleReference         `json:"existing_visible"`
 	PlannedImportSummary []map[string]any                 `json:"planned_import_summary,omitempty"`
@@ -107,7 +108,6 @@ func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts boot
 		ProjectCanonicalRoot: projectCanonicalRoot,
 		VaultStatus:          vaultStatus,
 		HooksRequested:       opts.InstallHooks,
-		HooksPresent:         bootstrapHookPresent(projectCanonicalRoot),
 		GenericPath:          genericCompatibilitySurface(),
 		ConvenienceMode:      convenienceModeSurface(),
 		Transport: map[string]any{
@@ -118,6 +118,8 @@ func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts boot
 		},
 		Notes: bootstrapNotes(target, opts, len(opts.ImportPaths) > 0),
 	}
+	report.Hooks = hooks.Inspect(projectCanonicalRoot)
+	report.HooksPresent = report.Hooks.Installed
 	report.Checks["project_root"] = profiles.SupportCheck{
 		Status: "pass",
 		Detail: "project root resolves locally",
@@ -143,7 +145,14 @@ func buildBootstrapDoctor(ctx context.Context, target bootstrapTarget, opts boot
 	}
 	report.Checks["hooks"] = profiles.SupportCheck{
 		Status: "pass",
-		Detail: fmt.Sprintf("hooks requested=%t present=%t", report.HooksRequested, report.HooksPresent),
+		Detail: fmt.Sprintf("hooks requested=%t installation=%s scan=%s", report.HooksRequested, report.Hooks.State, report.Hooks.ScanState),
+	}
+	if !report.Hooks.Ready {
+		status := "warn"
+		if !report.HooksRequested {
+			status = "skip"
+		}
+		report.Checks["hooks"] = profiles.SupportCheck{Status: status, Detail: "hook installation: " + report.Hooks.State + "; no scan was run", Recovery: report.Hooks.Repair}
 	}
 
 	currentAliases := map[string]string{}

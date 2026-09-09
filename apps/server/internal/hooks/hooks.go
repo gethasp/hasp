@@ -14,6 +14,8 @@ import (
 const marker = "# HASP-MANAGED-HOOK"
 
 var hooksMkdirAll = os.MkdirAll
+var hooksStat = os.Stat
+var hooksChmod = os.Chmod
 var hooksAbs = filepath.Abs
 var hooksEvalSymlinks = filepath.EvalSymlinks
 var hooksCommonDir = gitsafe.CommonDir
@@ -38,8 +40,7 @@ func Install(projectRoot string) error {
 	if err := hooksMkdirAll(plan.HooksDir, 0o755); err != nil {
 		return fmt.Errorf("create hooks dir: %w", err)
 	}
-	// pre-commit scans the staged index (what the commit will contain); pre-push
-	// keeps the working-tree scan for now (committed-range scanning is a follow-up).
+	// Each gate scans Git's pending content after the saved hook succeeds.
 	for _, h := range []struct {
 		name   string
 		staged bool
@@ -75,17 +76,7 @@ func ResolveInstallPlan(projectRoot string) (InstallPlan, error) {
 }
 
 func ManagedHooksPresent(projectRoot string) bool {
-	plan, err := ResolveInstallPlan(projectRoot)
-	if err != nil {
-		return false
-	}
-	for _, hookName := range []string{"pre-commit", "pre-push"} {
-		data, err := os.ReadFile(filepath.Join(plan.HooksDir, hookName))
-		if err != nil || !strings.Contains(string(data), marker) {
-			return false
-		}
-	}
-	return true
+	return Inspect(projectRoot).Installed
 }
 
 func resolveCustomHooksDir(projectRoot, commonDir, hooksPath string) (string, error) {
@@ -160,31 +151,57 @@ func installHook(path string, staged bool) error {
 		return err
 	}
 	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read existing hook: %w", err)
+	}
 	if err == nil && !strings.Contains(string(existing), marker) {
 		backup := path + ".pre-hasp"
 		if err := refuseSymlink(backup, "hook backup"); err != nil {
 			return err
 		}
-		if err := os.WriteFile(backup, existing, 0o755); err != nil {
+		info, err := hooksStat(path)
+		if err != nil {
+			return fmt.Errorf("inspect existing hook: %w", err)
+		}
+		if err := os.WriteFile(backup, existing, info.Mode().Perm()); err != nil {
 			return fmt.Errorf("backup existing hook: %w", err)
+		}
+		if err := hooksChmod(backup, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve saved hook permissions: %w", err)
 		}
 	}
 	backup := path + ".pre-hasp"
-	stagedFlag := ""
-	if staged {
-		stagedFlag = " --staged"
-	}
 	content := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 %s
+%s
 project_root="$(git -c core.hooksPath=/dev/null -c safe.directory='*' rev-parse --show-toplevel 2>/dev/null || pwd)"
-hasp check-repo --project-root "$project_root"%s
 if [[ -x %s ]]; then
   %s "$@"
 fi
-`, marker, stagedFlag, shellSingleQuote(backup), shellSingleQuote(backup))
+hasp check-repo --project-root "$project_root" --staged
+`, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
+	if !staged {
+		content = fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+%s
+%s
+project_root="$(git -c core.hooksPath=/dev/null -c safe.directory='*' rev-parse --show-toplevel 2>/dev/null || pwd)"
+updates_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/hasp-pre-push.XXXXXX")"
+trap 'rm -f "$updates_file"' EXIT
+trap 'exit 1' HUP INT TERM
+cat > "$updates_file"
+if [[ -x %s ]]; then
+  %s "$@" < "$updates_file"
+fi
+hasp check-repo --project-root "$project_root" --pre-push --fail-on-skipped < "$updates_file"
+`, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
+	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write hook: %w", err)
+	}
+	if err := hooksChmod(path, 0o755); err != nil {
+		return fmt.Errorf("make hook executable: %w", err)
 	}
 	return nil
 }

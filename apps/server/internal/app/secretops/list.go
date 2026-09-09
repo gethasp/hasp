@@ -31,6 +31,7 @@ func secretListCommand(ctx context.Context, deps Deps, args []string, stdout io.
 	secrets := make([]secrettypes.MetadataView, 0, len(items))
 	for _, item := range items {
 		secrets = append(secrets, secrettypes.MetadataView{
+			Classification: item.EffectiveClassification(),
 			Name:           item.Name,
 			NamedReference: store.NamedReference(item.Name),
 			Kind:           item.Kind,
@@ -72,6 +73,7 @@ func secretSearchCommand(ctx context.Context, deps Deps, args []string, stdout i
 			continue
 		}
 		secrets = append(secrets, secrettypes.MetadataView{
+			Classification: item.EffectiveClassification(),
 			Name:           item.Name,
 			NamedReference: store.NamedReference(item.Name),
 			Kind:           item.Kind,

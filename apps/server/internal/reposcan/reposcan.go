@@ -3,11 +3,14 @@ package reposcan
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gethasp/hasp/apps/server/internal/gitsafe"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
@@ -22,11 +25,12 @@ const DefaultMaxFileBytes int64 = 4 << 20
 const DefaultMaxBytes = DefaultMaxFileBytes
 
 type Deps struct {
-	Stat       func(path string) (os.FileInfo, error)
-	ReadFile   func(path string) ([]byte, error)
-	WalkDir    func(root string, fn fs.WalkDirFunc) error
-	GitLsFiles func(ctx context.Context, root string) ([]string, error)
-	ByteIndex  func(data []byte, needle []byte) int
+	Stat            func(path string) (os.FileInfo, error)
+	ReadFile        func(path string) ([]byte, error)
+	WalkDir         func(root string, fn fs.WalkDirFunc) error
+	GitLsFiles      func(ctx context.Context, root string) ([]string, error)
+	GitDeletedFiles func(ctx context.Context, root string) ([]string, error)
+	ByteIndex       func(data []byte, needle []byte) int
 	// Staged-content scanning (pre-commit gate): these read the INDEX (stage 0)
 	// blobs rather than the working tree, so a secret that is staged then
 	// overwritten in the working tree cannot slip past the gate.
@@ -46,10 +50,20 @@ type Skipped struct {
 	Reason string `json:"reason"`
 }
 
+type Issue struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Detail string `json:"detail"`
+}
+
 type Result struct {
-	Matches []Match   `json:"matches"`
-	Skipped []Skipped `json:"skipped"`
-	Walker  string    `json:"walker"`
+	Stats    Stats     `json:"stats"`
+	Complete bool      `json:"complete"`
+	Deleted  []string  `json:"deleted,omitempty"`
+	Issues   []Issue   `json:"issues,omitempty"`
+	Matches  []Match   `json:"matches"`
+	Skipped  []Skipped `json:"skipped"`
+	Walker   string    `json:"walker"`
 }
 
 type compiledItem struct {
@@ -68,37 +82,29 @@ func DefaultDeps() Deps {
 			if err != nil {
 				return nil, err
 			}
-			parts := bytes.Split(out, []byte{0})
-			files := make([]string, 0, len(parts))
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(string(part))
-				if trimmed != "" {
-					files = append(files, trimmed)
-				}
+			return splitGitPaths(out), nil
+		},
+		GitDeletedFiles: func(ctx context.Context, root string) ([]string, error) {
+			cmd := gitsafe.BuildCommand(ctx, root, "ls-files", "--deleted", "-z")
+			out, err := cmd.Output()
+			if err != nil {
+				return nil, err
 			}
-			return files, nil
+			return splitGitPaths(out), nil
 		},
 		ByteIndex: bytes.Index,
 		GitStagedFiles: func(ctx context.Context, root string) ([]string, error) {
 			// Added/Copied/Modified/Renamed entries in the index — i.e. exactly the
 			// file content that the pending commit will contain.
-			cmd := gitsafe.BuildCommand(ctx, root, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+			cmd := gitsafe.BuildIndexCommand(ctx, root, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMRTU", "-z")
 			out, err := cmd.Output()
 			if err != nil {
 				return nil, err
 			}
-			parts := bytes.Split(out, []byte{0})
-			files := make([]string, 0, len(parts))
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(string(part))
-				if trimmed != "" {
-					files = append(files, trimmed)
-				}
-			}
-			return files, nil
+			return splitGitPaths(out), nil
 		},
 		StagedBlobSize: func(ctx context.Context, root, rel string) (int64, error) {
-			cmd := gitsafe.BuildCommand(ctx, root, "cat-file", "-s", ":"+rel)
+			cmd := gitsafe.BuildIndexCommand(ctx, root, "cat-file", "-s", ":"+rel)
 			out, err := cmd.Output()
 			if err != nil {
 				return 0, err
@@ -106,84 +112,153 @@ func DefaultDeps() Deps {
 			return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
 		},
 		ReadStagedBlob: func(ctx context.Context, root, rel string) ([]byte, error) {
-			cmd := gitsafe.BuildCommand(ctx, root, "cat-file", "blob", ":"+rel)
+			cmd := gitsafe.BuildIndexCommand(ctx, root, "cat-file", "blob", ":"+rel)
 			return cmd.Output()
 		},
 	}
 }
 
-func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, deps Deps) (Result, error) {
+func splitGitPaths(data []byte) []string {
+	parts := bytes.Split(data, []byte{0})
+	files := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(part) > 0 {
+			files = append(files, string(part))
+		}
+	}
+	return files
+}
+
+func (r *Result) addIssue(path, reason string, err error) {
+	r.Complete = false
+	r.Issues = append(r.Issues, Issue{Path: path, Reason: reason, Detail: err.Error()})
+}
+
+func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, deps Deps) (result Result, resultErr error) {
+	defer result.finish(time.Now())
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
 	}
 	deps = withDefaults(deps)
-	files, fallback, err := Enumerate(ctx, root, deps)
-	if err != nil {
-		return Result{}, err
+	enumStart := time.Now()
+	files, fallback, enumErr := Enumerate(ctx, root, deps)
+	result = Result{Walker: WalkerLabel(fallback), Complete: true}
+	result.Stats.EnumerationMS = elapsedMS(enumStart)
+	result.Stats.SourcesEnumerated = len(files)
+	var failures []error
+	if enumErr != nil {
+		result.addIssue(".", "enumeration_failed", enumErr)
+		failures = append(failures, enumErr)
 	}
-	result := Result{Walker: WalkerLabel(fallback)}
-	compiled := compileItems(items)
+	compiled := result.compile(items)
+	var deleted map[string]bool
+	var deletionErr error
 	for _, rel := range files {
+		if err := ctx.Err(); err != nil {
+			result.addIssue(rel, "cancelled", err)
+			failures = append(failures, err)
+			break
+		}
 		abs := filepath.Join(root, rel)
-		info, statErr := deps.Stat(abs)
+		info, statErr := measure(&result.Stats.ReadMS, func() (os.FileInfo, error) { return deps.Stat(abs) })
 		if statErr != nil {
-			return Result{}, statErr
+			if !fallback && errors.Is(statErr, os.ErrNotExist) {
+				if deleted == nil {
+					deleted = make(map[string]bool)
+					var paths []string
+					paths, deletionErr = deps.GitDeletedFiles(ctx, root)
+					for _, path := range paths {
+						deleted[path] = true
+					}
+				}
+				if deletionErr == nil && deleted[rel] {
+					result.Deleted = append(result.Deleted, rel)
+					continue
+				}
+			}
+			result.addIssue(rel, "stat_failed", statErr)
+			failures = append(failures, fmt.Errorf("%s: %w", rel, statErr))
+			continue
 		}
 		if info.IsDir() {
 			continue
 		}
 		if info.Size() > maxBytes {
+			result.Complete = false
 			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: info.Size(), Reason: "over_max_bytes"})
 			continue
 		}
-		data, readErr := deps.ReadFile(abs)
+		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return deps.ReadFile(abs) })
 		if readErr != nil {
-			return Result{}, readErr
+			result.addIssue(rel, "read_failed", readErr)
+			failures = append(failures, fmt.Errorf("%s: %w", rel, readErr))
+			continue
 		}
-		for _, item := range compiled {
-			if hitNeedles(data, item.needles, deps.ByteIndex) {
-				result.Matches = append(result.Matches, Match{Path: rel, ItemName: item.name})
-			}
+		if int64(len(data)) > maxBytes {
+			result.Complete = false
+			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: int64(len(data)), Reason: "over_max_bytes"})
+			continue
 		}
+		result.match(rel, data, compiled, deps.ByteIndex)
 	}
-	return result, nil
+	return result, errors.Join(failures...)
 }
 
-// ScanStaged scans the staged INDEX content (stage 0 blobs) rather than the
-// working tree. This is the correct source for a pre-commit gate: a secret that
-// is `git add`-ed and then overwritten in the working tree is still in the
-// commit, and Scan (working-tree) would miss it. Reads fail closed.
-func ScanStaged(ctx context.Context, root string, items []store.Item, maxBytes int64, deps Deps) (Result, error) {
+// ScanStaged reads index content, including Git's temporary index for a partial
+// commit. Read failures retain other matches and still fail the gate closed.
+// Empty staged dependencies select a shared Git object reader. Explicit staged
+// reader overrides retain the per-path interface for fault injection.
+func ScanStaged(ctx context.Context, root string, items []store.Item, maxBytes int64, deps Deps) (result Result, resultErr error) {
+	if deps.GitStagedFiles == nil && deps.StagedBlobSize == nil && deps.ReadStagedBlob == nil {
+		return scanStagedObjects(ctx, root, items, maxBytes, deps.ByteIndex)
+	}
+	defer result.finish(time.Now())
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
 	}
 	deps = withDefaults(deps)
-	files, err := deps.GitStagedFiles(ctx, root)
-	if err != nil {
-		return Result{}, err
+	result = Result{Walker: "git-staged", Complete: true}
+	enumStart := time.Now()
+	files, enumErr := deps.GitStagedFiles(ctx, root)
+	result.Stats.EnumerationMS = elapsedMS(enumStart)
+	result.Stats.SourcesEnumerated = len(files)
+	var failures []error
+	if enumErr != nil {
+		result.addIssue(".", "enumeration_failed", enumErr)
+		failures = append(failures, enumErr)
 	}
-	result := Result{Walker: "git-staged"}
-	compiled := compileItems(items)
+	compiled := result.compile(items)
 	for _, rel := range files {
-		size, sizeErr := deps.StagedBlobSize(ctx, root, rel)
+		if err := ctx.Err(); err != nil {
+			result.addIssue(rel, "cancelled", err)
+			failures = append(failures, err)
+			break
+		}
+		size, sizeErr := measure(&result.Stats.ReadMS, func() (int64, error) { return deps.StagedBlobSize(ctx, root, rel) })
 		if sizeErr != nil {
-			return Result{}, sizeErr
+			result.addIssue(rel, "index_read_failed", sizeErr)
+			failures = append(failures, fmt.Errorf("%s: %w", rel, sizeErr))
+			continue
 		}
 		if size > maxBytes {
+			result.Complete = false
 			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: size, Reason: "over_max_bytes"})
 			continue
 		}
-		data, readErr := deps.ReadStagedBlob(ctx, root, rel)
+		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return deps.ReadStagedBlob(ctx, root, rel) })
 		if readErr != nil {
-			return Result{}, readErr
+			result.addIssue(rel, "index_read_failed", readErr)
+			failures = append(failures, fmt.Errorf("%s: %w", rel, readErr))
+			continue
 		}
-		for _, item := range compiled {
-			if hitNeedles(data, item.needles, deps.ByteIndex) {
-				result.Matches = append(result.Matches, Match{Path: rel, ItemName: item.name})
-			}
+		if int64(len(data)) > maxBytes {
+			result.Complete = false
+			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: int64(len(data)), Reason: "over_max_bytes"})
+			continue
 		}
+		result.match(rel, data, compiled, deps.ByteIndex)
 	}
-	return result, nil
+	return result, errors.Join(failures...)
 }
 
 func WalkerLabel(fallback bool) string {
@@ -194,12 +269,18 @@ func WalkerLabel(fallback bool) string {
 }
 
 func HitItem(data []byte, item store.Item, byteIndex ...func([]byte, []byte) int) bool {
+	if !item.Confidential() {
+		return false
+	}
 	return hitNeedles(data, redactor.Needles(item.Value), byteIndex...)
 }
 
 func compileItems(items []store.Item) []compiledItem {
 	compiled := make([]compiledItem, 0, len(items))
 	for _, item := range items {
+		if !item.Confidential() {
+			continue
+		}
 		needles := redactor.Needles(item.Value)
 		if len(needles) == 0 {
 			continue
@@ -231,9 +312,14 @@ func Enumerate(ctx context.Context, root string, deps Deps) ([]string, bool, err
 		}
 	}
 	var files []string
+	var walkFailures []error
 	err := deps.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			walkFailures = append(walkFailures, fmt.Errorf("%s: %w", path, walkErr))
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if d.IsDir() && d.Name() == ".git" {
 			return filepath.SkipDir
@@ -249,9 +335,9 @@ func Enumerate(ctx context.Context, root string, deps Deps) ([]string, bool, err
 		return nil
 	})
 	if err != nil {
-		return nil, true, err
+		walkFailures = append(walkFailures, err)
 	}
-	return files, true, nil
+	return files, true, errors.Join(walkFailures...)
 }
 
 func withDefaults(deps Deps) Deps {
@@ -267,6 +353,9 @@ func withDefaults(deps Deps) Deps {
 	}
 	if deps.GitLsFiles == nil {
 		deps.GitLsFiles = defaults.GitLsFiles
+	}
+	if deps.GitDeletedFiles == nil {
+		deps.GitDeletedFiles = defaults.GitDeletedFiles
 	}
 	if deps.ByteIndex == nil {
 		deps.ByteIndex = defaults.ByteIndex

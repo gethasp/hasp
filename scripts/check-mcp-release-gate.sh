@@ -22,6 +22,7 @@ The gate verifies:
   - doctor detects already-running stale managed-agent MCP processes
   - tools/call returns a standard MCP CallToolResult envelope
   - managed wrappers can execute hasp_run after recovering a stale inherited session
+  - a once project grant permits one command and denies the next ungranted call
   - managed wrappers can initialize and list tools within the timeout
 EOF
 }
@@ -282,6 +283,7 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 label = sys.argv[1]
 try:
@@ -291,6 +293,28 @@ except ValueError as exc:
 project_root = sys.argv[3]
 sep = sys.argv.index("--")
 cmd = sys.argv[sep + 1 :]
+marker = Path(project_root) / "run-count"
+arguments = {
+    "project_root": project_root,
+    "host_label": "hasp-release-gate-stale-session",
+    "command": ["/bin/sh", "-c", 'printf x >> "$1"; printf ok', "hasp-release-gate", str(marker)],
+}
+
+def run_request(request_id, grant=None):
+    call_arguments = dict(arguments)
+    if grant is not None:
+        call_arguments["grant_project"] = grant
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "hasp_run",
+            "_meta": {"progressToken": request_id},
+            "arguments": call_arguments,
+        },
+    })
+
 request = "\n".join([
     json.dumps({
         "jsonrpc": "2.0",
@@ -303,20 +327,9 @@ request = "\n".join([
         },
     }),
     json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-    json.dumps({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/call",
-        "params": {
-            "name": "hasp_run",
-            "_meta": {"progressToken": 2},
-            "arguments": {
-                "project_root": project_root,
-                "host_label": "hasp-release-gate-stale-session",
-                "command": ["/bin/sh", "-c", "printf ok"],
-            },
-        },
-    }),
+    run_request(2),
+    run_request(3, "once"),
+    run_request(4),
     "",
 ])
 start = time.monotonic()
@@ -348,7 +361,13 @@ for raw in proc.stdout.splitlines():
     except json.JSONDecodeError as exc:
         raise SystemExit(f"MCP release gate: {label} emitted non-JSON line: {line!r}") from exc
 by_id = {response.get("id"): response for response in responses}
-run = by_id.get(2)
+for request_id in (2, 4):
+    denial = by_id.get(request_id, {})
+    error = denial.get("error", {})
+    data = error.get("data", {})
+    if error.get("code") != -32000 or data.get("reason") != "project_lease_required" or data.get("grant_field") != "grant_project":
+        raise SystemExit(f"MCP release gate: {label} ungranted command was not denied: {denial!r}")
+run = by_id.get(3)
 if not run or run.get("error"):
     raise SystemExit(f"MCP release gate: {label} hasp_run failed: {run!r}")
 envelope = run.get("result", {})
@@ -367,7 +386,9 @@ if result.get("exit_code") != 0 or result.get("stdout") != "ok":
     raise SystemExit(f"MCP release gate: {label} unexpected hasp_run result: {result!r}")
 if "resolve session" in json.dumps(result):
     raise SystemExit(f"MCP release gate: {label} leaked stale-session failure: {result!r}")
-print(f"[ok] {label} hasp_run stale-session recovery in {elapsed:.2f}s")
+if not marker.exists() or marker.read_text(encoding="utf-8") != "x":
+    raise SystemExit(f"MCP release gate: {label} once grant did not execute exactly one command")
+print(f"[ok] {label} hasp_run stale-session recovery and once grant in {elapsed:.2f}s")
 PY
 }
 

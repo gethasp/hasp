@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "latest": "v1.0.39",
+  "latest": "v1.0.40",
   "updatedLabel": "May 2026",
   "sourceFiles": [
     "public/README.md",
@@ -15,6 +15,8 @@
     "public/docs/telemetry.md",
     "public/docs/repo-targets.md",
     "public/docs/credential-sets.md",
+    "public/docs/brokered-handoffs.md",
+    "public/docs/value-classification.md",
     "public/docs/v1-production-guide.md",
     "docs/agent-profiles/README.md",
     "docs/agent-profiles/codex-cli.md",
@@ -23,6 +25,7 @@
     "docs/agent-profiles/aider.md",
     "docs/agent-profiles/hermes.md",
     "docs/agent-profiles/pi.md",
+    "docs/agent-profiles/opencode.md",
     "docs/agent-profiles/openclaw.md",
     "docs/agent-profiles/generic.md",
     "public/CHANGELOG.md",
@@ -130,6 +133,22 @@
       "description": "Typed manifest sets for coupled credentials: atomic vault items, schema-checked roles, reviewed target delivery, and MCP-safe metadata."
     },
     {
+      "source": "public/docs/brokered-handoffs.md",
+      "slug": "brokered-handoffs",
+      "section": "Operate",
+      "order": 17,
+      "title": "Brokered handoffs",
+      "description": "Send managed values through SSH stdin, handle temporary credential files, and rerun consumers with fresh paths."
+    },
+    {
+      "source": "public/docs/value-classification.md",
+      "slug": "value-classification",
+      "section": "Operate",
+      "order": 18,
+      "title": "Value classification",
+      "description": "Choose confidential or ordinary configuration handling for reviewed vault items while preserving project exposure and runtime authorization."
+    },
+    {
       "source": "public/docs/v1-production-guide.md",
       "slug": "v1-production-guide",
       "section": "Operate",
@@ -190,8 +209,16 @@
       "slug": "agent-profiles/pi",
       "section": "Agents",
       "order": 65,
-      "title": "Pi (Inflection AI)",
-      "description": "Connect Pi to HASP through a generated package extension and brokered MCP surface, so it runs with project secrets without reading their values."
+      "title": "Pi",
+      "description": "Connect the Pi coding agent through its generated package, persistent MCP session, and shell process protection."
+    },
+    {
+      "source": "docs/agent-profiles/opencode.md",
+      "slug": "agent-profiles/opencode",
+      "section": "Agents",
+      "order": 66,
+      "title": "OpenCode",
+      "description": "Connect OpenCode to the HASP MCP broker, check configuration and live transport, and verify protection in its running shell tools."
     },
     {
       "source": "docs/agent-profiles/openclaw.md",

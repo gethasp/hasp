@@ -85,6 +85,17 @@ func BuildCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// BuildIndexCommand preserves the caller's active index. Git uses a temporary
+// GIT_INDEX_FILE for partial commits; scanning the default index would inspect
+// different content. Other repository-routing environment stays scrubbed.
+func BuildIndexCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := BuildCommand(ctx, dir, args...)
+	if index := os.Getenv("GIT_INDEX_FILE"); index != "" {
+		cmd.Env = append(cmd.Env, "GIT_INDEX_FILE="+index)
+	}
+	return cmd
+}
+
 func buildConfigCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	full := make([]string, 0, 4+len(args))
 	full = append(full, "-c", "safe.directory=*")

@@ -64,6 +64,7 @@ type ManifestTarget struct {
 	Description string             `json:"description,omitempty"`
 	Root        string             `json:"root,omitempty"`
 	Command     []string           `json:"command,omitempty"`
+	LiteralEnv  map[string]string  `json:"literal_env,omitempty"`
 	Delivery    []ManifestDelivery `json:"delivery,omitempty"`
 	Examples    []ManifestExample  `json:"examples,omitempty"`
 }
@@ -83,12 +84,13 @@ type ManifestExample struct {
 }
 
 type VisibleReference struct {
-	Alias          string       `json:"alias"`
-	ItemName       string       `json:"item_name"`
-	NamedReference string       `json:"named_reference,omitempty"`
-	Kind           ItemKind     `json:"kind"`
-	PolicyLevel    SecretPolicy `json:"policy_level"`
-	LeaseStatus    string       `json:"lease_status"`
+	Classification ItemClassification `json:"classification"`
+	Alias          string             `json:"alias"`
+	ItemName       string             `json:"item_name"`
+	NamedReference string             `json:"named_reference,omitempty"`
+	Kind           ItemKind           `json:"kind"`
+	PolicyLevel    SecretPolicy       `json:"policy_level"`
+	LeaseStatus    string             `json:"lease_status"`
 }
 
 var ErrBindingConflict = errors.New("binding alias conflict")
@@ -183,6 +185,7 @@ func (h *Handle) ResolveBindingView(ctx context.Context, projectPath string) (Bi
 			}
 		}
 		visible = append(visible, VisibleReference{
+			Classification: item.EffectiveClassification(),
 			Alias:          alias,
 			ItemName:       item.Name,
 			NamedReference: NamedReference(item.Name),

@@ -493,7 +493,7 @@ func TestSecretGetAndPolicyAdditionalBranches(t *testing.T) {
 	if err := Run(context.Background(), []string{"init"}, bytes.NewBuffer(nil), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run init: %v", err)
 	}
-	if err := Run(context.Background(), []string{"secret", "add", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
+	if err := Run(context.Background(), []string{"secret", "add", "--vault-only", "--from-stdin", "API_TOKEN"}, bytes.NewBufferString("abc123\n"), io.Discard, io.Discard); err != nil {
 		t.Fatalf("secret add: %v", err)
 	}
 

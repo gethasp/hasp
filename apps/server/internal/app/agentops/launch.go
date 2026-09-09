@@ -50,6 +50,16 @@ func agentLaunchHandler(ctx context.Context, deps Deps, args []string, stdin io.
 	} else if err != nil {
 		return err
 	}
+	if consumer.ProjectRoot == "" {
+		consumer.ProjectRoot = strings.TrimSpace(os.Getenv(secrettypes.EnvAgentProjectRoot))
+	}
+	if consumer.ProjectRoot == "" && deps.ResolveProjectRoot != nil {
+		if cwd, err := os.Getwd(); err == nil {
+			if root, inRepo, err := deps.ResolveProjectRoot(ctx, cwd); err == nil && inRepo {
+				consumer.ProjectRoot = root
+			}
+		}
+	}
 	starter, err := deps.AgentNewStarter()
 	if err != nil {
 		return err

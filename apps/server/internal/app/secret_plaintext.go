@@ -283,6 +283,18 @@ func secretActorLabel() string {
 	return auditlog.ActorLabel()
 }
 
+func enforceClassificationChange(ctx context.Context, handle *store.Handle, name string) error {
+	policy, err := secretPlaintextPolicyForContext(ctx, handle)
+	if err != nil {
+		return err
+	}
+	if policy.Active {
+		appendSecretAuditCLI(audit.EventDeny, map[string]any{"action": "item.classification.blocked", "item_name": name, "policy_source": policy.Source})
+		return errors.New("classification changes require the local operator outside a protected agent process and connected-agent repository; a plaintext grant does not authorize classification changes")
+	}
+	return nil
+}
+
 func copySecretToClipboard(value []byte) error {
 	commands := [][]string{}
 	switch secretRuntimeGOOS {

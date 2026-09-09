@@ -91,7 +91,7 @@ func Apply(input []byte, items []store.Item) Result {
 	itemForms := make([][]formDef, len(sorted))
 	totalForms := 0
 	for i, it := range sorted {
-		if len(it.Value) == 0 || len(it.Value) < minRedactLen {
+		if !it.Confidential() || len(it.Value) == 0 || len(it.Value) < minRedactLen {
 			continue
 		}
 		itemForms[i] = buildForms(it.Value)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/ttyutil"
 	"github.com/gethasp/hasp/apps/server/internal/audit"
 	"github.com/gethasp/hasp/apps/server/internal/brokerops"
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 	"github.com/gethasp/hasp/apps/server/internal/paths"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
@@ -141,7 +143,13 @@ func appConsumerBindings(handle *store.Handle, envMappings mappingFlag, fileMapp
 }
 
 func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer store.AppConsumer, command []string, stdout io.Writer, stderr io.Writer, s starter, action string, deps execDeps) (runner.Result, error) {
-	env := map[string]string{}
+	if err := validateAppMappings(consumer); err != nil {
+		return runner.Result{}, err
+	}
+	env := maps.Clone(consumer.LiteralEnv)
+	if env == nil {
+		env = map[string]string{}
+	}
 	files := map[string][]byte{}
 	dotenvLines := make([]string, 0)
 	items := make([]store.Item, 0, len(consumer.Bindings))
@@ -189,9 +197,6 @@ func executeAppConsumer(ctx context.Context, handle *store.Handle, consumer stor
 		}
 	}
 	if len(dotenvLines) > 0 {
-		if strings.TrimSpace(consumer.DotenvEnv) == "" {
-			return runner.Result{}, errors.New("app dotenv delivery requires dotenv_env")
-		}
 		files[consumer.DotenvEnv] = []byte(strings.Join(dotenvLines, "\n") + "\n")
 	}
 
@@ -244,6 +249,7 @@ type appConnectConfig struct {
 	DotenvEnv       string
 	InstallLauncher setupOptionalBool
 	AddToPath       setupOptionalBool
+	LiteralEnv      map[string]string
 	EnvMappings     mappingFlag
 	FileMappings    mappingFlag
 	DotenvMappings  mappingFlag
@@ -316,6 +322,9 @@ func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg
 	if err := applyAppTargetConfig(ctx, handle, &cfg); err != nil {
 		return store.AppConsumer{}, appPathUpdateResult{}, err
 	}
+	if err := normalizeAppReferences(ctx, handle, &cfg); err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
+	}
 	bindings, err := appConsumerBindings(handle, cfg.EnvMappings, cfg.FileMappings, cfg.DotenvMappings)
 	if err != nil {
 		return store.AppConsumer{}, appPathUpdateResult{}, err
@@ -331,6 +340,10 @@ func connectAppConsumerWithHandle(ctx context.Context, handle *store.Handle, cfg
 		Command:     []string{"sh", "-lc", appCommandString(cfg.Command), "hasp-app"},
 		Bindings:    bindings,
 		DotenvEnv:   cfg.DotenvEnv,
+		LiteralEnv:  maps.Clone(cfg.LiteralEnv),
+	}
+	if err := validateAppMappings(consumer); err != nil {
+		return store.AppConsumer{}, appPathUpdateResult{}, err
 	}
 	if hadExisting {
 		consumer.LauncherPath = existingConsumer.LauncherPath
@@ -405,7 +418,8 @@ func applyAppTargetConfig(ctx context.Context, handle *store.Handle, cfg *appCon
 		}
 		fileMappings[name] = resolved.ItemName
 	}
-	if len(expansion.XCConfig) > 0 {
+	cfg.LiteralEnv = maps.Clone(expansion.LiteralEnv)
+	if len(expansion.XCConfig) > 0 || len(expansion.Outputs) > 0 {
 		return fmt.Errorf("target %q contains workspace-visible delivery; use hasp write-env --target", cfg.Target)
 	}
 	if len(envMappings) > 0 {
@@ -590,4 +604,56 @@ func sortedByteMapKeys(values map[string][]byte) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func normalizeAppReferences(ctx context.Context, handle *store.Handle, cfg *appConnectConfig) error {
+	for _, mapping := range []mappingFlag{cfg.EnvMappings, cfg.FileMappings, cfg.DotenvMappings} {
+		for name, ref := range mapping {
+			// Connecting an app explicitly selects vault items; aliases still resolve within its project.
+			item, err := secretGetItemFn(handle, strings.TrimPrefix(ref, "@"))
+			if err == nil {
+				mapping[name] = item.Name
+				continue
+			}
+			if !errors.Is(err, store.ErrItemNotFound) || cfg.ProjectRoot == "" || strings.HasPrefix(ref, "@") {
+				return err
+			}
+			resolved, err := handle.ResolveReference(ctx, cfg.ProjectRoot, ref)
+			if err != nil {
+				return err
+			}
+			mapping[name] = resolved.ItemName
+		}
+	}
+	return nil
+}
+
+func validateAppMappings(consumer store.AppConsumer) error {
+	env, files, dotenv := map[string]string{}, map[string]string{}, map[string]string{}
+	for _, binding := range consumer.Bindings {
+		dest := env
+		switch binding.Delivery {
+		case store.AppDeliveryTempFile:
+			dest = files
+		case store.AppDeliveryTempDotenv:
+			dest = dotenv
+		}
+		if _, exists := dest[binding.Target]; exists {
+			return fmt.Errorf("duplicate app destination %q", binding.Target)
+		}
+		dest[binding.Target] = binding.SecretName
+	}
+	if err := envmap.Validate(dotenv, nil, nil); err != nil {
+		return err
+	}
+	if len(dotenv) > 0 {
+		if strings.TrimSpace(consumer.DotenvEnv) == "" {
+			return errors.New("app dotenv delivery requires dotenv_env")
+		}
+		if _, exists := files[consumer.DotenvEnv]; exists {
+			return fmt.Errorf("duplicate app destination %q", consumer.DotenvEnv)
+		}
+		files[consumer.DotenvEnv] = "dotenv"
+	}
+	return envmap.Validate(env, files, consumer.LiteralEnv)
 }

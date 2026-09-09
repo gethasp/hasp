@@ -391,8 +391,7 @@ func TestHaspCheckAndUnsupportedToolHelpers(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
-	t.Setenv(mcpEnvSessionToken, "session-token")
-	grantMCPProjectSession(t, handle, projectRoot, "session-token")
+	startGrantedMCPTestSession(t, handle, projectRoot)
 	if err := os.WriteFile(filepath.Join(projectRoot, "leak.txt"), []byte("abc123"), 0o600); err != nil {
 		t.Fatalf("write leak file: %v", err)
 	}
@@ -451,8 +450,7 @@ func TestHaspCheckUsesSharedScannerMetadata(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
-	t.Setenv(mcpEnvSessionToken, "session-token")
-	grantMCPProjectSession(t, handle, projectRoot, "session-token")
+	startGrantedMCPTestSession(t, handle, projectRoot)
 	mustGit(t, projectRoot, "init")
 	if err := os.WriteFile(filepath.Join(projectRoot, ".gitignore"), []byte("ignored.txt\n"), 0o600); err != nil {
 		t.Fatalf("write gitignore: %v", err)
@@ -527,8 +525,7 @@ func TestHaspCheckFallsBackOutsideGit(t *testing.T) {
 	if _, err := handle.UpsertBinding(context.Background(), projectRoot, map[string]string{"secret_01": "api_token"}, store.PolicySession, false); err != nil {
 		t.Fatalf("upsert binding: %v", err)
 	}
-	t.Setenv(mcpEnvSessionToken, "session-token")
-	grantMCPProjectSession(t, handle, projectRoot, "session-token")
+	startGrantedMCPTestSession(t, handle, projectRoot)
 	if err := os.WriteFile(filepath.Join(projectRoot, "leak.txt"), []byte("abc123secret"), 0o600); err != nil {
 		t.Fatalf("write leak: %v", err)
 	}
@@ -553,12 +550,12 @@ func TestCallExecuteCapsAndRedactsStreamingOutput(t *testing.T) {
 	lockMCPSeams(t)
 	origEnsureSession := ensureSessionFn
 	origResolveBinding := resolveBindingViewMCPFn
-	origAuthorizeRef := authorizeReferenceMCPFn
+	origAuthorizeRef := authorizeReferencesMCPFn
 	origRunnerExecute := runnerExecuteMCPFn
 	defer func() {
 		ensureSessionFn = origEnsureSession
 		resolveBindingViewMCPFn = origResolveBinding
-		authorizeReferenceMCPFn = origAuthorizeRef
+		authorizeReferencesMCPFn = origAuthorizeRef
 		runnerExecuteMCPFn = origRunnerExecute
 	}()
 
@@ -589,8 +586,8 @@ func TestCallExecuteCapsAndRedactsStreamingOutput(t *testing.T) {
 	resolveBindingViewMCPFn = func(*store.Handle, context.Context, string) (store.Binding, []store.VisibleReference, error) {
 		return store.Binding{ID: "binding-id"}, nil, nil
 	}
-	authorizeReferenceMCPFn = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-		return store.Item{Name: "api_token", Value: []byte("abc123secret")}, nil
+	authorizeReferencesMCPFn = func(context.Context, *store.Handle, string, string, string, []brokerops.ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+		return []store.Item{{Name: "api_token", Value: []byte("abc123secret")}}, nil
 	}
 	runnerExecuteMCPFn = func(_ context.Context, input runner.Input) (runner.Result, error) {
 		if input.Stdout == nil || input.Stderr == nil {
@@ -832,8 +829,10 @@ func TestCallListRequiresApprovalWithoutGrantAndOpenHandleConvenience(t *testing
 	}
 	startTestDaemon(t)
 
-	if _, err := callList(context.Background(), handle, toolCall{Name: "hasp_list", Arguments: map[string]any{"project_root": projectRoot}}); err == nil || !strings.Contains(err.Error(), "approval required") {
-		t.Fatalf("expected approval required, got %v", err)
+	_, err = callList(context.Background(), handle, toolCall{Name: "hasp_list", Arguments: map[string]any{"project_root": projectRoot}})
+	var authErr *brokerops.AuthorizationError
+	if !errors.As(err, &authErr) || authErr.Reason != "project_lease_required" || authErr.Requirement != store.AccessRequirementProjectLease {
+		t.Fatalf("expected project lease requirement, got %v", err)
 	}
 
 	convHome := filepath.Join(baseDir, "conv-home")
@@ -1036,7 +1035,7 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 	origResolveBinding := resolveBindingViewMCPFn
 	origGrantProject := grantProjectLeaseMCPFn
 	origCanonical := canonicalProjectRootMCPFn
-	origAuthorizeRef := authorizeReferenceMCPFn
+	origAuthorizeRef := authorizeReferencesMCPFn
 	origRunnerExecute := runnerExecuteMCPFn
 	origGetItem := getItemMCPFn
 	origCapture := captureMCPFn
@@ -1045,7 +1044,7 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 		resolveBindingViewMCPFn = origResolveBinding
 		grantProjectLeaseMCPFn = origGrantProject
 		canonicalProjectRootMCPFn = origCanonical
-		authorizeReferenceMCPFn = origAuthorizeRef
+		authorizeReferencesMCPFn = origAuthorizeRef
 		runnerExecuteMCPFn = origRunnerExecute
 		getItemMCPFn = origGetItem
 		captureMCPFn = origCapture
@@ -1107,13 +1106,13 @@ func TestMCPSeamResidualBranches(t *testing.T) {
 	}
 	resolveBindingViewMCPFn = origResolveBinding
 
-	authorizeReferenceMCPFn = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-		return store.Item{}, errors.New("authorize ref fail")
+	authorizeReferencesMCPFn = func(context.Context, *store.Handle, string, string, string, []brokerops.ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+		return nil, errors.New("authorize ref fail")
 	}
 	if _, err := callExecute(context.Background(), handle, toolCall{Name: "hasp_inject", Arguments: map[string]any{"project_root": projectRoot, "files": map[string]any{"CERT": "secret_01"}, "command": []any{"true"}}}); err == nil || !strings.Contains(err.Error(), "authorize ref fail") {
 		t.Fatalf("expected callExecute file authorize failure, got %v", err)
 	}
-	authorizeReferenceMCPFn = origAuthorizeRef
+	authorizeReferencesMCPFn = origAuthorizeRef
 
 	getItemMCPFn = func(*store.Handle, string) (store.Item, error) { return store.Item{}, errors.New("get item fail") }
 	if _, err := callCapture(context.Background(), handle, toolCall{Name: "hasp_capture", Arguments: map[string]any{"project_root": projectRoot, "name": "api_token"}}); err == nil || !strings.Contains(err.Error(), "get item fail") {

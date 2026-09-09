@@ -97,14 +97,15 @@ type ItemMetadata struct {
 }
 
 type Item struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
-	Kind      ItemKind     `json:"kind"`
-	Value     []byte       `json:"value"`
-	Metadata  ItemMetadata `json:"metadata"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	DeletedAt *time.Time   `json:"deleted_at,omitempty"`
+	Classification ItemClassification `json:"classification,omitempty"`
+	ID             string             `json:"id"`
+	Name           string             `json:"name"`
+	Kind           ItemKind           `json:"kind"`
+	Value          []byte             `json:"value"`
+	Metadata       ItemMetadata       `json:"metadata"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	DeletedAt      *time.Time         `json:"deleted_at,omitempty"`
 }
 
 type ConsumerKind string
@@ -129,14 +130,15 @@ type AppBinding struct {
 }
 
 type AppConsumer struct {
-	Name         string       `json:"name"`
-	ProjectRoot  string       `json:"project_root"`
-	Command      []string     `json:"command"`
-	Bindings     []AppBinding `json:"bindings"`
-	DotenvEnv    string       `json:"dotenv_env,omitempty"`
-	LauncherPath string       `json:"launcher_path,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	Name         string            `json:"name"`
+	ProjectRoot  string            `json:"project_root"`
+	Command      []string          `json:"command"`
+	LiteralEnv   map[string]string `json:"literal_env,omitempty"`
+	Bindings     []AppBinding      `json:"bindings"`
+	DotenvEnv    string            `json:"dotenv_env,omitempty"`
+	LauncherPath string            `json:"launcher_path,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 type AgentConsumer struct {

@@ -62,6 +62,7 @@ type AgentSupportedProfileView struct {
 // All fields are closure-typed so package app can wire the existing seam vars
 // at call time and test overrides flow through transparently.
 type Deps struct {
+	AgentStatus func(context.Context, string) (map[string]any, error)
 	// ── The 14 named seams pinned by the RED contract test ────────────────────
 
 	// StoreGetAgent fetches an agent consumer by name.
@@ -159,7 +160,7 @@ type Deps struct {
 // printAgentHelp writes a minimal agent subcommand help stub used when
 // deps.PrintHelpTopic is not wired.
 func printAgentHelp(w io.Writer) error {
-	subcommands := []string{"connect", "disconnect", "list", "list-supported", "mcp", "launch", "shell"}
+	subcommands := []string{"connect", "disconnect", "status", "list", "list-supported", "mcp", "launch", "shell"}
 	_, err := fmt.Fprintf(w, "Usage: hasp agent <subcommand>\n\nSubcommands: %s\n", strings.Join(subcommands, ", "))
 	return err
 }
@@ -197,6 +198,8 @@ func AgentCommand(ctx context.Context, deps Deps, args []string, stdin io.Reader
 		return printHelp(stdout, []string{"agent", args[0]})
 	}
 	switch args[0] {
+	case "status":
+		return agentStatusHandler(ctx, deps, args[1:], stdout)
 	case "connect":
 		return agentConnectHandler(ctx, deps, args[1:], stdout)
 	case "disconnect":

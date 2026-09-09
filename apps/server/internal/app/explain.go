@@ -9,12 +9,11 @@ import (
 	"time"
 )
 
-// explainPayload is the structured shape printed by `hasp run --explain`.
-// It exposes the resolved authorization decision tree (project lease, secret
-// grant, convenience grant) plus the planned env/file references and the
-// child command. The redactor is always active for run/inject; the field is
-// surfaced explicitly so reviewers can confirm the guarantee at a glance.
+// explainPayload describes a plan before runtime authorization. Grant fields
+// are requested scopes, not proof that a lease or secret grant exists.
 type explainPayload struct {
+	Phase            string            `json:"phase"`
+	Checks           map[string]string `json:"checks"`
 	Command          string            `json:"command"`
 	ProjectRoot      string            `json:"project_root"`
 	Target           string            `json:"target,omitempty"`
@@ -24,6 +23,8 @@ type explainPayload struct {
 	ConvenienceScope string            `json:"convenience_grant,omitempty"`
 	GrantWindow      time.Duration     `json:"grant_window"`
 	RedactorActive   bool              `json:"redactor_active"`
+	RedactorPlanned  bool              `json:"redactor_planned"`
+	LiteralEnvNames  []string          `json:"literal_env_names,omitempty"`
 	EnvRefs          map[string]string `json:"env_refs,omitempty"`
 	FileRefs         map[string]string `json:"file_refs,omitempty"`
 	OutputPath       string            `json:"output_path,omitempty"`
@@ -46,7 +47,7 @@ func writeExplainPayload(w io.Writer, payload explainPayload, format string) err
 
 func writeExplainText(w io.Writer, payload explainPayload) error {
 	var b strings.Builder
-	header := "[hasp] explain: " + payload.Command
+	header := "[hasp] execution plan: " + payload.Command
 	if payload.DryRun {
 		header += " (dry-run)"
 	}
@@ -59,13 +60,27 @@ func writeExplainText(w io.Writer, payload explainPayload) error {
 	if payload.ManifestHash != "" {
 		fmt.Fprintf(&b, "  manifest_hash:   %s\n", payload.ManifestHash)
 	}
-	fmt.Fprintf(&b, "  project_lease:   %s\n", explainScope(payload.ProjectScope))
-	fmt.Fprintf(&b, "  secret_grant:    %s\n", explainScope(payload.SecretScope))
+	fmt.Fprintf(&b, "  requested project_lease: %s\n", explainScope(payload.ProjectScope))
+	fmt.Fprintf(&b, "  requested secret_grant:  %s\n", explainScope(payload.SecretScope))
 	if payload.ConvenienceScope != "" {
 		fmt.Fprintf(&b, "  convenience_grant: %s\n", payload.ConvenienceScope)
 	}
 	fmt.Fprintf(&b, "  grant_window:    %s\n", explainDuration(payload.GrantWindow))
-	fmt.Fprintf(&b, "  redactor:        %s\n", explainBool(payload.RedactorActive, "active", "off"))
+	fmt.Fprintf(&b, "  redactor:        %s\n", explainBool(payload.RedactorPlanned, "planned for child output", "not planned"))
+	if len(payload.Checks) > 0 {
+		b.WriteString("  checks:\n")
+		keys := make([]string, 0, len(payload.Checks))
+		for key := range payload.Checks {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(&b, "    %s: %s\n", key, payload.Checks[key])
+		}
+	}
+	if len(payload.LiteralEnvNames) > 0 {
+		fmt.Fprintf(&b, "  literal env names: %s\n", strings.Join(payload.LiteralEnvNames, ", "))
+	}
 	if len(payload.EnvRefs) > 0 {
 		b.WriteString("  env refs:\n")
 		for _, line := range sortedMappingLines(payload.EnvRefs) {
@@ -94,14 +109,14 @@ func writeExplainText(w io.Writer, payload explainPayload) error {
 
 func explainScope(scope string) string {
 	if scope == "" {
-		return "(unset — broker default)"
+		return "(not requested)"
 	}
 	return scope
 }
 
 func explainDuration(d time.Duration) string {
 	if d <= 0 {
-		return "(unset — broker default)"
+		return "(not requested)"
 	}
 	return d.String()
 }

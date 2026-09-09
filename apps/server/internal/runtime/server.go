@@ -1782,6 +1782,7 @@ func (s *rpcServer) broker() *brokerRPC {
 		paths:       s.paths,
 		startedAt:   s.startedAt,
 		sessions:    s.sessions,
+		jobs:        s.jobs,
 		approvals:   s.approvals,
 		audit:       s.audit,
 		auditState:  s.auditState,
@@ -2577,6 +2578,7 @@ type rpcServer struct {
 	paths      paths.Paths
 	server     *rpc.Server
 	sessions   *SessionStore
+	jobs       *jobStore
 	approvals  *ApprovalStore
 	audit      *audit.Log
 	auditState *AuditState
@@ -2698,6 +2700,7 @@ func newRPCServer(runtimePaths paths.Paths) *rpcServer {
 		paths:               runtimePaths,
 		server:              rpc.NewServer(),
 		sessions:            NewSessionStore(),
+		jobs:                newJobStore(runtimePaths.RuntimeDir),
 		approvals:           approvalStore,
 		audit:               log,
 		auditState:          auditState,
@@ -2730,6 +2733,7 @@ func (s *rpcServer) register() error {
 		paths:       s.paths,
 		startedAt:   s.startedAt,
 		sessions:    s.sessions,
+		jobs:        s.jobs,
 		approvals:   s.approvals,
 		audit:       s.audit,
 		auditState:  s.auditState,
@@ -2797,6 +2801,7 @@ func (s *rpcServer) serveConn(conn net.Conn, peerPID uint32) {
 		paths:       s.paths,
 		startedAt:   s.startedAt,
 		sessions:    s.sessions,
+		jobs:        s.jobs,
 		approvals:   s.approvals,
 		audit:       s.audit,
 		auditState:  s.auditState,
@@ -2932,6 +2937,9 @@ func (s *rpcServer) vaultStatusSnapshot() VaultStatusResponse {
 func (s *rpcServer) stop() {
 	s.stopOnce.Do(func() {
 		s.sessions.PruneExpired()
+		if s.jobs != nil {
+			s.jobs.stop()
+		}
 	})
 }
 
@@ -3125,6 +3133,7 @@ type brokerRPC struct {
 	paths       paths.Paths
 	startedAt   time.Time
 	sessions    *SessionStore
+	jobs        *jobStore
 	approvals   *ApprovalStore
 	audit       *audit.Log
 	auditState  *AuditState

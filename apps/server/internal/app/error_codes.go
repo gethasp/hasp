@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
@@ -30,6 +31,7 @@ const (
 	errCodePasswordWrong     = "E_PASSWORD_WRONG"
 	errCodeDaemonUnreachable = "E_DAEMON_UNREACHABLE"
 	errCodeRepoLeak          = "E_REPO_LEAK"
+	errCodeScanIncomplete    = "E_SCAN_INCOMPLETE"
 	errCodeNotFound          = "E_NOT_FOUND"
 )
 
@@ -53,6 +55,7 @@ var errCodeExitBuckets = map[string]int{
 	errCodePasswordWrong:     exitPermission,
 	errCodeDaemonUnreachable: exitDaemonOrIO,
 	errCodeRepoLeak:          exitLeakDetected,
+	errCodeScanIncomplete:    exitDaemonOrIO,
 	errCodeNotFound:          exitNotFound,
 }
 
@@ -81,6 +84,10 @@ func classifyAppError(err error) *appError {
 	var envelope *appError
 	if errors.As(err, &envelope) {
 		return envelope
+	}
+	var auth *brokerops.AuthorizationError
+	if errors.As(err, &auth) {
+		return newAppError(errCodeGrantDenied, auth.Error()).withHint(auth.CLIHint())
 	}
 	message := err.Error()
 	var missingBindingItem store.MissingBindingItemError

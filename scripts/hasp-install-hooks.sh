@@ -116,18 +116,28 @@ install_hook() {
     return 1
   fi
   if [[ -f "$target_path" ]] && ! grep -q "HASP-MANAGED-HOOK" "$target_path"; then
-    cp -f "$target_path" "$backup_path"
+    cp -p "$target_path" "$backup_path"
   fi
-  cat >"$target_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-# HASP-MANAGED-HOOK
-export HASP_ROOT_OVERRIDE="$hasp_root"
-source "$source_file"
-if [[ -x "$backup_path" ]]; then
-  "$backup_path" "\$@"
-fi
-EOF
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n# HASP-MANAGED-HOOK\n# HASP-HOOK-REVISION: 2\n'
+    printf 'export HASP_ROOT_OVERRIDE=%q\n' "$hasp_root"
+    if [[ "$target_name" == "pre-push" ]]; then
+      cat <<'HOOK'
+updates_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/hasp-pre-push.XXXXXX")"
+trap 'rm -f "$updates_file"' EXIT
+trap 'exit 1' HUP INT TERM
+cat > "$updates_file"
+HOOK
+      # Variables in the generated commands expand when Git invokes the hook.
+      # shellcheck disable=SC2016
+      printf 'if [[ -x %q ]]; then\n  %q "$@" < "$updates_file"\nfi\n' "$backup_path" "$backup_path"
+      # shellcheck disable=SC2016
+      printf 'source %q < "$updates_file"\n' "$source_file"
+    else
+      printf 'if [[ -x %q ]]; then\n  %q "$@"\nfi\n' "$backup_path" "$backup_path"
+      printf 'source %q\n' "$source_file"
+    fi
+  } > "$target_path"
   chmod +x "$target_path"
 }
 

@@ -106,6 +106,9 @@ func runWithStarter(ctx context.Context, args []string, stdin io.Reader, stdout 
 
 	spec, ok := lookupRootCommand(rest[0])
 	if !ok {
+		if repair := commandConfusionRepair(rest[0]); repair != nil {
+			return repair
+		}
 		commands := rootCommandInventory()
 		candidates := make([]string, 0, len(commands))
 		for _, c := range commands {

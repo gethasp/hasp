@@ -84,12 +84,13 @@ func secretGetWithMode(ctx context.Context, deps Deps, args []string, mode strin
 		if errors.Is(err, store.ErrItemNotFound) {
 			return deps.NewNotFoundError(
 				fmt.Sprintf("secret %q not found in vault", names[0]),
-				"run `hasp list` to see managed secret names",
+				"run `hasp secret list` to see managed secret names",
 			)
 		}
 		return err
 	}
 	metadata := secrettypes.MetadataView{
+		Classification: item.EffectiveClassification(),
 		Name:           item.Name,
 		NamedReference: store.NamedReference(item.Name),
 		Kind:           item.Kind,

@@ -47,13 +47,11 @@ func TestInstallCreatesManagedHooksAndBacksUpExistingHook(t *testing.T) {
 	if !strings.Contains(string(prePush), marker) {
 		t.Fatalf("missing pre-push marker: %s", string(prePush))
 	}
-	// pre-commit scans the staged index (hasp-8buu); pre-push keeps the
-	// working-tree scan until committed-range scanning lands.
 	if !strings.Contains(string(managed), "--staged") {
 		t.Fatalf("pre-commit hook should pass --staged: %s", string(managed))
 	}
-	if strings.Contains(string(prePush), "--staged") {
-		t.Fatalf("pre-push hook should not pass --staged yet: %s", string(prePush))
+	if !strings.Contains(string(prePush), "--pre-push --fail-on-skipped") {
+		t.Fatalf("pre-push hook must scan outgoing objects and reject gaps: %s", string(prePush))
 	}
 	if !ManagedHooksPresent(projectRoot) {
 		t.Fatal("expected managed hooks to be present")

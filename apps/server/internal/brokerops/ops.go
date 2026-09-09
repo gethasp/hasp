@@ -13,16 +13,17 @@ import (
 )
 
 var (
-	canonicalProjectRootFn = store.CanonicalProjectRoot
-	newManagerFn           = runtime.NewManager
-	resolveReferenceFn     = (*store.Handle).ResolveReference
-	getItemFn              = (*store.Handle).GetItem
-	authorizeFn            = (*store.Handle).Authorize
-	authorizeAndConsumeFn  = (*store.Handle).AuthorizeAndConsume
-	grantProjectLeaseFn    = (*store.Handle).GrantProjectLease
-	grantSecretUseFn       = (*store.Handle).GrantSecretUse
-	grantConvenienceFn     = (*store.Handle).GrantConvenience
-	consumeProjectLeaseFn  = (*store.Handle).ConsumeProjectLease
+	canonicalProjectRootFn     = store.CanonicalProjectRoot
+	newManagerFn               = runtime.NewManager
+	resolveReferenceFn         = (*store.Handle).ResolveReference
+	getItemFn                  = (*store.Handle).GetItem
+	authorizeFn                = (*store.Handle).Authorize
+	authorizeAndConsumeFn      = (*store.Handle).AuthorizeAndConsume
+	authorizeBatchAndConsumeFn = (*store.Handle).AuthorizeBatchAndConsume
+	grantProjectLeaseFn        = (*store.Handle).GrantProjectLease
+	grantSecretUseFn           = (*store.Handle).GrantSecretUse
+	grantConvenienceFn         = (*store.Handle).GrantConvenience
+	consumeProjectLeaseFn      = (*store.Handle).ConsumeProjectLease
 )
 
 // Flow:
@@ -147,7 +148,8 @@ func AuthorizeReference(
 		DestinationPath: destinationPath,
 		Aliases:         []string{reference},
 	}
-	for range 3 {
+	attempted := make(map[store.AccessRequirement]bool)
+	for {
 		decision := authorizeFn(handle, request)
 		if decision.Allowed {
 			var err error
@@ -159,20 +161,21 @@ func AuthorizeReference(
 				return item, nil
 			}
 		}
-		if !decision.RequiresPrompt {
-			return store.Item{}, fmt.Errorf("access denied: %s", decision.Reason)
+		if !decision.RequiresPrompt || attempted[decision.RequiredAction()] {
+			return store.Item{}, NewAuthorizationError(handle, request, decision)
 		}
+		attempted[decision.RequiredAction()] = true
 		switch decision.RequiredAction() {
 		case store.AccessRequirementProjectLease, store.AccessRequirementProjectAndConvenience:
 			if projectGrant == "" {
-				return store.Item{}, fmt.Errorf("project lease required for %s", operation)
+				return store.Item{}, NewAuthorizationError(handle, request, decision)
 			}
 			if _, err := grantProjectLeaseFn(handle, bindingID, sessionToken, projectGrant, window); err != nil {
 				return store.Item{}, err
 			}
 		case store.AccessRequirementSecretGrant:
 			if secretGrant == "" {
-				return store.Item{}, fmt.Errorf("secret approval required for %s", item.Name)
+				return store.Item{}, NewAuthorizationError(handle, request, decision)
 			}
 			relaxed := item.Metadata.Policy == store.PolicyAccess && secretGrant == store.GrantWindow
 			if _, err := grantSecretUseFn(handle, bindingID, sessionToken, item.Name, secretGrant, window, relaxed); err != nil {
@@ -180,18 +183,17 @@ func AuthorizeReference(
 			}
 		case store.AccessRequirementConvenience:
 			if convenienceGrant == "" {
-				return store.Item{}, fmt.Errorf("convenience approval required for %s", destinationPath)
+				return store.Item{}, NewAuthorizationError(handle, request, decision)
 			}
 			if _, err := grantConvenienceFn(handle, bindingID, sessionToken, destinationPath, []string{reference}, "user", convenienceGrant, window); err != nil {
 				return store.Item{}, err
 			}
 		case store.AccessRequirementWriteGrant:
-			return store.Item{}, errors.New("capture write grant required")
+			return store.Item{}, NewAuthorizationError(handle, request, decision)
 		default:
-			return store.Item{}, fmt.Errorf("unsupported approval path: %s", decision.Reason)
+			return store.Item{}, NewAuthorizationError(handle, request, decision)
 		}
 	}
-	return store.Item{}, errors.New("approval still required after retry")
 }
 
 func AuthorizeItem(
@@ -211,7 +213,8 @@ func AuthorizeItem(
 		ItemName:     item.Name,
 		Policy:       item.Metadata.Policy,
 	}
-	for range 3 {
+	attempted := make(map[store.AccessRequirement]bool)
+	for {
 		decision := authorizeFn(handle, request)
 		if decision.Allowed {
 			var err error
@@ -223,30 +226,30 @@ func AuthorizeItem(
 				return item, nil
 			}
 		}
-		if !decision.RequiresPrompt {
-			return store.Item{}, fmt.Errorf("access denied: %s", decision.Reason)
+		if !decision.RequiresPrompt || attempted[decision.RequiredAction()] {
+			return store.Item{}, NewAuthorizationError(handle, request, decision)
 		}
+		attempted[decision.RequiredAction()] = true
 		switch decision.RequiredAction() {
 		case store.AccessRequirementProjectLease:
 			if projectGrant == "" {
-				return store.Item{}, fmt.Errorf("project lease required for %s", operation)
+				return store.Item{}, NewAuthorizationError(handle, request, decision)
 			}
 			if _, err := grantProjectLeaseFn(handle, bindingID, sessionToken, projectGrant, window); err != nil {
 				return store.Item{}, err
 			}
 		case store.AccessRequirementSecretGrant:
 			if secretGrant == "" {
-				return store.Item{}, fmt.Errorf("secret approval required for %s", item.Name)
+				return store.Item{}, NewAuthorizationError(handle, request, decision)
 			}
 			relaxed := item.Metadata.Policy == store.PolicyAccess && secretGrant == store.GrantWindow
 			if _, err := grantSecretUseFn(handle, bindingID, sessionToken, item.Name, secretGrant, window, relaxed); err != nil {
 				return store.Item{}, err
 			}
 		default:
-			return store.Item{}, fmt.Errorf("unsupported approval path: %s", decision.Reason)
+			return store.Item{}, NewAuthorizationError(handle, request, decision)
 		}
 	}
-	return store.Item{}, errors.New("approval still required after retry")
 }
 
 func AuthorizeCapture(
@@ -283,7 +286,7 @@ func AuthorizeCapture(
 	}
 	if decision.RequiredAction() == store.AccessRequirementProjectLease {
 		if projectGrant == "" {
-			return errors.New("project lease required for capture")
+			return NewAuthorizationError(handle, request, decision)
 		}
 		if _, err := grantProjectLeaseFn(handle, bindingID, sessionToken, projectGrant, window); err != nil {
 			return err
@@ -291,10 +294,10 @@ func AuthorizeCapture(
 		decision = authorizeFn(handle, request)
 	}
 	if decision.RequiredAction() != store.AccessRequirementWriteGrant {
-		return fmt.Errorf("unsupported capture approval path: %s", decision.Reason)
+		return NewAuthorizationError(handle, request, decision)
 	}
 	if !writeGrant {
-		return errors.New("capture write grant required")
+		return NewAuthorizationError(handle, request, decision)
 	}
 	// New-item capture never returns an "Allowed" decision (it always prompts for
 	// a write grant), so AuthorizeAndConsume's consume path never fires. Spend the

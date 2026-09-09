@@ -13,24 +13,27 @@ import (
 	"text/tabwriter"
 
 	"github.com/gethasp/hasp/apps/server/internal/app/ui"
+	"github.com/gethasp/hasp/apps/server/internal/hooks"
 	"github.com/gethasp/hasp/apps/server/internal/redactor"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
 type doctorJSONReport struct {
-	DaemonRunning           bool   `json:"daemon_running"`
-	VaultState              string `json:"vault_state"`
-	BindingState            string `json:"binding_state"`
-	HooksInstalled          bool   `json:"hooks_installed"`
-	PathShadowed            bool   `json:"path_shadowed"`
-	PathHasNewer            bool   `json:"path_has_newer"`
-	AgentMCPWrappersOK      bool   `json:"agent_mcp_wrappers_ok"`
-	AuditDegraded           bool   `json:"audit_degraded"`
-	ProcessIdentityDegraded bool   `json:"process_identity_degraded"`
-	VersionMajor            int    `json:"version_major"`
-	VersionMinor            int    `json:"version_minor"`
-	VersionPatch            int    `json:"version_patch"`
+	DaemonRunning           bool              `json:"daemon_running"`
+	VaultState              string            `json:"vault_state"`
+	BindingState            string            `json:"binding_state"`
+	HooksInstalled          bool              `json:"hooks_installed"`
+	Hooks                   hooks.Diagnostics `json:"hooks"`
+	RepoProtectionState     string            `json:"repo_protection_state"`
+	PathShadowed            bool              `json:"path_shadowed"`
+	PathHasNewer            bool              `json:"path_has_newer"`
+	AgentMCPWrappersOK      bool              `json:"agent_mcp_wrappers_ok"`
+	AuditDegraded           bool              `json:"audit_degraded"`
+	ProcessIdentityDegraded bool              `json:"process_identity_degraded"`
+	VersionMajor            int               `json:"version_major"`
+	VersionMinor            int               `json:"version_minor"`
+	VersionPatch            int               `json:"version_patch"`
 }
 
 type doctorReport struct {
@@ -228,6 +231,8 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 		pathDetail:            "hasp executable PATH resolution looks consistent",
 		agentMCPWrapperDetail: "managed agent MCP wrappers look consistent",
 	}
+	report.Hooks = hooks.Inspect(checkedRoot)
+	report.HooksInstalled = report.Hooks.Installed
 	if pathDiagnostics := detectHaspPathDiagnostics(runtime.VersionString()); pathDiagnostics.Warning != "" {
 		report.PathShadowed = pathDiagnostics.Shadowed
 		report.PathHasNewer = pathDiagnostics.HasNewer
@@ -271,7 +276,6 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 		if binding, _, err := resolveBindingViewAppFn(handle, ctx, projectRoot); err == nil && binding.ID != "" {
 			report.BindingState = "bound"
 			report.bindingDetail = "project binding resolves for " + cliDisplayPath(report.ProjectRoot)
-			report.HooksInstalled = bootstrapHookPresent(binding.CanonicalRoot)
 		} else if err != nil {
 			report.BindingState = "error"
 			report.bindingDetail = doctorBindingFailureDetail(report.ProjectRoot, err)
@@ -282,6 +286,14 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 	} else {
 		report.VaultState = "missing"
 		report.vaultDetail = "vault check failed; run hasp init or set HASP_MASTER_PASSWORD"
+	}
+	switch {
+	case !report.Hooks.Ready:
+		report.RepoProtectionState = "hooks_" + report.Hooks.State
+	case report.VaultState != "unlocked":
+		report.RepoProtectionState = "vault_unavailable"
+	default:
+		report.RepoProtectionState = "ready_to_scan"
 	}
 	return report
 }
@@ -338,6 +350,18 @@ func renderDoctorHumanWithColor(stdout io.Writer, report doctorReport, opts ui.C
 	fmt.Fprintf(tw, "vault\t%s\t%s\n", ui.Colorize(report.VaultState, vaultRole(report.VaultState), opts), report.vaultDetail)
 	fmt.Fprintf(tw, "binding\t%s\t%s\n", ui.Colorize(report.BindingState, bindingRole(report.BindingState), opts), report.bindingDetail)
 	fmt.Fprintf(tw, "hooks\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.HooksInstalled), boolRole(report.HooksInstalled), opts))
+	if report.Hooks.State != "" {
+		for _, hook := range []struct {
+			name   string
+			status hooks.HookStatus
+		}{{"pre_commit", report.Hooks.PreCommit}, {"pre_push", report.Hooks.PrePush}} {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", hook.name, hook.status.State, cliDisplayPath(hook.status.Path), hook.status.Detail)
+		}
+		fmt.Fprintf(tw, "repo_protection\t%s\tscan %s\n", report.RepoProtectionState, report.Hooks.ScanState)
+		if report.Hooks.Repair != "" {
+			fmt.Fprintf(tw, "hooks_repair\t%s\n", report.Hooks.Repair)
+		}
+	}
 	pathOK := !report.PathShadowed && !report.PathHasNewer
 	fmt.Fprintf(tw, "path_resolution\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", pathOK), boolRole(pathOK), opts), report.pathDetail)
 	fmt.Fprintf(tw, "agent_mcp_wrappers\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AgentMCPWrappersOK), boolRole(report.AgentMCPWrappersOK), opts), report.agentMCPWrapperDetail)

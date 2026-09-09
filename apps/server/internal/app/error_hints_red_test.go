@@ -94,16 +94,15 @@ func TestErrorHintsProjectLeaseRequired(t *testing.T) {
 	_, projectRoot := setupHintsVault(t)
 
 	deps := defaultExecDeps()
-	deps.AuthorizeReference = func(
+	deps.AuthorizeReferences = func(
 		_ context.Context,
 		_ *store.Handle,
-		_, _, _, _ string,
-		_ store.Operation,
-		_, _, _ store.GrantScope,
+		_, _, _ string,
+		_ []brokerops.ReferenceAccess,
+		_, _ store.GrantScope,
 		_ time.Duration,
-		_ string,
-	) (store.Item, error) {
-		return store.Item{}, fmt.Errorf("project lease required for run")
+	) ([]store.Item, error) {
+		return nil, fmt.Errorf("project lease required for run")
 	}
 
 	err := executeCommandWithDeps(
@@ -129,16 +128,15 @@ func TestErrorHintsReferenceNotFound(t *testing.T) {
 	_, projectRoot := setupHintsVault(t)
 
 	deps := defaultExecDeps()
-	deps.AuthorizeReference = func(
+	deps.AuthorizeReferences = func(
 		_ context.Context,
 		_ *store.Handle,
-		_, _, _, ref string,
-		_ store.Operation,
-		_, _, _ store.GrantScope,
+		_, _, _ string,
+		refs []brokerops.ReferenceAccess,
+		_, _ store.GrantScope,
 		_ time.Duration,
-		_ string,
-	) (store.Item, error) {
-		return store.Item{}, fmt.Errorf("%w: %q", store.ErrReferenceNotFound, ref)
+	) ([]store.Item, error) {
+		return nil, fmt.Errorf("%w: %q", store.ErrReferenceNotFound, refs[0].Reference)
 	}
 
 	err := executeCommandWithDeps(
@@ -161,16 +159,15 @@ func TestErrorHintsNamedReferenceNotExposed(t *testing.T) {
 	_, projectRoot := setupHintsVault(t)
 
 	deps := defaultExecDeps()
-	deps.AuthorizeReference = func(
+	deps.AuthorizeReferences = func(
 		_ context.Context,
 		_ *store.Handle,
-		_, _, _, ref string,
-		_ store.Operation,
-		_, _, _ store.GrantScope,
+		_, _, _ string,
+		refs []brokerops.ReferenceAccess,
+		_, _ store.GrantScope,
 		_ time.Duration,
-		_ string,
-	) (store.Item, error) {
-		return store.Item{}, &store.ReferenceNotExposedError{Reference: ref, ItemName: "GEMINI_RAI_KEY"}
+	) ([]store.Item, error) {
+		return nil, &store.ReferenceNotExposedError{Reference: refs[0].Reference, ItemName: "GEMINI_RAI_KEY"}
 	}
 
 	err := executeCommandWithDeps(

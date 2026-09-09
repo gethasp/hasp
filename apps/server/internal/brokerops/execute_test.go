@@ -125,9 +125,13 @@ func TestExecuteAuthorizesRefsConfiguresRunnerAndRuns(t *testing.T) {
 			return input
 		},
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(_ context.Context, _ *store.Handle, _, _, _, reference string, op store.Operation, _, _ store.GrantScope, _ store.GrantScope, _ time.Duration, _ string) (store.Item, error) {
-				authorized = append(authorized, string(op)+":"+reference)
-				return store.Item{Name: reference, Value: []byte("value-" + reference)}, nil
+			AuthorizeReferences: func(_ context.Context, _ *store.Handle, _, _, _ string, refs []ReferenceAccess, _, _ store.GrantScope, _ time.Duration) ([]store.Item, error) {
+				items := make([]store.Item, 0, len(refs))
+				for _, ref := range refs {
+					authorized = append(authorized, string(ref.Operation)+":"+ref.Reference)
+					items = append(items, store.Item{Name: ref.Reference, Value: []byte("value-" + ref.Reference)})
+				}
+				return items, nil
 			},
 			RunnerExecute: func(_ context.Context, input runner.Input) (runner.Result, error) {
 				captured = input
@@ -173,9 +177,9 @@ func TestExecuteRequiresReviewedManifestTargetBeforeAuthorizingRefs(t *testing.T
 		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
 		Expansion:   expansion,
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
 				authorized = true
-				return store.Item{}, nil
+				return nil, nil
 			},
 		},
 	})
@@ -197,9 +201,9 @@ func TestExecuteRequiresReviewedManifestTargetBeforeAuthorizingRefs(t *testing.T
 		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
 		Expansion:   expansion,
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
 				authorized = true
-				return store.Item{Name: "api_token", Value: []byte("secret")}, nil
+				return []store.Item{{Name: "api_token", Value: []byte("secret")}}, nil
 			},
 			RunnerExecute: func(context.Context, runner.Input) (runner.Result, error) {
 				return runner.Result{ExitCode: 0}, nil
@@ -222,9 +226,9 @@ func TestExecuteRequiresReviewedManifestTargetBeforeAuthorizingRefs(t *testing.T
 		EnvRefs:     map[string]string{"TOKEN": "secret_01"},
 		Expansion:   expansion,
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
 				authorized = true
-				return store.Item{}, nil
+				return nil, nil
 			},
 		},
 	})
@@ -270,8 +274,8 @@ func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) 
 			return wrapped
 		},
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-				return store.Item{}, errors.New("denied")
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+				return nil, errors.New("denied")
 			},
 		},
 	})
@@ -283,8 +287,8 @@ func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) 
 	_, err = Execute(context.Background(), ExecutionRequest{
 		EnvRefs: map[string]string{"TOKEN": "secret_01"},
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-				return store.Item{}, rawErr
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+				return nil, rawErr
 			},
 		},
 	})
@@ -296,8 +300,8 @@ func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) 
 	_, err = Execute(context.Background(), ExecutionRequest{
 		FileRefs: map[string]string{"CONFIG": "file_01"},
 		Deps: ExecutionDeps{
-			AuthorizeReference: func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-				return store.Item{}, fileErr
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+				return nil, fileErr
 			},
 		},
 	})
@@ -308,6 +312,9 @@ func TestExecuteWrapsAuthorizationErrorsAndPropagatesRunnerErrors(t *testing.T) 
 	runnerErr := errors.New("runner failed")
 	_, err = Execute(context.Background(), ExecutionRequest{
 		Deps: ExecutionDeps{
+			AuthorizeReferences: func(context.Context, *store.Handle, string, string, string, []ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+				return nil, nil
+			},
 			RunnerExecute: func(context.Context, runner.Input) (runner.Result, error) {
 				return runner.Result{}, runnerErr
 			},

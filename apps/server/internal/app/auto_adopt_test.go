@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,5 +313,25 @@ func TestEnsureProjectBindingRespectsDisabledAutoProtect(t *testing.T) {
 	}
 	if autoAdoptEligible("/tmp/workspace", binding) != true {
 		t.Fatal("expected empty binding workspace to be auto-adopt eligible")
+	}
+}
+
+func TestPathLooksLikeGitRepoRejectsSocketMarker(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "hasp-git-marker-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
+	listener, err := net.Listen("unix", filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if pathLooksLikeGitRepo(root) {
+		t.Fatal("socket accepted as Git metadata")
 	}
 }

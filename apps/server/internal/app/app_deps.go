@@ -148,6 +148,7 @@ func defaultAppDeps() appops.Deps {
 				InstallLauncher: setupOptionalBool{set: cfg.InstallLauncher.Set, value: cfg.InstallLauncher.Value},
 				AddToPath:       setupOptionalBool{set: cfg.AddToPath.Set, value: cfg.AddToPath.Value},
 				EnvMappings:     mappingFlag(cfg.EnvMappings),
+				LiteralEnv:      cfg.LiteralEnv,
 				FileMappings:    mappingFlag(cfg.FileMappings),
 				DotenvMappings:  mappingFlag(cfg.DotenvMappings),
 			}
@@ -162,6 +163,7 @@ func defaultAppDeps() appops.Deps {
 			cfg.InstallLauncher = appops.OptionalBool{Set: private.InstallLauncher.set, Value: private.InstallLauncher.value}
 			cfg.AddToPath = appops.OptionalBool{Set: private.AddToPath.set, Value: private.AddToPath.value}
 			cfg.EnvMappings = map[string]string(private.EnvMappings)
+			cfg.LiteralEnv = private.LiteralEnv
 			cfg.FileMappings = map[string]string(private.FileMappings)
 			cfg.DotenvMappings = map[string]string(private.DotenvMappings)
 			return nil
@@ -181,6 +183,7 @@ func defaultAppDeps() appops.Deps {
 				InstallLauncher: setupOptionalBool{set: cfg.InstallLauncher.Set, value: cfg.InstallLauncher.Value},
 				AddToPath:       setupOptionalBool{set: cfg.AddToPath.Set, value: cfg.AddToPath.Value},
 				EnvMappings:     mappingFlag(cfg.EnvMappings),
+				LiteralEnv:      cfg.LiteralEnv,
 				FileMappings:    mappingFlag(cfg.FileMappings),
 				DotenvMappings:  mappingFlag(cfg.DotenvMappings),
 			}

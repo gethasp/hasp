@@ -254,7 +254,9 @@ func TestRunnerCoverageRemainingBranches(t *testing.T) {
 	if _, cleanup, err := prepareRunInjectDir(t.TempDir()); err == nil {
 		t.Fatal("expected prepare random error")
 	} else {
-		cleanup()
+		if err := cleanup(); err != nil {
+			t.Fatalf("cleanup after random failure: %v", err)
+		}
 	}
 
 	homeDir := t.TempDir()
@@ -275,7 +277,9 @@ func TestRunnerCoverageRemainingBranches(t *testing.T) {
 	if _, cleanup, err := prepareRunInjectDir(t.TempDir()); err == nil {
 		t.Fatal("expected prepare mkdir error")
 	} else {
-		cleanup()
+		if err := cleanup(); err != nil {
+			t.Fatalf("cleanup after mkdir failure: %v", err)
+		}
 	}
 	mkdirAllInjection = origMkdir
 

@@ -666,9 +666,10 @@ func TestClientPostJSONFailureBranches(t *testing.T) {
 		t.Fatal("expected status failure")
 	}
 
-	client.HTTPClient = &errorDoer{err: context.DeadlineExceeded}
-	client.Timeout = time.Nanosecond
-	if err := client.postJSON(context.Background(), TrustedEndpoint, []byte("{}")); !errors.Is(err, context.DeadlineExceeded) {
+	client.HTTPClient = &errorDoer{err: io.ErrClosedPipe}
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := client.postJSON(expired, TrustedEndpoint, []byte("{}")); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
 

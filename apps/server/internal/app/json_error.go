@@ -55,11 +55,14 @@ func writeCLIError(stderr io.Writer, err error, jsonMode bool) {
 	if stderr == nil || err == nil {
 		return
 	}
+	envelope := classifyAppError(err)
 	if !jsonMode {
-		fmt.Fprintln(stderr, err.Error())
+		fmt.Fprintln(stderr, envelope.Message)
+		if envelope.Hint != "" {
+			fmt.Fprintln(stderr, envelope.Hint)
+		}
 		return
 	}
-	envelope := classifyAppError(err)
 	stderr.Write(envelope.jsonBytes())
 	stderr.Write([]byte("\n"))
 }

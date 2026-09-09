@@ -51,6 +51,7 @@ type AppConnectConfig struct {
 	DotenvEnv       string
 	InstallLauncher OptionalBool
 	AddToPath       OptionalBool
+	LiteralEnv      map[string]string
 	EnvMappings     map[string]string
 	FileMappings    map[string]string
 	DotenvMappings  map[string]string

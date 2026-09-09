@@ -26,10 +26,8 @@ type injectedTempFile interface {
 
 // staleRunDirThreshold is how long a `run-*` subdir under the inject root may
 // linger after its creation modtime before the next Execute call reclaims it.
-// One hour is well past any reasonable `hasp run` lifetime so a healthy run
-// is never reclaimed mid-flight, but short enough that crashed runs do not
-// leak credentials onto disk indefinitely. Tests can override this for
-// deterministic GC assertions.
+// On macOS and Linux a held directory lock protects healthy runs regardless
+// of age. Tests can override the threshold for deterministic GC assertions.
 var staleRunDirThreshold = time.Hour
 
 // runDirPrefix is the per-Execute subdir prefix under the shared inject root.
@@ -90,6 +88,9 @@ type Input struct {
 	Command     []string
 	Env         map[string]string
 	Files       map[string][]byte
+	// ParentEnv carries the caller's environment into daemon-owned jobs.
+	// A nil value inherits the current process environment.
+	ParentEnv []string
 
 	// Optional streaming I/O. nil means use the legacy buffered path.
 	Stdin  io.Reader
@@ -97,6 +98,8 @@ type Input struct {
 	Stderr io.Writer
 
 	TTY bool
+	// ProcessGroup gives cancellable background jobs ownership of child processes.
+	ProcessGroup bool
 }
 
 // Result holds the outcome of a brokered execution.
@@ -111,7 +114,7 @@ type Result struct {
 	Stderr   []byte
 }
 
-func Execute(ctx context.Context, input Input) (Result, error) {
+func Execute(ctx context.Context, input Input) (result Result, resultErr error) {
 	if len(input.Command) == 0 {
 		return Result{}, errors.New("command is required")
 	}
@@ -131,9 +134,24 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	defer removeRunDir()
+	var cmd *exec.Cmd
+	defer func() {
+		if err := removeRunDir(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			state := "command did not start"
+			if cmd != nil && cmd.ProcessState != nil {
+				state = fmt.Sprintf("command ended with exit code %d", cmd.ProcessState.ExitCode())
+			} else if cmd != nil && cmd.Process != nil {
+				state = "command started; outcome is unknown"
+			}
+			resultErr = errors.Join(resultErr, fmt.Errorf("temporary credential cleanup failed at %s: %w; %s. Inspect the remaining files and command effects before retrying", runDir, err, state))
+		}
+	}()
 
-	env := filterChildEnv(os.Environ())
+	parentEnv := input.ParentEnv
+	if parentEnv == nil {
+		parentEnv = os.Environ()
+	}
+	env := filterChildEnv(parentEnv)
 	for name, value := range input.Env {
 		env = append(env, fmt.Sprintf("%s=%s", name, value))
 	}
@@ -146,7 +164,10 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 		env = append(env, fmt.Sprintf("%s=%s", envName, path))
 	}
 
-	cmd := exec.CommandContext(ctx, input.Command[0], input.Command[1:]...)
+	cmd = exec.CommandContext(ctx, input.Command[0], input.Command[1:]...)
+	if input.ProcessGroup {
+		configureProcessGroup(cmd)
+	}
 	cmd.Env = env
 	if strings.TrimSpace(input.ProjectRoot) != "" {
 		cmd.Dir = input.ProjectRoot
@@ -196,7 +217,7 @@ func Execute(ctx context.Context, input Input) (Result, error) {
 	}
 
 	// Populate legacy fields only when internal buffers were used.
-	result := Result{}
+	result = Result{}
 	if input.Stdout == nil {
 		result.Stdout = stdout.Bytes()
 	}
@@ -220,6 +241,9 @@ var strippedChildEnvNames = map[string]struct{}{
 	"HASP_MASTER_PASSWORD":   {},
 	"HASP_BACKUP_PASSPHRASE": {},
 }
+
+// InheritedEnv snapshots the caller's environment without internal HASP secrets.
+func InheritedEnv() []string { return filterChildEnv(os.Environ()) }
 
 func filterChildEnv(parent []string) []string {
 	out := make([]string, 0, len(parent))
@@ -268,16 +292,26 @@ func ensureInjectionDir(dir string, root string) error {
 // inject root and returns it together with a cleanup func that removes the
 // whole subtree. Each call gets a random suffix so two concurrent runs never
 // share a path.
-func prepareRunInjectDir(injectDir string) (string, func(), error) {
+func prepareRunInjectDir(injectDir string) (string, func() error, error) {
 	suffix, err := randomRunSuffix()
 	if err != nil {
-		return "", func() {}, fmt.Errorf("run dir suffix: %w", err)
+		return "", func() error { return nil }, fmt.Errorf("run dir suffix: %w", err)
 	}
 	runDir := filepath.Join(injectDir, runDirPrefix+suffix)
 	if err := mkdirAllInjection(runDir, 0o700); err != nil {
-		return "", func() {}, fmt.Errorf("create run inject dir: %w", err)
+		return "", func() error { return nil }, fmt.Errorf("create run inject dir: %w", err)
 	}
-	cleanup := func() { _ = removeInjectedTree(runDir) }
+	release, err := tryLockRunDir(runDir)
+	if err != nil {
+		return "", func() error { return nil }, fmt.Errorf("lock run inject dir: %w", err)
+	}
+	if release == nil {
+		return "", func() error { return nil }, errors.New("run inject directory is already in use")
+	}
+	cleanup := func() error {
+		defer release()
+		return removeInjectedTree(runDir)
+	}
 	return runDir, cleanup, nil
 }
 
@@ -348,8 +382,7 @@ func writeInjectedFile(injectDir string, projectRoot string, envName string, con
 // cleanupStaleInjectedFiles reaps orphans without disturbing in-flight runs.
 // Top-level `hasp-*` files (legacy flat layout from older binaries) are
 // removed unconditionally; top-level `run-*` subdirs are reclaimed only after
-// staleRunDirThreshold has elapsed since their creation modtime, so two
-// concurrent Execute calls cannot delete each other's live credential files.
+// staleRunDirThreshold has elapsed and no live runner holds the directory lock.
 func cleanupStaleInjectedFiles(injectDir string) error {
 	entries, err := readInjectionDir(injectDir)
 	if err != nil {
@@ -373,7 +406,19 @@ func cleanupStaleInjectedFiles(injectDir string) error {
 			if info.ModTime().After(cutoff) {
 				continue
 			}
-			if err := removeInjectedTree(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			release, err := tryLockRunDir(path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("lock stale run dir: %w", err)
+			}
+			if release == nil {
+				continue
+			}
+			err = removeInjectedTree(path)
+			release()
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("cleanup stale run dir: %w", err)
 			}
 			continue

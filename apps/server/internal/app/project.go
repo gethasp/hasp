@@ -60,6 +60,8 @@ func projectCommandWithStderr(ctx context.Context, args []string, stdout io.Writ
 		return projectBindCommand(ctx, args[1:], stdout)
 	case "doctor":
 		return projectManifestDoctorCommand(ctx, args[1:], stdout)
+	case "hooks":
+		return projectHooksCommand(ctx, args[1:], stdout)
 	case "examples":
 		return projectExamplesCommand(ctx, args[1:], stdout)
 	case "init":
@@ -77,6 +79,45 @@ func projectCommandWithStderr(ctx context.Context, args []string, stdout io.Writ
 	default:
 		return fmt.Errorf("unknown project subcommand %q", args[0])
 	}
+}
+
+func projectHooksCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("project hooks", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	root := fs.String("project-root", ".", "")
+	install := fs.Bool("install", false, "")
+	jsonOutput := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: hasp project hooks [--install] [--project-root <path>] [--json]")
+	}
+	expandedRoot, err := expandUserPath(*root)
+	if err != nil {
+		return err
+	}
+	if *install {
+		if err := installHooksFn(expandedRoot); err != nil {
+			return err
+		}
+	}
+	report := hooks.Inspect(expandedRoot)
+	return renderJSONOrHuman(ctx, stdout, *jsonOutput, report, func(w io.Writer) error {
+		if err := cliWriteKeyValues(w, "Git hooks",
+			cliPair("Directory", cliDisplayPath(report.HooksDir)),
+			cliPair("Pre-commit", report.PreCommit.State),
+			cliPair("Pre-push", report.PrePush.State),
+			cliPair("Repo scan", report.ScanState),
+		); err != nil {
+			return err
+		}
+		if report.Repair != "" {
+			_, err := fmt.Fprintln(w, report.Repair)
+			return err
+		}
+		return nil
+	})
 }
 
 func templateCommand(ctx context.Context, args []string, stdout io.Writer) error {

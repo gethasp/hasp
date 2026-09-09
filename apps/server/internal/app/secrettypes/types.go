@@ -25,12 +25,13 @@ const TimeRFC3339 = "2006-01-02T15:04:05Z07:00"
 // MetadataView is the operator-facing JSON shape for a single secret entry.
 // Used by `secret get`, `secret list`, and `secret search` rendering.
 type MetadataView struct {
-	Name           string               `json:"name"`
-	NamedReference string               `json:"named_reference,omitempty"`
-	Kind           store.ItemKind       `json:"kind"`
-	CreatedAt      string               `json:"created_at"`
-	UpdatedAt      string               `json:"updated_at"`
-	Exposures      []store.ItemExposure `json:"exposures"`
+	Classification store.ItemClassification `json:"classification"`
+	Name           string                   `json:"name"`
+	NamedReference string                   `json:"named_reference,omitempty"`
+	Kind           store.ItemKind           `json:"kind"`
+	CreatedAt      string                   `json:"created_at"`
+	UpdatedAt      string                   `json:"updated_at"`
+	Exposures      []store.ItemExposure     `json:"exposures"`
 }
 
 // MutationView is the operator-facing JSON shape for any secret-mutating

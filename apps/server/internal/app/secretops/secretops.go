@@ -18,6 +18,7 @@ import (
 // All fields are closure-typed so package app can wire the existing seam vars
 // at call time and test overrides flow through transparently.
 type Deps struct {
+	EnforceClassificationChange func(context.Context, *store.Handle, string) error
 	// The 15 named seams from the bead description:
 
 	// OpenVault opens an authenticated vault handle.
@@ -149,7 +150,7 @@ type Prompt interface {
 // printSecretHelp writes a minimal secret subcommand help stub. Used when
 // cmddispatch.PrintHelpTopicFn is not wired (e.g. in isolated unit tests).
 func printSecretHelp(w io.Writer, args []string) error {
-	subcommands := []string{"add", "update", "rotate", "delete", "get", "show", "reveal", "copy", "list", "search", "diff", "expose", "hide"}
+	subcommands := []string{"add", "update", "rotate", "delete", "get", "show", "reveal", "copy", "list", "search", "diff", "expose", "hide", "classify"}
 	_, err := fmt.Fprintf(w, "Usage: hasp secret <subcommand>\n\nSubcommands: %s\n", strings.Join(subcommands, ", "))
 	return err
 }
@@ -210,10 +211,12 @@ func SecretCommand(ctx context.Context, deps Deps, args []string, stdin io.Reade
 		return secretDiffCommand(ctx, deps, args[1:], stdout)
 	case "expose":
 		return secretExposeCommand(ctx, deps, args[1:], stdin, stdout, stderr)
+	case "classify":
+		return secretClassifyCommand(ctx, deps, args[1:], stdout)
 	case "hide":
 		return secretHideCommand(ctx, deps, args[1:], stdin, stdout, stderr)
 	default:
-		candidates := []string{"add", "update", "rotate", "delete", "get", "show", "reveal", "copy", "list", "search", "diff", "expose", "hide"}
+		candidates := []string{"add", "update", "rotate", "delete", "get", "show", "reveal", "copy", "list", "search", "diff", "expose", "hide", "classify"}
 		if hint, found := closestMatch(args[0], candidates); found {
 			return fmt.Errorf("unknown secret subcommand %q; did you mean: %s?", args[0], hint)
 		}

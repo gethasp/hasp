@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/gethasp/hasp/apps/server/internal/brokerops"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 )
 
@@ -31,6 +32,7 @@ type response struct {
 type respError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 type tool struct {
@@ -63,6 +65,7 @@ var supportedProtocolVersions = map[string]struct{}{
 }
 
 func Serve(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
+	ctx = context.WithValue(ctx, mcpSessionsKey{}, &mcpSessions{tokens: make(map[string]string)})
 	dec := json.NewDecoder(stdin)
 	enc := json.NewEncoder(stdout)
 	for {
@@ -103,7 +106,18 @@ func dispatch(ctx context.Context, req request) response {
 		}
 		result, err := callTool(ctx, call)
 		if err != nil {
-			return fail(req.ID, -32000, err.Error())
+			if call.Name == "hasp_check" && result != nil {
+				partial := wrapToolResult(result)
+				partial.IsError = true
+				return response{JSONRPC: "2.0", ID: req.ID, Result: partial}
+			}
+			resp := fail(req.ID, -32000, err.Error())
+			var auth *brokerops.AuthorizationError
+			if errors.As(err, &auth) {
+				resp.Error.Message += "; " + auth.MCPHint()
+				resp.Error.Data = map[string]any{"reason": auth.Reason, "requirement": auth.Requirement, "operation": auth.Operation, "item_name": auth.ItemName, "once_consumed": auth.OnceConsumed, "grant_field": auth.GrantField(), "hint": auth.MCPHint()}
+			}
+			return resp
 		}
 		return response{JSONRPC: "2.0", ID: req.ID, Result: wrapToolResult(result)}
 	default:

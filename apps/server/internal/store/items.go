@@ -24,6 +24,7 @@ func (h *Handle) UpsertItem(name string, kind ItemKind, value []byte, metadata I
 	}
 	for id, existing := range h.state.Items {
 		if existing.Name == name {
+			existing.Classification = ClassificationConfidential
 			existing.Kind = kind
 			existing.Value = slices.Clone(value)
 			existing.Metadata = metadata

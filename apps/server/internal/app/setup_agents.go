@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,9 @@ func setupSupportedAgents() []setupAgentSpec {
 			Label:  "Codex CLI",
 			Format: "toml",
 			ConfigPath: func(_ string) string {
+				if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
+					return filepath.Join(configured, "config.toml")
+				}
 				return filepath.Join(home, ".codex", "config.toml")
 			},
 		},
@@ -54,6 +58,9 @@ func setupSupportedAgents() []setupAgentSpec {
 			Label:  "Claude Code",
 			Format: "json",
 			ConfigPath: func(_ string) string {
+				if configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configured != "" {
+					return filepath.Join(configured, ".claude.json")
+				}
 				return filepath.Join(home, ".claude.json")
 			},
 		},
@@ -72,6 +79,10 @@ func setupSupportedAgents() []setupAgentSpec {
 			ConfigPath: func(_ string) string {
 				return filepath.Join(setupPiAgentConfigDir(home), "settings.json")
 			},
+		},
+		{
+			ID: "opencode", Label: "OpenCode", Format: "opencode-json",
+			ConfigPath: func(_ string) string { return setupOpenCodeConfigPath(home) },
 		},
 		{
 			ID:         "aider",
@@ -236,6 +247,11 @@ func setupWriteAgentConfigs(agents []setupAgentSpec, haspHome string) ([]setupAg
 			if err != nil {
 				return nil, err
 			}
+		case "opencode-json":
+			updated, err = updateOpenCodeMCPConfig(existing, wrapperPath, false)
+			if err != nil {
+				return nil, fmt.Errorf("OpenCode config %s: %w", path, err)
+			}
 		default:
 			return nil, fmt.Errorf("unsupported setup config format %q", agent.Format)
 		}
@@ -285,13 +301,18 @@ func setupInstallAgentWrapper(haspHome string, commandPath string, agentID strin
 		return "", err
 	}
 	content := setupAgentWrapperContent(haspHome, commandPath, agentID)
+	if info, err := os.Lstat(wrapperPath); err == nil && !info.Mode().IsRegular() {
+		return "", fmt.Errorf("agent wrapper path is not a regular file: %s", wrapperPath)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	existing, err := setupReadFileFn(wrapperPath)
 	if err == nil {
 		if !bytes.Contains(existing, []byte(setupManagedAgentWrapperMarker)) {
 			return "", fmt.Errorf("agent wrapper path %q already exists and is not managed by hasp", wrapperPath)
 		}
 		if bytes.Equal(existing, content) {
-			return wrapperPath, nil
+			return wrapperPath, os.Chmod(wrapperPath, 0o700)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -302,7 +323,7 @@ func setupInstallAgentWrapper(haspHome string, commandPath string, agentID strin
 	if err := setupWriteFileFn(wrapperPath, content, 0o700); err != nil {
 		return "", err
 	}
-	return wrapperPath, nil
+	return wrapperPath, os.Chmod(wrapperPath, 0o700)
 }
 
 func setupAgentWrapperContent(haspHome string, commandPath string, agentID string) []byte {
@@ -385,88 +406,13 @@ func setupInstallPiPackage(haspHome string, wrapperPath string, agentID string) 
 	return packagePath, nil
 }
 
+//go:embed pi_extension.js
+var setupPiExtensionTemplate string
+
 func setupPiExtensionContent(wrapperPath string, agentID string) []byte {
-	return []byte(`import { spawnSync } from "node:child_process";
-
-const HASP_MCP_COMMAND = ` + strconvQuote(wrapperPath) + `;
-const HASP_AGENT_ID = ` + strconvQuote(agentID) + `;
-
-function runMCP(requests, cwd) {
-  const input = requests.map((request) => JSON.stringify(request)).join("\n") + "\n";
-  const result = spawnSync(HASP_MCP_COMMAND, [], {
-    input,
-    encoding: "utf8",
-    cwd: cwd || process.cwd(),
-    env: process.env,
-    maxBuffer: 1024 * 1024,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || ` + strconvQuote("hasp MCP command failed") + `).trim());
-  }
-  const lines = result.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
-  return lines.map((line) => JSON.parse(line));
-}
-
-function listTools(ctx) {
-  const responses = runMCP([
-    { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "pi", version: "1" } } },
-    { jsonrpc: "2.0", id: 2, method: "tools/list" },
-  ], ctx?.cwd);
-  const list = responses[1]?.result?.tools;
-  if (!Array.isArray(list)) throw new Error("HASP MCP tools/list returned no tools array");
-  return list;
-}
-
-function callTool(name, params, ctx) {
-  const responses = runMCP([
-    { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "pi", version: "1" } } },
-    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: params || {} } },
-  ], ctx?.cwd);
-  const response = responses[1];
-  if (response?.error) throw new Error(response.error.message || JSON.stringify(response.error));
-  return response?.result ?? {};
-}
-
-function textContent(result) {
-  if (Array.isArray(result?.content) && result.content.length > 0) return result.content;
-  return [{ type: "text", text: JSON.stringify(result, null, 2) }];
-}
-
-export default function haspPiExtension(pi) {
-  let tools = [];
-  try {
-    tools = listTools();
-  } catch (error) {
-    pi.registerTool({
-      name: "hasp_status",
-      label: "HASP Status",
-      description: "Report why the HASP Pi extension could not load MCP tools.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      async execute() {
-        return {
-          content: [{ type: "text", text: ` + "`HASP Pi profile ${HASP_AGENT_ID} could not load MCP tools: ${error instanceof Error ? error.message : String(error)}`" + ` }],
-          details: { ok: false, error: error instanceof Error ? error.message : String(error) },
-        };
-      },
-    });
-    return;
-  }
-
-  for (const tool of tools) {
-    pi.registerTool({
-      name: tool.name,
-      label: tool.title || tool.name,
-      description: tool.description || ` + "`HASP MCP tool ${tool.name}`" + `,
-      parameters: tool.inputSchema || { type: "object", properties: {}, additionalProperties: true },
-      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        const result = callTool(tool.name, params, ctx);
-        return { content: textContent(result), details: result };
-      },
-    });
-  }
-}
-`)
+	command, _ := json.Marshal(wrapperPath)
+	agent, _ := json.Marshal(agentID)
+	return []byte(strings.NewReplacer("__HASP_MCP_COMMAND__", string(command), "__HASP_AGENT_ID__", string(agent)).Replace(setupPiExtensionTemplate))
 }
 
 func upsertCodexMCPServerConfig(existing []byte, haspHome string, commandPath string, agentID string) string {
@@ -578,6 +524,11 @@ func removeAgentConsumerConfig(spec setupAgentSpec, path string) error {
 		updated = []byte(removeCodexMCPServerConfig(existing))
 	case "json":
 		updated, err = removeJSONMCPServerConfig(existing)
+		if err != nil {
+			return err
+		}
+	case "opencode-json":
+		updated, err = updateOpenCodeMCPConfig(existing, "", true)
 		if err != nil {
 			return err
 		}

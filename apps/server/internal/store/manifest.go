@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 )
 
 const (
@@ -39,6 +41,7 @@ type ManifestTargetExpansion struct {
 	TargetRoot     string            `json:"target_root"`
 	ManifestHash   string            `json:"manifest_hash"`
 	Command        []string          `json:"command,omitempty"`
+	LiteralEnv     map[string]string `json:"literal_env,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	Files          map[string]string `json:"files,omitempty"`
 	XCConfig       map[string]string `json:"xcconfig,omitempty"`
@@ -158,6 +161,9 @@ func hashManifestValue(value any) string {
 
 func manifestDeliverySignature(expansion ManifestTargetExpansion) []string {
 	values := make([]string, 0, len(expansion.Env)+len(expansion.Files)+len(expansion.XCConfig))
+	if len(expansion.LiteralEnv) > 0 {
+		values = append(values, "literal_env:"+hashManifestValue(expansion.LiteralEnv))
+	}
 	values = append(values, manifestMapEntries(ManifestDeliveryEnv, expansion.Env)...)
 	values = append(values, manifestMapEntries(ManifestDeliveryFile, expansion.Files)...)
 	values = append(values, manifestMapEntries(ManifestDeliveryXCConfig, expansion.XCConfig)...)
@@ -303,7 +309,20 @@ func (m RepoManifest) Validate(root string) error {
 				return fmt.Errorf("manifest target %q contains an empty or unsafe command argument", name)
 			}
 		}
+		if err := envmap.Validate(nil, nil, target.LiteralEnv); err != nil {
+			return fmt.Errorf("manifest target %q: %w", name, err)
+		}
 		deliveryNames := map[string]struct{}{}
+		for key := range target.LiteralEnv {
+			if manifestDangerousDestination(key) {
+				return fmt.Errorf("unsafe literal_env destination %q in target %q", key, name)
+			}
+			lower := strings.ToLower(key)
+			if _, ok := deliveryNames[lower]; ok {
+				return fmt.Errorf("duplicate delivery name %q in target %q", key, name)
+			}
+			deliveryNames[lower] = struct{}{}
+		}
 		for _, delivery := range target.Delivery {
 			if err := validateManifestDelivery(name, delivery, requirements, credentialSets); err != nil {
 				return err
@@ -554,8 +573,20 @@ func rejectManifestLocalAuthorityFields(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	var walk func(any) error
-	walk = func(value any) error {
+	var walk func(any, string) error
+	walk = func(value any, path string) error {
+		if path == ".targets[].literal_env" {
+			values, ok := value.(map[string]any)
+			if !ok {
+				return errors.New("target literal_env must be an object of string values")
+			}
+			for name, value := range values {
+				if _, ok := value.(string); !ok {
+					return fmt.Errorf("target literal_env value for %q must be a string", name)
+				}
+			}
+			return nil
+		}
 		switch v := value.(type) {
 		case map[string]any:
 			for key, child := range v {
@@ -565,20 +596,20 @@ func rejectManifestLocalAuthorityFields(data []byte) error {
 					"browsersession", "browser_session", "browsersessionstate", "browser_session_state":
 					return fmt.Errorf("repo manifest must not contain local authority or secret value field %q", key)
 				}
-				if err := walk(child); err != nil {
+				if err := walk(child, path+"."+key); err != nil {
 					return err
 				}
 			}
 		case []any:
 			for _, child := range v {
-				if err := walk(child); err != nil {
+				if err := walk(child, path+"[]"); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return walk(raw)
+	return walk(raw, "")
 }
 
 func (m RepoManifest) Target(name string) (ManifestTarget, bool) {
@@ -658,10 +689,14 @@ func ExpandManifestTarget(root string, targetName string) (ManifestTargetExpansi
 		TargetRoot:   target.Root,
 		ManifestHash: identity,
 		Command:      slices.Clone(target.Command),
+		LiteralEnv:   target.LiteralEnv,
 		Env:          map[string]string{},
 		Files:        map[string]string{},
 		XCConfig:     map[string]string{},
 		Outputs:      map[string]string{},
+	}
+	for name := range target.LiteralEnv {
+		expansion.Destinations = append(expansion.Destinations, name)
 	}
 	for _, delivery := range target.Delivery {
 		name := strings.TrimSpace(delivery.Name)

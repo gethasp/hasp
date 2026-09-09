@@ -17,6 +17,7 @@ import (
 // transparently through the secretops handlers.
 func defaultSecretDeps() secretops.Deps {
 	return secretops.Deps{
+		EnforceClassificationChange: enforceClassificationChange,
 		// The 15 named seams from the bead description:
 		OpenVault: func(ctx context.Context) (*store.Handle, error) {
 			return openVaultHandleFn(ctx)

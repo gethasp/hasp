@@ -17,10 +17,11 @@ import (
 func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 	lockMCPSeams(t)
 	handle, projectRoot := setupMCPTargetFixture(t)
+	token := startGrantedMCPTestSession(t, handle, projectRoot)
 
 	listing, err := callTargets(context.Background(), handle, toolCall{
 		Name:      "hasp_targets",
-		Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"},
+		Arguments: map[string]any{"project_root": projectRoot, "session_token": token},
 	})
 	if err != nil {
 		t.Fatalf("hasp_targets: %v", err)
@@ -70,7 +71,6 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 		t.Fatalf("expected target-required error, got %v", err)
 	}
 
-	startTestDaemon(t)
 	if _, err := callExecute(context.Background(), handle, toolCall{
 		Name: "hasp_run",
 		Arguments: map[string]any{
@@ -152,8 +152,9 @@ func TestMCPTargetListingAndExecutionStayAgentSafe(t *testing.T) {
 func TestMCPTargetCoverageEdges(t *testing.T) {
 	lockMCPSeams(t)
 	handle, projectRoot := setupMCPTargetFixture(t)
+	token := startGrantedMCPTestSession(t, handle, projectRoot)
 
-	if _, err := callTool(context.Background(), toolCall{Name: "hasp_targets", Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"}}); err != nil {
+	if _, err := callTool(context.Background(), toolCall{Name: "hasp_targets", Arguments: map[string]any{"project_root": projectRoot, "session_token": token}}); err != nil {
 		t.Fatalf("dispatch hasp_targets: %v", err)
 	}
 	if _, err := callTool(context.Background(), toolCall{Name: "hasp_target_explain", Arguments: map[string]any{"project_root": projectRoot, "target": "release.sign"}}); err != nil {
@@ -239,6 +240,7 @@ func TestMCPTargetExplainBindingFailures(t *testing.T) {
 func TestMCPTargetToolsExposeCredentialSetMetadata(t *testing.T) {
 	lockMCPSeams(t)
 	handle, projectRoot := setupMCPTargetFixture(t)
+	token := startGrantedMCPTestSession(t, handle, projectRoot)
 	if _, err := handle.UpsertItem("google_client_id", store.ItemKindKV, []byte("client-id-value"), store.ItemMetadata{Policy: store.PolicySession}); err != nil {
 		t.Fatalf("upsert google client id: %v", err)
 	}
@@ -246,7 +248,7 @@ func TestMCPTargetToolsExposeCredentialSetMetadata(t *testing.T) {
 
 	listing, err := callTargets(context.Background(), handle, toolCall{
 		Name:      "hasp_targets",
-		Arguments: map[string]any{"project_root": projectRoot, "session_token": "session-token"},
+		Arguments: map[string]any{"project_root": projectRoot, "session_token": token},
 	})
 	if err != nil {
 		t.Fatalf("hasp_targets: %v", err)

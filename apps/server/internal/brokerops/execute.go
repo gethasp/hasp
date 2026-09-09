@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 	"github.com/gethasp/hasp/apps/server/internal/runner"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -13,15 +15,16 @@ import (
 var manifestTargetDriftFn = (*store.Handle).ManifestTargetDrift
 
 type ExecutionDeps struct {
-	AuthorizeReference func(ctx context.Context, handle *store.Handle, bindingID, projectRoot, sessionToken, reference string, op store.Operation, projScope, secScope, convScope store.GrantScope, window time.Duration, dest string) (store.Item, error)
-	RunnerExecute      func(ctx context.Context, input runner.Input) (runner.Result, error)
+	AuthorizeReferences ReferenceBatchAuthorizer
+	RunnerExecute       func(ctx context.Context, input runner.Input) (runner.Result, error)
 }
 
 type ExecutionTarget struct {
-	Expansion store.ManifestTargetExpansion
-	EnvRefs   map[string]string
-	FileRefs  map[string]string
-	Command   []string
+	Expansion  store.ManifestTargetExpansion
+	EnvRefs    map[string]string
+	FileRefs   map[string]string
+	LiteralEnv map[string]string
+	Command    []string
 }
 
 type ExecutionRequest struct {
@@ -32,6 +35,7 @@ type ExecutionRequest struct {
 	Command          []string
 	EnvRefs          map[string]string
 	FileRefs         map[string]string
+	LiteralEnv       map[string]string
 	Expansion        store.ManifestTargetExpansion
 	ProjectGrant     store.GrantScope
 	SecretGrant      store.GrantScope
@@ -86,6 +90,7 @@ func ExpandExecutionTarget(projectRoot string, targetName string, envRefs map[st
 	out.Expansion = expansion
 	out.EnvRefs = cloneStringMap(expansion.Env)
 	out.FileRefs = cloneStringMap(expansion.Files)
+	out.LiteralEnv = cloneStringMap(expansion.LiteralEnv)
 	if len(out.Command) == 0 && len(expansion.Command) > 0 {
 		out.Command = append([]string(nil), expansion.Command...)
 	}
@@ -93,9 +98,12 @@ func ExpandExecutionTarget(projectRoot string, targetName string, envRefs map[st
 }
 
 func Execute(ctx context.Context, request ExecutionRequest) (ExecutionResult, error) {
+	if err := envmap.Validate(request.EnvRefs, request.FileRefs, request.LiteralEnv); err != nil {
+		return ExecutionResult{}, err
+	}
 	deps := request.Deps
-	if deps.AuthorizeReference == nil {
-		deps.AuthorizeReference = AuthorizeReference
+	if deps.AuthorizeReferences == nil {
+		deps.AuthorizeReferences = AuthorizeReferences
 	}
 	if deps.RunnerExecute == nil {
 		deps.RunnerExecute = runner.Execute
@@ -104,24 +112,28 @@ func Execute(ctx context.Context, request ExecutionRequest) (ExecutionResult, er
 		return ExecutionResult{}, err
 	}
 
-	items := make([]store.Item, 0, len(request.EnvRefs)+len(request.FileRefs))
-	env := map[string]string{}
-	files := map[string][]byte{}
-	for envName, reference := range request.EnvRefs {
-		item, err := deps.AuthorizeReference(ctx, request.Handle, request.BindingID, request.ProjectRoot, request.SessionToken, reference, store.OperationRun, request.ProjectGrant, request.SecretGrant, "", request.Window, "")
-		if err != nil {
-			return ExecutionResult{}, wrapExecutionAuthorizeError(request, err)
-		}
-		env[envName] = string(item.Value)
-		items = append(items, item)
+	envNames, fileNames := sortedMappingNames(request.EnvRefs), sortedMappingNames(request.FileRefs)
+	refs := make([]ReferenceAccess, 0, len(envNames)+len(fileNames))
+	for _, name := range envNames {
+		refs = append(refs, ReferenceAccess{Reference: request.EnvRefs[name], Operation: store.OperationRun})
 	}
-	for envName, reference := range request.FileRefs {
-		item, err := deps.AuthorizeReference(ctx, request.Handle, request.BindingID, request.ProjectRoot, request.SessionToken, reference, store.OperationInject, request.ProjectGrant, request.SecretGrant, "", request.Window, "")
-		if err != nil {
-			return ExecutionResult{}, wrapExecutionAuthorizeError(request, err)
-		}
-		files[envName] = item.Value
-		items = append(items, item)
+	for _, name := range fileNames {
+		refs = append(refs, ReferenceAccess{Reference: request.FileRefs[name], Operation: store.OperationInject})
+	}
+	items, err := deps.AuthorizeReferences(ctx, request.Handle, request.BindingID, request.ProjectRoot, request.SessionToken, refs, request.ProjectGrant, request.SecretGrant, request.Window)
+	if err != nil {
+		return ExecutionResult{}, wrapExecutionAuthorizeError(request, err)
+	}
+	if len(items) != len(refs) {
+		return ExecutionResult{}, errors.New("authorization returned an incomplete reference set")
+	}
+	env := cloneStringMap(request.LiteralEnv)
+	files := map[string][]byte{}
+	for i, name := range envNames {
+		env[name] = string(items[i].Value)
+	}
+	for i, name := range fileNames {
+		files[name] = items[len(envNames)+i].Value
 	}
 
 	input := request.RunnerInput
@@ -137,6 +149,15 @@ func Execute(ctx context.Context, request ExecutionRequest) (ExecutionResult, er
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{RunResult: runResult, Items: items}, nil
+}
+
+func sortedMappingNames(mapping map[string]string) []string {
+	names := make([]string, 0, len(mapping))
+	for name := range mapping {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func RequireReviewedTarget(handle *store.Handle, projectRoot string, expansion store.ManifestTargetExpansion) error {

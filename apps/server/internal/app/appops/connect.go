@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gethasp/hasp/apps/server/internal/audit"
+	"github.com/gethasp/hasp/apps/server/internal/envmap"
 )
 
 func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -23,6 +24,8 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 	dotenvEnv := fs.String("dotenv-env", "", "")
 	var installLauncher OptionalBool
 	var addToPath OptionalBool
+	var literalEnv envmap.LiteralFlag
+	fs.Var(&literalEnv, "literal-env", "")
 	var envMappings map[string]string
 	var fileMappings map[string]string
 	var dotenvMappings map[string]string
@@ -58,7 +61,7 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 	if strings.TrimSpace(*target) != "" && strings.TrimSpace(*projectRoot) == "" {
 		*projectRoot = "."
 	}
-	if strings.TrimSpace(*target) != "" && (len(envMappings) > 0 || len(fileMappings) > 0 || len(dotenvMappings) > 0) {
+	if strings.TrimSpace(*target) != "" && (len(envMappings) > 0 || len(fileMappings) > 0 || len(dotenvMappings) > 0 || len(literalEnv) > 0) {
 		return errors.New("--target cannot be combined with explicit app delivery mappings")
 	}
 	if deps.ExpandUserPath != nil && strings.TrimSpace(*projectRoot) != "" {
@@ -77,6 +80,7 @@ func appConnectHandler(ctx context.Context, deps Deps, args []string, stdin io.R
 		InstallLauncher: installLauncher,
 		AddToPath:       addToPath,
 		EnvMappings:     envMappings,
+		LiteralEnv:      literalEnv,
 		FileMappings:    fileMappings,
 		DotenvMappings:  dotenvMappings,
 	}

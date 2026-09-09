@@ -54,17 +54,17 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "doctor", summary: "diagnose daemon, vault, binding, hooks, and audit state", group: commandGroupDaily, helpTopic: []string{"doctor"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return doctorCommand(ctx, args, stdout, s)
 		}},
-		{name: "secret", summary: "add, update, show/reveal/copy, expose, and hide vault items", group: commandGroupDaily, subcommands: []string{"add", "copy", "delete", "diff", "expose", "get", "hide", "list", "reveal", "rotate", "search", "show", "update"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "secret", summary: "add, update, show/reveal/copy, expose, and hide vault items", group: commandGroupDaily, subcommands: []string{"add", "classify", "copy", "delete", "diff", "expose", "get", "hide", "list", "reveal", "rotate", "search", "show", "update"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return secretCommand(ctx, args, stdin, stdout, stderr)
 		}},
 		{name: "app", summary: "connect an app profile and run it with managed secrets", group: commandGroupDaily, subcommands: []string{"connect", "disconnect", "install", "list", "run", "shell"}, handler: appConsumerCommand},
-		{name: "agent", summary: "connect an agent once and let it pull through HASP", group: commandGroupDaily, subcommands: []string{"connect", "disconnect", "launch", "list", "list-supported", "mcp", "shell"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "agent", summary: "connect an agent once and let it pull through HASP", group: commandGroupDaily, subcommands: []string{"connect", "disconnect", "launch", "list", "list-supported", "mcp", "shell", "status"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return agentConsumerCommand(ctx, args, stdin, stdout, stderr)
 		}},
 		{name: "vault", summary: "lock local vault/session material", group: commandGroupUtility, subcommands: []string{"lock", "forget-device"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, s starter) error {
 			return vaultCommand(ctx, args, stdout, s)
 		}},
-		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, subcommands: []string{"adopt", "bind", "doctor", "examples", "init", "requirements", "status", "target", "targets", "unbind"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+		{name: "project", summary: "bind, inspect, unbind, or bulk-adopt repo boundaries", group: commandGroupUtility, subcommands: []string{"adopt", "bind", "doctor", "examples", "hooks", "init", "requirements", "status", "target", "targets", "unbind"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
 			return projectCommandWithStderr(ctx, args, stdout, stderr)
 		}},
 		{name: "template", summary: "alias for value-free project manifest targets", group: commandGroupDaily, helpTopic: []string{"template"}, subcommands: []string{"add", "doctor", "init", "list", "review"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, _ io.Writer, _ starter) error {
@@ -79,8 +79,8 @@ func buildRootCommandInventory() []rootCommandSpec {
 		{name: "write-env", summary: "write a convenience env file on explicit request", group: commandGroupUtility, helpTopic: []string{"write-env"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return writeEnvCommand(ctx, args, stdout, stderr, s)
 		}},
-		{name: "check-repo", summary: "find managed values that leaked into a repo", group: commandGroupUtility, helpTopic: []string{"check-repo"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
-			return checkRepoCommand(ctx, args, stdout, stderr)
+		{name: "check-repo", summary: "find managed values that leaked into a repo", group: commandGroupUtility, helpTopic: []string{"check-repo"}, handler: func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, _ starter) error {
+			return checkRepoCommandWithInput(ctx, args, stdin, stdout, stderr, defaultExecDeps())
 		}},
 		{name: "proof", summary: "run the brokered first-proof check (replaces the long quickstart one-liner)", group: commandGroupDaily, helpTopic: []string{"proof"}, handler: func(ctx context.Context, args []string, _ io.Reader, stdout io.Writer, stderr io.Writer, s starter) error {
 			return proofCommand(ctx, args, stdout, stderr, s)

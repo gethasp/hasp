@@ -137,8 +137,8 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 		return handle, nil
 	}
 	failAuthRefDeps := defaultExecDeps()
-	failAuthRefDeps.AuthorizeReference = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-		return store.Item{}, errors.New("authorize ref fail")
+	failAuthRefDeps.AuthorizeReferences = func(context.Context, *store.Handle, string, string, string, []brokerops.ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+		return nil, errors.New("authorize ref fail")
 	}
 	if err := executeCommandWithDeps(context.Background(), []string{"--project-root", projectRoot, "--env", "KEY=secret_01", "--", "true"}, io.Discard, io.Discard, false, &fakeStarter{}, failAuthRefDeps); err == nil || !strings.Contains(err.Error(), "authorize ref fail") {
 		t.Fatalf("expected env authorize failure, got %v", err)
@@ -155,8 +155,8 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 	resolveBindingViewAppFn = origResolveBindingApp
 
 	okAuthRefDeps := defaultExecDeps()
-	okAuthRefDeps.AuthorizeReference = func(context.Context, *store.Handle, string, string, string, string, store.Operation, store.GrantScope, store.GrantScope, store.GrantScope, time.Duration, string) (store.Item, error) {
-		return store.Item{Name: "api_token", Value: []byte("abc123")}, nil
+	okAuthRefDeps.AuthorizeReferences = func(context.Context, *store.Handle, string, string, string, []brokerops.ReferenceAccess, store.GrantScope, store.GrantScope, time.Duration) ([]store.Item, error) {
+		return []store.Item{{Name: "api_token", Value: []byte("abc123")}}, nil
 	}
 	loadCLIConfigAppFn = func() (paths.CLIConfig, error) {
 		autoProtect := false
@@ -174,7 +174,7 @@ func TestCommandSeamErrorBranches(t *testing.T) {
 	}
 	loadCLIConfigAppFn = origLoadCLI
 	failRunDeps := defaultExecDeps()
-	failRunDeps.AuthorizeReference = okAuthRefDeps.AuthorizeReference
+	failRunDeps.AuthorizeReferences = okAuthRefDeps.AuthorizeReferences
 	failRunDeps.RunnerExecute = func(context.Context, runner.Input) (runner.Result, error) {
 		return runner.Result{}, errors.New("runner fail")
 	}

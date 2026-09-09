@@ -70,7 +70,7 @@ func NewStreamingWriter(dst io.Writer, items []store.Item) *StreamingWriter {
 	var forms []needleForm
 	maxNeedle := 0
 	for _, it := range items {
-		if len(it.Value) == 0 || len(it.Value) < minRedactLen {
+		if !it.Confidential() || len(it.Value) == 0 || len(it.Value) < minRedactLen {
 			continue
 		}
 		defs := buildForms(it.Value)

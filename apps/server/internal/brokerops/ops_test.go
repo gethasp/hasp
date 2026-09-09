@@ -355,7 +355,7 @@ func TestAuthorizeReferenceSeamDrivenErrorPaths(t *testing.T) {
 	authorizeFn = func(*store.Handle, store.AccessRequest) store.AccessDecision {
 		return store.AccessDecision{RequiresPrompt: true, Reason: "project_lease_required"}
 	}
-	if _, err := AuthorizeReference(context.Background(), handle, "binding", t.TempDir(), "token", "secret_01", store.OperationRun, store.GrantWindow, "", "", time.Minute, ""); err == nil || !strings.Contains(err.Error(), "approval still required after retry") {
+	if _, err := AuthorizeReference(context.Background(), handle, "binding", t.TempDir(), "token", "secret_01", store.OperationRun, store.GrantWindow, "", "", time.Minute, ""); err == nil || !strings.Contains(err.Error(), "project_lease_required") {
 		t.Fatalf("expected retry exhaustion, got %v", err)
 	}
 }
@@ -409,7 +409,7 @@ func TestAuthorizeItemSeamDrivenErrorPaths(t *testing.T) {
 	grantProjectLeaseFn = func(*store.Handle, string, string, store.GrantScope, time.Duration) (store.ProjectLease, error) {
 		return store.ProjectLease{}, nil
 	}
-	if _, err := AuthorizeItem(handle, "binding", "token", item, store.OperationRun, store.GrantWindow, "", time.Minute); err == nil || !strings.Contains(err.Error(), "approval still required after retry") {
+	if _, err := AuthorizeItem(handle, "binding", "token", item, store.OperationRun, store.GrantWindow, "", time.Minute); err == nil || !strings.Contains(err.Error(), "project_lease_required") {
 		t.Fatalf("expected retry exhaustion, got %v", err)
 	}
 }
@@ -471,7 +471,7 @@ func TestAuthorizeCaptureSeamDrivenErrorPaths(t *testing.T) {
 		}
 		return store.AccessDecision{RequiresPrompt: true, Reason: "unexpected"}
 	}
-	if err := AuthorizeCapture(context.Background(), handle, "binding", "token", "item", store.GrantWindow, "", time.Minute, true); err == nil || !strings.Contains(err.Error(), "unsupported capture approval path") {
+	if err := AuthorizeCapture(context.Background(), handle, "binding", "token", "item", store.GrantWindow, "", time.Minute, true); err == nil || !strings.Contains(err.Error(), "unsupported approval path") {
 		t.Fatalf("expected unsupported capture path, got %v", err)
 	}
 }

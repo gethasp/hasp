@@ -15,6 +15,7 @@ export HASP_TEST_ROOT="$ROOT"
 
 tests=(
   scripts/test-check-go-mod-tidy.sh
+  scripts/test-go-coverage.sh
   scripts/test-public-installer.sh
   scripts/test-public-docs-versioning.sh
   scripts/test-release-metadata-parser.sh

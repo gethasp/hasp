@@ -71,7 +71,7 @@ func TestHumanOutputCommandSurfaces(t *testing.T) {
 	assertOutput([]string{"app", "install", "myapp", "--add-to-path=false"}, nil, "App installed")
 	assertOutput([]string{"app", "disconnect", "myapp"}, nil, "App disconnected")
 
-	assertOutput([]string{"agent", "connect", "claude-code", "--project-root", projectRoot}, nil, "Agent connected")
+	assertOutput([]string{"agent", "connect", "claude-code", "--project-root", projectRoot}, nil, "Agent configured")
 	assertOutput([]string{"agent", "list"}, nil, "Agents")
 	assertOutput([]string{"agent", "disconnect", "claude-code"}, nil, "Agent disconnected")
 

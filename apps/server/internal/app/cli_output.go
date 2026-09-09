@@ -12,6 +12,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/app/secrettypes"
 	"github.com/gethasp/hasp/apps/server/internal/app/ui"
 	"github.com/gethasp/hasp/apps/server/internal/jsonwire"
+	"github.com/gethasp/hasp/apps/server/internal/reposcan"
 	"github.com/gethasp/hasp/apps/server/internal/runtime"
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
@@ -284,7 +285,7 @@ func secretMutationLine(out io.Writer, value secretMutationView) string {
 }
 
 func renderSecretMetadata(out io.Writer, metadata secretMetadataView, copied bool) error {
-	lead := "Metadata only. Use --reveal to print the secret value."
+	lead := "Metadata only. Use the named ref with brokered execution."
 	if copied {
 		lead = "Copied the secret value to the clipboard."
 	}
@@ -295,12 +296,35 @@ func renderSecretMetadata(out io.Writer, metadata secretMetadataView, copied boo
 		cliPair("Name", metadata.Name),
 		cliPair("Named ref", metadata.NamedReference),
 		cliPair("Kind", string(metadata.Kind)),
+		cliPair("Classification", string(metadata.Classification)),
 		cliPair("Created", metadata.CreatedAt),
 		cliPair("Updated", metadata.UpdatedAt),
 	); err != nil {
 		return err
 	}
-	return renderSecretExposures(out, metadata.Exposures)
+	if err := renderSecretExposures(out, metadata.Exposures); err != nil {
+		return err
+	}
+	if err := cliSection(out, "Brokered example"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, "  "+secretBrokeredExample(metadata)); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out, "Run from a project with this secret exposed. The example checks delivery without printing the value.\nFor human plaintext inspection: "+shellJoinArgs([]string{"hasp", "secret", "reveal", metadata.Name})+". Agent-safe mode requires an explicit plaintext grant.")
+	return err
+}
+
+func secretBrokeredExample(metadata secretMetadataView) string {
+	ref := metadata.NamedReference
+	if ref == "" {
+		ref = store.NamedReference(metadata.Name)
+	}
+	command, flag, variable, check := "run", "--env", "HASP_VALUE", `test -n "$HASP_VALUE"`
+	if metadata.Kind == store.ItemKindFile {
+		command, flag, variable, check = "inject", "--file", "HASP_FILE", `test -s "$HASP_FILE"`
+	}
+	return shellJoinArgs([]string{"hasp", command, "--project-root", ".", flag, variable + "=" + ref, "--grant-project", "once", "--grant-secret", "once", "--", "sh", "-c", check})
 }
 
 func renderSecretExposures(out io.Writer, exposures []store.ItemExposure) error {
@@ -390,11 +414,12 @@ func secretGetJSONPayload(metadata secretMetadataView, copied bool, reveal bool,
 	// Build the secret sub-object as a plain map so we can add optional fields
 	// without touching the secretMetadataView struct.
 	secretObj := map[string]any{
-		"name":       metadata.Name,
-		"kind":       metadata.Kind,
-		"created_at": metadata.CreatedAt,
-		"updated_at": metadata.UpdatedAt,
-		"exposures":  metadata.Exposures,
+		"classification": metadata.Classification,
+		"name":           metadata.Name,
+		"kind":           metadata.Kind,
+		"created_at":     metadata.CreatedAt,
+		"updated_at":     metadata.UpdatedAt,
+		"exposures":      metadata.Exposures,
 	}
 	if metadata.NamedReference != "" {
 		secretObj["named_reference"] = metadata.NamedReference
@@ -407,6 +432,9 @@ func secretGetJSONPayload(metadata secretMetadataView, copied bool, reveal bool,
 		}
 	}
 	payload := map[string]any{"secret": secretObj}
+	if !reveal {
+		payload["brokered_example"] = secretBrokeredExample(metadata)
+	}
 	if copied {
 		payload["copied"] = true
 	}
@@ -641,36 +669,95 @@ func renderWriteEnvResult(out io.Writer, outputPath string, entries int, warning
 }
 
 func renderRepoCheckResult(out io.Writer, projectRoot string, matches []map[string]string, override bool, warning ...string) error {
+	result := reposcan.Result{Complete: true}
+	for _, match := range matches {
+		result.Matches = append(result.Matches, reposcan.Match{Path: match["path"], ItemName: match["item_name"]})
+	}
 	warningText := ""
 	if len(warning) > 0 {
 		warningText = warning[0]
 	}
-	lead := "No managed values were detected in repository files."
 	if warningText != "" {
-		lead = "Repo files were scanned, but managed-value matching was skipped."
+		result.Complete = false
 	}
-	if len(matches) > 0 {
-		lead = fmt.Sprintf("Detected %d managed %s in repository files.", len(matches), cliPlural(len(matches), "value", "values"))
+	return renderRepoScanResult(out, projectRoot, result, override, warningText)
+}
+
+func renderRepoScanResult(out io.Writer, projectRoot string, result reposcan.Result, override bool, warning string) error {
+	lead := "No managed values were detected in scanned repository content."
+	code, symbol := "1;32", "[ok]"
+	if !result.Complete {
+		lead = "Scan incomplete; no managed values detected in the content that was read."
+		code, symbol = "1;33", "[warn]"
 	}
-	if err := cliWriteStage(out, "Repo check", lead); err != nil {
+	if warning != "" {
+		lead = "Repository content was inspected, but managed-value matching was skipped."
+	}
+	if len(result.Matches) > 0 {
+		lead = fmt.Sprintf("Detected %d managed %s in repository content.", len(result.Matches), cliPlural(len(result.Matches), "value", "values"))
+		code, symbol = "1;31", "[blocked]"
+		if override {
+			code, symbol = "1;33", "[override]"
+		}
+		if !result.Complete {
+			lead += " Scan coverage is incomplete."
+		}
+	}
+	if _, err := fmt.Fprintln(out, setupStageHeader(out, "Repo check")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, cliLead(out, code, symbol, symbol, lead)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
 		return err
 	}
 	if err := cliWriteKeyValues(out, "Details",
 		cliPair("Project root", cliDisplayPath(projectRoot)),
+		cliPair("Scan mode", result.Walker),
+		cliPair("Configuration items", fmt.Sprintf("%d excluded by explicit classification", result.Stats.ConfigurationItems)),
+		cliPair("Scanned", fmt.Sprintf("%d/%d sources, %d bytes; %d items, %d patterns", result.Stats.SourcesScanned, result.Stats.SourcesEnumerated, result.Stats.BytesScanned, result.Stats.Items, result.Stats.Patterns)),
+		cliPair("Scan time", fmt.Sprintf("%.1f ms (enumerate %.1f, compile %.1f, read %.1f, match %.1f)", result.Stats.TotalMS, result.Stats.EnumerationMS, result.Stats.CompileMS, result.Stats.ReadMS, result.Stats.MatchMS)),
+		cliPair("Command time", fmt.Sprintf("%.1f ms; vault %.1f ms", result.Stats.CommandMS, result.Stats.VaultMS)),
+		cliPair("Complete", setupYesNo(result.Complete)),
 		cliPair("Override", setupYesNo(override)),
-		cliPair("Warning", warningText),
+		cliPair("Warning", warning),
 	); err != nil {
 		return err
 	}
-	if len(matches) == 0 {
-		return nil
-	}
-	if err := cliSection(out, "Matches"); err != nil {
-		return err
-	}
-	for _, match := range matches {
-		if _, err := fmt.Fprintln(out, cliBullet(out, fmt.Sprintf("%-22s", cliDisplayPath(match["path"])), cliMuted(out, "("+match["item_name"]+")"))); err != nil {
+	if len(result.Matches) > 0 {
+		if err := cliSection(out, "Matches"); err != nil {
 			return err
+		}
+		for _, match := range result.Matches {
+			if _, err := fmt.Fprintln(out, cliBullet(out, fmt.Sprintf("%-22s", cliDisplayPath(match.Path)), cliMuted(out, "("+match.ItemName+")"))); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Skipped) > 0 || len(result.Issues) > 0 {
+		if err := cliSection(out, "Coverage gaps"); err != nil {
+			return err
+		}
+		for _, skip := range result.Skipped {
+			if _, err := fmt.Fprintf(out, "  %s: %s (%d bytes)\n", cliDisplayPath(skip.Path), skip.Reason, skip.Size); err != nil {
+				return err
+			}
+		}
+		for _, issue := range result.Issues {
+			if _, err := fmt.Fprintf(out, "  %s: %s (%s)\n", cliDisplayPath(issue.Path), issue.Reason, issue.Detail); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Deleted) > 0 {
+		if err := cliSection(out, "Deleted from working tree"); err != nil {
+			return err
+		}
+		for _, path := range result.Deleted {
+			if _, err := fmt.Fprintln(out, "  "+cliDisplayPath(path)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -801,6 +888,9 @@ func renderBootstrapDoctorSummary(out io.Writer, report bootstrapDoctorResult) e
 		cliPair("Vault status", report.VaultStatus),
 		cliPair("Hooks requested", setupYesNo(report.HooksRequested)),
 		cliPair("Hooks present", setupYesNo(report.HooksPresent)),
+		cliPair("Pre-commit", report.Hooks.PreCommit.State),
+		cliPair("Pre-push", report.Hooks.PrePush.State),
+		cliPair("Repo scan", report.Hooks.ScanState),
 	); err != nil {
 		return err
 	}
