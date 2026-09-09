@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'printf "release smoke failed at line %s\n" "$LINENO" >&2' ERR
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -67,6 +68,9 @@ fi
 export GOOS="$target_goos"
 export GOARCH="$target_goarch"
 export HASP_DAEMON_STARTUP_TIMEOUT="${HASP_DAEMON_STARTUP_TIMEOUT:-60s}"
+if [[ "$target_goos" == "darwin" && -z "$existing_release_dir" ]]; then
+  export HASP_TEAM_ID="${HASP_TEAM_ID:-TEAMID1234}"
+fi
 
 stop_scoped_daemon() {
   local bin_path="$1"

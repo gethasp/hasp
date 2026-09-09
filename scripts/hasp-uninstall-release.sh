@@ -76,7 +76,7 @@ physical_path() {
 
   local -a missing=()
   while [[ ! -e "$probe" ]]; do
-    missing=("$(basename "$probe")" "${missing[@]}")
+    missing=("$(basename "$probe")" ${missing[@]+"${missing[@]}"})
     local parent
     parent="$(dirname "$probe")"
     if [[ "$parent" == "$probe" ]]; then
@@ -96,7 +96,7 @@ physical_path() {
     resolved="$(cd "$probe_dir" && pwd -P)/$probe_base"
   fi
   local part
-  for part in "${missing[@]}"; do
+  for part in ${missing[@]+"${missing[@]}"}; do
     resolved="$resolved/$part"
   done
   printf '%s\n' "$resolved"
@@ -155,7 +155,21 @@ resolve_repo_hooks_dir() {
   printf '%s\n' "$hooks_dir"
 }
 
-for repo_path in "${hook_repos[@]}"; do
+hook_uses_install_root() {
+  local hook_path="$1"
+  local root="$2"
+  local escaped_root
+  local line
+  escaped_root="$(printf '%q' "$root")"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "export HASP_ROOT_OVERRIDE=$escaped_root" || "$line" == "export HASP_ROOT_OVERRIDE=\"$root\"" ]]; then
+      return 0
+    fi
+  done <"$hook_path"
+  return 1
+}
+
+for repo_path in ${hook_repos[@]+"${hook_repos[@]}"}; do
   repo_path="$(release_abs_path "$repo_path")"
   hooks_dir="$(resolve_repo_hooks_dir "$repo_path")"
   if [[ ! -d "$hooks_dir" ]]; then
@@ -164,8 +178,19 @@ for repo_path in "${hook_repos[@]}"; do
   fi
   for hook_name in pre-commit pre-push; do
     hook_path="$hooks_dir/$hook_name"
-    if [[ -f "$hook_path" ]] && { grep -q "HASP_ROOT_OVERRIDE=\"$install_dir\"" "$hook_path" || grep -q "HASP_ROOT_OVERRIDE=\"$install_dir_input\"" "$hook_path"; }; then
-      /bin/rm -f "$hook_path"
+    if [[ -f "$hook_path" && ! -L "$hook_path" ]] &&
+      grep -Fqx '# HASP-MANAGED-HOOK' "$hook_path" &&
+      { hook_uses_install_root "$hook_path" "$install_dir" || hook_uses_install_root "$hook_path" "$install_dir_input"; }; then
+      backup_path="$hook_path.pre-hasp"
+      if [[ -e "$backup_path" || -L "$backup_path" ]]; then
+        if [[ ! -f "$backup_path" || -L "$backup_path" ]]; then
+          printf 'refusing to restore non-regular hook backup: %s\n' "$backup_path" >&2
+          exit 1
+        fi
+        /bin/mv -f "$backup_path" "$hook_path"
+      else
+        /bin/rm -f "$hook_path"
+      fi
     fi
   done
 done

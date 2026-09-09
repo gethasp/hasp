@@ -17,6 +17,7 @@ tests=(
   scripts/test-check-go-mod-tidy.sh
   scripts/test-go-coverage.sh
   scripts/test-public-installer.sh
+  scripts/test-release-hook-uninstall.sh
   scripts/test-public-docs-versioning.sh
   scripts/test-release-metadata-parser.sh
   scripts/test-release-targets.sh

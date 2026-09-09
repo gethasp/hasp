@@ -25,7 +25,7 @@ physical_path() {
 
   local -a missing=()
   while [[ ! -e "$probe" ]]; do
-    missing=("$(basename "$probe")" "${missing[@]}")
+    missing=("$(basename "$probe")" ${missing[@]+"${missing[@]}"})
     local parent
     parent="$(dirname "$probe")"
     if [[ "$parent" == "$probe" ]]; then
@@ -45,7 +45,7 @@ physical_path() {
     resolved="$(cd "$probe_dir" && pwd -P)/$probe_base"
   fi
   local part
-  for part in "${missing[@]}"; do
+  for part in ${missing[@]+"${missing[@]}"}; do
     resolved="$resolved/$part"
   done
   printf '%s\n' "$resolved"
