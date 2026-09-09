@@ -15,6 +15,8 @@ import (
 )
 
 func TestLiteralEnvironmentPreservesBytesAndAuthorizesBeforeChild(t *testing.T) {
+	t.Setenv("HASP_HOME", t.TempDir())
+	t.Setenv("HASP_SOCKET", "")
 	literals := map[string]string{"CI": "1", "EMPTY": "", "EXACT": " \n@TOKEN=$HOME=a=b "}
 	authorized := false
 	request := ExecutionRequest{Command: []string{"sh", "-c", `test "$CI" = 1 && test "${EMPTY+x}" = x && test -z "$EMPTY" && printf '%s' "$EXACT"`}, LiteralEnv: literals, Deps: ExecutionDeps{AuthorizeReferences: func(_ context.Context, _ *store.Handle, _, _, _ string, refs []ReferenceAccess, _, _ store.GrantScope, _ time.Duration) ([]store.Item, error) {

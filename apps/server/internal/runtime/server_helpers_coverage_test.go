@@ -941,7 +941,7 @@ func TestHTTPServerSeamedFailureBranches(t *testing.T) {
 	brokerLockVault = oldBrokerLockVault
 }
 
-func TestHTTPServerDropsServeErrorWhenContextIsCanceled(t *testing.T) {
+func TestHTTPServerHandlesServeErrorWhenContextIsCanceled(t *testing.T) {
 	lockRuntimeSeams(t)
 
 	key := []byte("0123456789abcdef0123456789abcdef")
@@ -953,9 +953,10 @@ func TestHTTPServerDropsServeErrorWhenContextIsCanceled(t *testing.T) {
 	})
 	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
 	served := make(chan struct{})
+	serveErr := errors.New("serve failed after cancel")
 	serveHTTPServer = func(*httpapi.Server, context.Context) error {
 		close(served)
-		return errors.New("serve failed after cancel")
+		return serveErr
 	}
 
 	home := t.TempDir()
@@ -970,7 +971,7 @@ func TestHTTPServerDropsServeErrorWhenContextIsCanceled(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	httpSrv, err := startHTTPServer(ctx, runtimePaths, newRPCServer(runtimePaths), errCh)
 	if err != nil {
 		t.Fatalf("start seamed canceled server: %v", err)
@@ -981,9 +982,12 @@ func TestHTTPServerDropsServeErrorWhenContextIsCanceled(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("serve seam was not called")
 	}
+	// A ready error receiver and a canceled context may select either case.
 	select {
 	case err := <-errCh:
-		t.Fatalf("serve error should be dropped when context is canceled, got %v", err)
+		if !errors.Is(err, serveErr) || !strings.Contains(err.Error(), "serve http api") {
+			t.Fatalf("serve error lost its cause or context: %v", err)
+		}
 	case <-time.After(20 * time.Millisecond):
 	}
 }
