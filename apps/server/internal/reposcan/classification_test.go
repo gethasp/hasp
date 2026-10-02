@@ -30,7 +30,7 @@ func TestClassificationControlsEveryScanModeWithoutProjectFiltering(t *testing.T
 				func() (Result, error) { return Scan(context.Background(), root, items, 0, Deps{}) },
 				func() (Result, error) { return ScanStaged(context.Background(), root, items, 0, Deps{}) },
 				func() (Result, error) {
-					return ScanOutgoing(context.Background(), root, items, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", strings.Repeat("0", 40)}})
+					return ScanOutgoing(context.Background(), root, items, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", strings.Repeat("0", 40)}}, "")
 				},
 			} {
 				got, err := scan()

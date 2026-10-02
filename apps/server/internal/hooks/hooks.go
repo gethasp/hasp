@@ -194,7 +194,7 @@ cat > "$updates_file"
 if [[ -x %s ]]; then
   %s "$@" < "$updates_file"
 fi
-hasp check-repo --project-root "$project_root" --pre-push --fail-on-skipped < "$updates_file"
+hasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-on-skipped < "$updates_file"
 `, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
 	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {

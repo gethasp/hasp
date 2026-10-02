@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const revisionMarker = "# HASP-HOOK-REVISION: 2"
+const revisionMarker = "# HASP-HOOK-REVISION: 3"
 
 type HookStatus struct {
 	Path       string `json:"path"`

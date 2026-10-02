@@ -22,7 +22,7 @@ func TestPrePushPreservesUpdatesArgumentsFailureAndCleanup(t *testing.T) {
 					}
 					bin, tmp := t.TempDir(), t.TempDir()
 					writeHookFixture(t, filepath.Join(bin, "hasp"), `#!/bin/sh
-[ "$1" = check-repo ] && [ "$4" = --pre-push ] && [ "$5" = --fail-on-skipped ] || exit 90
+[ "$1" = check-repo ] && [ "$4" = --pre-push ] && [ "$5" = --remote ] && [ "$6" = origin ] && [ "$7" = --fail-on-skipped ] || exit 90
 cat > scanner-input
 exit 42
 `)

@@ -97,7 +97,7 @@ func TestScanStatsMatchActualContentAcrossModes(t *testing.T) {
 	if err != nil || working.Stats.SourcesScanned != 1 || working.Stats.BytesScanned != int64(len(outgoingTestItems[0].Value)) {
 		t.Fatalf("working stats: %+v %v", working, err)
 	}
-	outgoing, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", strings.Repeat("0", 40)}})
+	outgoing, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", strings.Repeat("0", 40)}}, "")
 	if err != nil || outgoing.Stats.SourcesScanned != 3 || outgoing.Stats.BytesScanned <= working.Stats.BytesScanned || outgoing.Stats.Items != 1 || outgoing.Stats.TotalMS <= 0 {
 		t.Fatalf("outgoing stats: %+v %v", outgoing, err)
 	}

@@ -50,7 +50,7 @@ func TestInstallCreatesManagedHooksAndBacksUpExistingHook(t *testing.T) {
 	if !strings.Contains(string(managed), "--staged") {
 		t.Fatalf("pre-commit hook should pass --staged: %s", string(managed))
 	}
-	if !strings.Contains(string(prePush), "--pre-push --fail-on-skipped") {
+	if !strings.Contains(string(prePush), "--pre-push --remote \"$1\" --fail-on-skipped") {
 		t.Fatalf("pre-push hook must scan outgoing objects and reject gaps: %s", string(prePush))
 	}
 	if !ManagedHooksPresent(projectRoot) {

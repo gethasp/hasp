@@ -119,7 +119,7 @@ install_hook() {
     cp -p "$target_path" "$backup_path"
   fi
   {
-    printf '#!/usr/bin/env bash\nset -euo pipefail\n# HASP-MANAGED-HOOK\n# HASP-HOOK-REVISION: 2\n'
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n# HASP-MANAGED-HOOK\n# HASP-HOOK-REVISION: 3\n'
     printf 'export HASP_ROOT_OVERRIDE=%q\n' "$hasp_root"
     if [[ "$target_name" == "pre-push" ]]; then
       cat <<'HOOK'

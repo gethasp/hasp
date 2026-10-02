@@ -190,7 +190,7 @@ func TestOutgoingScanReportsObjectProtocolFailures(t *testing.T) {
 		if step == "remote" {
 			remoteOID = remote
 		}
-		got, err := ScanOutgoing(context.Background(), t.TempDir(), outgoingTestItems, 0, []RefUpdate{{"HEAD", oid, "refs/heads/main", remoteOID}})
+		got, err := ScanOutgoing(context.Background(), t.TempDir(), outgoingTestItems, 0, []RefUpdate{{"HEAD", oid, "refs/heads/main", remoteOID}}, "")
 		if err == nil || got.Complete || len(got.Issues) == 0 {
 			t.Fatalf("%s passed: %+v, %v", step, got, err)
 		}

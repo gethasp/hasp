@@ -1110,6 +1110,9 @@ Flags
   --pre-push                read Git ref updates from stdin and scan outgoing
                              objects, including intermediate commits and tags;
                              cannot be combined with --staged
+  --remote <name>            with --pre-push, skip objects already reachable
+                             from refs/remotes/<name>/; the pre-push hook
+                             passes Git's remote name
   --fail-on-skipped          exit non-zero if any file was skipped (e.g. over the
                              size cap) and therefore not scanned
   --allow-managed-secrets    override matches, size skips, and the locked-vault

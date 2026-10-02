@@ -659,12 +659,16 @@ func checkRepoCommandWithInput(ctx context.Context, args []string, stdin io.Read
 	allowManagedSecrets := fs.Bool("allow-managed-secrets", false, "")
 	stagedMode := fs.Bool("staged", false, "")
 	prePushMode := fs.Bool("pre-push", false, "")
+	pushRemote := fs.String("remote", "", "")
 	failOnSkipped := fs.Bool("fail-on-skipped", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *stagedMode && *prePushMode {
 		return errors.New("--staged and --pre-push cannot be combined")
+	}
+	if *pushRemote != "" && !*prePushMode {
+		return errors.New("--remote requires --pre-push")
 	}
 	var updates []reposcan.RefUpdate
 	if *prePushMode {
@@ -722,7 +726,7 @@ func checkRepoCommandWithInput(ctx context.Context, args []string, stdin io.Read
 	var scanResult reposcan.Result
 	switch {
 	case *prePushMode:
-		scanResult, err = reposcan.ScanOutgoing(ctx, root, items, checkRepoMaxBytes, updates)
+		scanResult, err = reposcan.ScanOutgoing(ctx, root, items, checkRepoMaxBytes, updates, *pushRemote)
 	case *stagedMode:
 		// Pre-commit gate: scan the staged INDEX content, not the working tree, so
 		// a staged-then-overwritten secret cannot slip into the commit (hasp-8buu).

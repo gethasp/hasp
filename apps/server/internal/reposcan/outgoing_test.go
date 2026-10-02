@@ -22,14 +22,14 @@ func TestScanOutgoingUsesAllSentHistoryAndIgnoresWorkingTree(t *testing.T) {
 			blob := outgoingGit(t, root, "rev-parse", leak+": leading\nfile ")
 			tip := outgoingCommit(t, root, " leading\nfile ", "safe again", "remove leak")
 			update := RefUpdate{"refs/heads/main", tip, "refs/heads/main", base}
-			res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{update, update})
+			res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{update, update}, "")
 			if err != nil || len(res.Matches) != 1 || res.Matches[0].Path != "git:blob:"+blob {
 				t.Fatalf("intermediate outgoing leak was missed or duplicated: %+v, %v", res, err)
 			}
 			// Git replacement objects must not hide the original bytes being sent.
 			cleanBlob := outgoingGit(t, root, "rev-parse", tip+": leading\nfile ")
 			outgoingGit(t, root, "replace", blob, cleanBlob)
-			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{update})
+			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{update}, "")
 			if err != nil || len(res.Matches) != 1 {
 				t.Fatalf("replacement hid outgoing leak: %+v, %v", res, err)
 			}
@@ -39,21 +39,52 @@ func TestScanOutgoingUsesAllSentHistoryAndIgnoresWorkingTree(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "draft.txt"), outgoingTestItems[0].Value, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", next, "refs/heads/main", tip}})
+			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", next, "refs/heads/main", tip}}, "")
 			if err != nil || len(res.Matches) != 0 || res.Walker != "git-outgoing" {
 				t.Fatalf("clean outgoing change blocked by unrelated content: %+v, %v", res, err)
 			}
 			for _, old := range []string{strings.Repeat("0", len(tip)), strings.Repeat("a", len(tip))} {
-				res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", next, "refs/heads/new", old}})
+				res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", next, "refs/heads/new", old}}, "")
 				if err != nil || len(res.Matches) != 1 {
 					t.Fatalf("new branch or unavailable remote tip failed to scan history: %+v, %v", res, err)
 				}
 			}
-			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"(delete)", strings.Repeat("0", len(tip)), "refs/heads/main", next}})
+			res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"(delete)", strings.Repeat("0", len(tip)), "refs/heads/main", next}}, "")
 			if err != nil || len(res.Matches) != 0 || len(res.Skipped) != 0 {
 				t.Fatalf("deletion scanned unrelated content: %+v, %v", res, err)
 			}
 		})
+	}
+}
+
+func TestScanOutgoingExcludesRemoteTrackingHistory(t *testing.T) {
+	root := newOutgoingRepo(t, "sha1")
+	leak := outgoingCommit(t, root, "token", string(outgoingTestItems[0].Value), "leak")
+	pushed := outgoingCommit(t, root, "token", "safe", "remove leak")
+	outgoingGit(t, root, "update-ref", "refs/remotes/origin/main", pushed)
+	outgoingGit(t, root, "update-ref", "refs/remotes/mirror/main", leak)
+	tip := outgoingCommit(t, root, "clean.txt", "new work", "new")
+	zero := strings.Repeat("0", 40)
+	newBranch := []RefUpdate{{"HEAD", tip, "refs/heads/feature", zero}}
+
+	// A new branch on origin sends only the commit origin lacks.
+	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, newBranch, "origin")
+	if err != nil || len(res.Matches) != 0 || res.Stats.SourcesEnumerated != 3 {
+		t.Fatalf("remote-tracking history was rescanned: %+v, %v", res, err)
+	}
+
+	// Another remote's refs, a URL, a glob, or no remote never hide history.
+	for _, remote := range []string{"", "upstream", "git@example.com:o/r.git", "*", "orig?n", "--all", "origin/.."} {
+		res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, newBranch, remote)
+		if err != nil || len(res.Matches) != 1 {
+			t.Fatalf("remote %q hid unpushed history: %+v, %v", remote, res, err)
+		}
+	}
+
+	// The leak commit is on mirror, so only the newer commits go there.
+	res, err = ScanOutgoing(context.Background(), root, outgoingTestItems, 0, newBranch, "mirror")
+	if err != nil || len(res.Matches) != 0 {
+		t.Fatalf("mirror tracking ref not excluded: %+v, %v", res, err)
 	}
 }
 
@@ -65,7 +96,7 @@ func TestScanOutgoingTagsMessagesAndForcedUpdates(t *testing.T) {
 	tip := outgoingCommit(t, root, "safe", "local content", string(outgoingTestItems[0].Value))
 	outgoingGit(t, root, "tag", "-a", "annotated", "-m", string(outgoingTestItems[0].Value))
 	tag := outgoingGit(t, root, "rev-parse", "annotated")
-	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", remote}, {"refs/tags/annotated", tag, "refs/tags/annotated", strings.Repeat("0", 40)}})
+	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", remote}, {"refs/tags/annotated", tag, "refs/tags/annotated", strings.Repeat("0", 40)}}, "")
 	if err != nil || len(res.Matches) != 2 {
 		t.Fatalf("forced update or metadata leaks missed: %+v, %v", res, err)
 	}
@@ -78,7 +109,7 @@ func TestScanOutgoingTagsMessagesAndForcedUpdates(t *testing.T) {
 	}
 	// Git permits tags pointing directly to a blob.
 	blob := outgoingGit(t, root, "rev-parse", tip+":safe")
-	res, err = ScanOutgoing(context.Background(), root, []store.Item{{Name: "blob_token", Value: []byte("local content")}}, 0, []RefUpdate{{"refs/tags/blob", blob, "refs/tags/blob", strings.Repeat("0", 40)}})
+	res, err = ScanOutgoing(context.Background(), root, []store.Item{{Name: "blob_token", Value: []byte("local content")}}, 0, []RefUpdate{{"refs/tags/blob", blob, "refs/tags/blob", strings.Repeat("0", 40)}}, "")
 	if err != nil || len(res.Matches) != 1 || res.Matches[0].Path != "git:blob:"+blob {
 		t.Fatalf("blob tag not scanned: %+v, %v", res, err)
 	}
@@ -89,17 +120,17 @@ func TestScanOutgoingFailsClosedAndReportsSkippedObjects(t *testing.T) {
 	tip := outgoingCommit(t, root, "token", string(outgoingTestItems[0].Value), "init")
 	zero := strings.Repeat("0", 40)
 	for _, oid := range []string{strings.Repeat("b", 40), "--all", tip + "\n--all"} {
-		if _, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", oid, "refs/heads/main", zero}}); err == nil {
+		if _, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", oid, "refs/heads/main", zero}}, ""); err == nil {
 			t.Fatalf("invalid/missing object %q passed", oid)
 		}
 	}
-	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 2, []RefUpdate{{"HEAD", tip, "refs/heads/main", zero}})
+	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 2, []RefUpdate{{"HEAD", tip, "refs/heads/main", zero}}, "")
 	if err != nil || len(res.Skipped) != 3 || len(res.Matches) != 0 {
 		t.Fatalf("oversized objects not reported: %+v, %v", res, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := ScanOutgoing(ctx, root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", zero}}); err == nil {
+	if _, err := ScanOutgoing(ctx, root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/main", zero}}, ""); err == nil {
 		t.Fatal("cancelled scan passed")
 	}
 }
