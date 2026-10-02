@@ -137,7 +137,7 @@ if [[ "$skip_docs_dry_run" == "0" && -d "$docs_app_dir" ]]; then
     git tag -f "$release_tag" -m "Release $release_tag" HEAD
     HASP_TEAM_ID="${HASP_TEAM_ID:-TEAMID1234}" bash scripts/build.sh >/dev/null
     bin/hasp docs markdown --out public/docs/cli-reference.md
-    HASP_DOCS_SNAPSHOT_SKIP_CHECK=1 pnpm -C "$docs_app_rel" docs:snapshot -- "$release_tag" --force >/dev/null
+    (cd "$docs_app_rel" && HASP_DOCS_SNAPSHOT_SKIP_CHECK=1 pnpm docs:snapshot -- "$release_tag" --force) >/dev/null
 
     allowed_dirty="$(git status --porcelain -- public/docs/cli-reference.md public/docs-metadata.json public/docs-versions)"
     generated_dirty="$(git status --porcelain --untracked-files=no)"

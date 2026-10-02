@@ -723,6 +723,7 @@ func TestSetupResolveProjectAndAgentResidualCoverage(t *testing.T) {
 	})
 
 	t.Run("setup visual helpers cover color and empty branches", func(t *testing.T) {
+		t.Setenv("LC_ALL", "C.UTF-8")
 		devnull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
 		if err != nil {
 			t.Fatalf("open /dev/null: %v", err)

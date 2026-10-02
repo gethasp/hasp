@@ -279,8 +279,10 @@ func TestPathDiagnosticsResidualBranches(t *testing.T) {
 	if report := detectHaspPathDiagnostics("1.0.6"); report.Executable != "" {
 		t.Fatalf("non hasp executable should be ignored: %+v", report)
 	}
-	if looksLikeSemver("1..2") || looksLikeSemver("1.2.x") {
-		t.Fatal("bad semver values should be rejected")
+	for _, version := range []string{"1.2", "1..2", "1.2.x", "1.2.3.4"} {
+		if looksLikeSemver(version) {
+			t.Errorf("invalid semver %q was accepted", version)
+		}
 	}
 	if compareSemverParts([3]int{1, 2, 3}, [3]int{1, 3, 0}) >= 0 {
 		t.Fatal("semver compare less-than branch failed")
@@ -498,6 +500,15 @@ func TestLiveAgentMCPProcessDiagnosticsHelpers(t *testing.T) {
 	}
 	if warning := detectLiveAgentMCPProcessProblems(map[string]string{}); warning != "" {
 		t.Fatalf("empty expectations should not warn: %q", warning)
+	}
+	agentMCPProcessListFn = func() ([]liveAgentMCPProcess, error) {
+		return []liveAgentMCPProcess{
+			{PID: "123", Binary: "/tmp/hasp", AgentID: "codex-cli"},
+			{PID: "456", Binary: "/tmp/other/hasp", AgentID: "claude-code"},
+		}, nil
+	}
+	if warning := detectLiveAgentMCPProcessProblems(map[string]string{"codex-cli": "/tmp/hasp"}); warning != "" {
+		t.Fatalf("matching and unconfigured agents should not warn: %q", warning)
 	}
 	agentMCPProcessListFn = func() ([]liveAgentMCPProcess, error) {
 		return nil, errors.New("ps failed")

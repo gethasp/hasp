@@ -104,7 +104,10 @@ func TestCoverage100RemainingCommandBranches(t *testing.T) {
 		t.Fatalf("expected vault warning on stderr, got %q", stderr.String())
 	}
 	hugePath := filepath.Join(projectRoot, "huge.bin")
-	if err := os.WriteFile(hugePath, make([]byte, 4<<20+1), 0o600); err != nil {
+	origMaxBytes := checkRepoMaxBytes
+	checkRepoMaxBytes = 16
+	defer func() { checkRepoMaxBytes = origMaxBytes }()
+	if err := os.WriteFile(hugePath, make([]byte, checkRepoMaxBytes+1), 0o600); err != nil {
 		t.Fatalf("write oversized repo file: %v", err)
 	}
 	checkDeps.GitLsFiles = func(context.Context, string) ([]string, error) { return []string{"huge.bin"}, nil }

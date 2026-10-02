@@ -545,6 +545,21 @@ func TestHMACKeyAdditionalEdgeBranches(t *testing.T) {
 	}
 }
 
+func TestLoadLocalDebugHMACKeyRejectsInvalidLength(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HASP_HOME", home)
+	path := filepath.Join(home, localDebugHMACKeyFile)
+	if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
+		t.Fatalf("write invalid debug key: %v", err)
+	}
+	if key, err := loadLocalDebugHMACKey(); key != nil || err == nil || !strings.Contains(err.Error(), "invalid local debug HTTP HMAC key length 5") {
+		t.Fatalf("invalid debug key returned %d bytes and error %v", len(key), err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "short" {
+		t.Fatalf("loading invalid key changed its file: %q, %v", data, err)
+	}
+}
+
 func TestHMACKeyResidualErrorBranches(t *testing.T) {
 	oldCurrentUsername := currentUsername
 	t.Cleanup(func() { currentUsername = oldCurrentUsername })

@@ -115,3 +115,64 @@ func TestLinuxProcessIdentityBranches(t *testing.T) {
 		t.Fatalf("valid identity = %q, %v", got, err)
 	}
 }
+
+func TestLinuxProcessParentPIDRejectsInvalidPIDWithoutReadingProc(t *testing.T) {
+	origReadFile := processIdentityReadFile
+	t.Cleanup(func() { processIdentityReadFile = origReadFile })
+	processIdentityReadFile = func(path string) ([]byte, error) {
+		t.Fatalf("unexpected proc read for invalid PID: %s", path)
+		return nil, nil
+	}
+
+	for _, pid := range []int{0, -1} {
+		if parent, err := realProcessParentPID(pid); err != nil || parent != 0 {
+			t.Fatalf("realProcessParentPID(%d) = %d, %v", pid, parent, err)
+		}
+	}
+}
+
+func TestLinuxProcessParentPIDParsesProcStat(t *testing.T) {
+	readErr := errors.New("process disappeared")
+	cases := []struct {
+		name    string
+		stat    string
+		readErr error
+		parent  int
+		wantErr string
+	}{
+		{name: "read failure", readErr: readErr, wantErr: "resolve parent pid"},
+		{name: "missing command delimiter", stat: "123 hasp S 42", wantErr: "malformed proc stat"},
+		{name: "missing fields", stat: "123 (hasp) ", wantErr: "malformed proc stat"},
+		{name: "missing parent", stat: "123 (hasp) S", wantErr: "short proc stat"},
+		{name: "invalid parent", stat: "123 (hasp) S unknown", wantErr: "parse parent pid"},
+		{name: "overflowing parent", stat: "123 (hasp) S 18446744073709551616", wantErr: "parse parent pid"},
+		{name: "nested command parentheses", stat: "123 (hasp test (worker)) S 42 100 200", parent: 42},
+		{name: "zero parent", stat: "123 (hasp) S 0 100 200", parent: 0},
+	}
+	origReadFile := processIdentityReadFile
+	t.Cleanup(func() { processIdentityReadFile = origReadFile })
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			processIdentityReadFile = func(path string) ([]byte, error) {
+				if path != "/proc/123/stat" {
+					t.Fatalf("proc path = %q", path)
+				}
+				return []byte(tc.stat), tc.readErr
+			}
+			parent, err := realProcessParentPID(123)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || parent != 0 {
+					t.Fatalf("parent lookup = %d, %v; want zero parent and %q", parent, err, tc.wantErr)
+				}
+				if tc.readErr != nil && !errors.Is(err, tc.readErr) {
+					t.Fatalf("parent lookup lost read error: %v", err)
+				}
+				return
+			}
+			if err != nil || parent != tc.parent {
+				t.Fatalf("parent lookup = %d, %v; want %d", parent, err, tc.parent)
+			}
+		})
+	}
+}

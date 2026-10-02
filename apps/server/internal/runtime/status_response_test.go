@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1725,6 +1726,9 @@ func TestRuntimeEventHubClosesSlowSubscriberOnOverflow(t *testing.T) {
 }
 
 func TestRuntimeHTTPServerSwiftDaemonClientSmokeCoversDashboardAndEvents(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Swift client requires Apple frameworks")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

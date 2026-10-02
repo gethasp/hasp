@@ -17,7 +17,10 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-const DefaultMaxFileBytes int64 = 4 << 20
+// DefaultMaxFileBytes bounds one file or blob held in memory while it is
+// matched. Generated files such as string catalogs pass 4 MiB, and a skip
+// fails the strict pre-push gate, so the cap sits well above them.
+const DefaultMaxFileBytes int64 = 32 << 20
 
 // DefaultMaxBytes is the canonical scanner cap. Keep the older
 // DefaultMaxFileBytes name as a compatibility alias for existing tests and

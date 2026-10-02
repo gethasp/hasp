@@ -80,8 +80,9 @@ func TestCacheTopLevelInvalidatesWhenDirectoryReplaced(t *testing.T) {
 		t.Fatalf("first lookup: %v", err)
 	}
 
-	if err := os.RemoveAll(repoPath); err != nil {
-		t.Fatalf("remove dir: %v", err)
+	// Keep the old inode allocated so the replacement has a different identity.
+	if err := os.Rename(repoPath, filepath.Join(parent, "old-proj")); err != nil {
+		t.Fatalf("move old dir: %v", err)
 	}
 	populateGitLikeDir(t, repoPath)
 

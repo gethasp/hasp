@@ -219,3 +219,32 @@ func TestDefaultDepsGitLsFilesAndWithDefaults(t *testing.T) {
 		t.Fatalf("staged blob = %q", blob)
 	}
 }
+
+// Generated string catalogs and lockfiles pass 4 MiB. The default cap must
+// still scan them, or every push that carries one fails closed as incomplete.
+func TestScanDefaultCapCoversLargeGeneratedFiles(t *testing.T) {
+	root := t.TempDir()
+	content := make([]byte, 0, 8<<20)
+	for len(content) < 8<<20-64 {
+		content = append(content, "\"key\" : { \"value\" : \"translated text\" },\n"...)
+	}
+	content = append(content, "leaked-token-value\n"...)
+	if err := os.WriteFile(filepath.Join(root, "Localizable.xcstrings"), content, 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	deps := Deps{
+		GitLsFiles: func(context.Context, string) ([]string, error) {
+			return []string{"Localizable.xcstrings"}, nil
+		},
+	}
+	result, err := Scan(context.Background(), root, []store.Item{{Name: "API_TOKEN", Value: []byte("leaked-token-value")}}, DefaultMaxBytes, deps)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(result.Skipped) != 0 || !result.Complete {
+		t.Fatalf("skipped = %+v complete = %v", result.Skipped, result.Complete)
+	}
+	if len(result.Matches) != 1 || result.Matches[0].ItemName != "API_TOKEN" {
+		t.Fatalf("matches = %+v", result.Matches)
+	}
+}

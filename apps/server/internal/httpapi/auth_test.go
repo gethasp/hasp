@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -240,6 +241,9 @@ func TestValidatorSignsRawQuery(t *testing.T) {
 }
 
 func TestSwiftDaemonClientRoundTripAgainstServer(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Swift client requires Apple frameworks")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

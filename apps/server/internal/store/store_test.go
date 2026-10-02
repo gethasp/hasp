@@ -530,12 +530,14 @@ func TestNewAndInitErrorPaths(t *testing.T) {
 		t.Fatal("expected resolve paths failure")
 	}
 
-	resolvePathsFn = origResolve
-	newAuditLogFn = func() (*audit.Log, error) { return nil, fmt.Errorf("audit fail") }
-	if _, err := New(nil); err == nil {
-		t.Fatal("expected audit init failure")
+	resolvePathsFn = func() (paths.Paths, error) { return paths.Paths{}, nil }
+	auditErr := errors.New("audit fail")
+	newAuditLogFn = func() (*audit.Log, error) { return nil, auditErr }
+	if _, err := New(nil); !errors.Is(err, auditErr) {
+		t.Fatalf("expected audit init failure, got %v", err)
 	}
 
+	resolvePathsFn = origResolve
 	newAuditLogFn = origAudit
 	store := newTestStore(t)
 	mkdirAllFn = func(string, os.FileMode) error { return fmt.Errorf("mkdir fail") }

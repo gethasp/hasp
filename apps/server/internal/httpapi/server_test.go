@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,39 @@ func TestNewServerRejectsNonLoopbackBindAddress(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "non-loopback") {
 		t.Fatalf("expected non-loopback error, got %v", err)
+	}
+}
+
+func TestNewServerAppliesValidatorToHandler(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	now := time.Unix(1770000000, 0).UTC()
+	validator, err := NewValidator(key, ValidatorOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+	called := false
+	server, err := NewServer(paths.Paths{HomeDir: t.TempDir()}, Options{
+		Validator: validator,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer server.Close()
+
+	unsigned := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(unsigned, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	if unsigned.Code != http.StatusUnauthorized || called {
+		t.Fatalf("unsigned request status=%d handler_called=%t", unsigned.Code, called)
+	}
+	signed := httptest.NewRecorder()
+	req := signedRequest(t, key, now, "00112233445566778899aabbccddeeff", http.MethodGet, "/v1/status", "", nil)
+	server.httpServer.Handler.ServeHTTP(signed, req)
+	if signed.Code != http.StatusNoContent || !called {
+		t.Fatalf("signed request status=%d handler_called=%t", signed.Code, called)
 	}
 }
 
