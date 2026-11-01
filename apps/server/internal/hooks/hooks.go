@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -196,6 +197,31 @@ if [[ -x %s ]]; then
 fi
 hasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-on-skipped < "$updates_file"
 `, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
+	}
+	if bytes.Equal(existing, []byte(content)) {
+		info, err := hooksStat(path)
+		if err != nil {
+			return fmt.Errorf("inspect existing hook: %w", err)
+		}
+		if info.Mode().Perm()&0o111 != 0o111 {
+			if err := hooksChmod(path, 0o755); err != nil {
+				return fmt.Errorf("make hook executable: %w", err)
+			}
+		}
+		return nil
+	}
+	if strings.Contains(string(existing), marker) {
+		// Unique files retain every replaced revision without touching .pre-hasp.
+		saved, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".hasp-replaced-*")
+		if err != nil {
+			return fmt.Errorf("backup managed hook: %w", err)
+		}
+		_, writeErr := saved.Write(existing)
+		closeErr := saved.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			return fmt.Errorf("backup managed hook %s: %w", saved.Name(), err)
+		}
+		fmt.Fprintf(os.Stderr, "warning: replacing changed HASP hook %s; saved previous content to %s; move custom gates into %s to keep them active\n", path, saved.Name(), backup)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write hook: %w", err)

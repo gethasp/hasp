@@ -130,3 +130,39 @@ bin/hasp version
 ```
 
 Source builds are not the normal user install path.
+
+## Headless macOS setup
+
+Over SSH or in an unattended job, skip Keychain convenience unlock. Use the
+noninteractive setup path with a password supplied by the operator's process:
+
+```bash
+hasp setup --non-interactive --master-password-env HASP_MASTER_PASSWORD \
+  --enable-convenience-unlock never
+hasp doctor --project-root /path/to/repo
+hasp project doctor --project-root /path/to/repo
+```
+
+Set `HASP_MASTER_PASSWORD` through your job's protected input, then remove it
+from that job's environment when setup finishes. Do not put it in a repo or
+shell startup file. The ordinary interactive path is `hasp setup`.
+
+Keychain convenience unlock is optional. A missing default Keychain, a locked
+login Keychain, or denied access does not mean the vault password was rejected.
+Setup reports convenience failures separately and applies a 30-second deadline
+to each convenience step. A Keychain implementation must honor cancellation;
+this deadline does not prove that an OS consent dialog can be dismissed remotely.
+Use `never` in unattended sessions to avoid that dependency.
+
+A GUI login and a launchd user session are separate from an SSH login. The CLI
+can start its daemon directly; it does not require the macOS app or a LaunchAgent.
+If you installed a custom LaunchAgent, inspect it in the intended user's launchd
+domain and check its absolute executable path and environment. An agent launched
+by launchd may have a different PATH from your terminal.
+
+Use a released binary when diagnosing signing or Keychain trust. Replacing a
+binary can change its designated requirement and prompt for renewed access.
+Re-enable convenience unlock from the intended signed install in an interactive
+session. Do not apply a broad Keychain partition-list change or allow every
+application as a workaround. Neither Keychain access nor a launcher grants
+project or secret use: target review and broker grants still apply.

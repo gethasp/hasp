@@ -17,9 +17,8 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-// DefaultMaxFileBytes bounds one file or blob held in memory while it is
-// matched. Generated files such as string catalogs pass 4 MiB, and a skip
-// fails the strict pre-push gate, so the cap sits well above them.
+// DefaultMaxFileBytes is the threshold for streaming a file or Git object.
+// Larger sources are scanned in bounded chunks rather than skipped.
 const DefaultMaxFileBytes int64 = 32 << 20
 
 // DefaultMaxBytes is the canonical scanner cap. Keep the older
@@ -187,19 +186,20 @@ func Scan(ctx context.Context, root string, items []store.Item, maxBytes int64, 
 			continue
 		}
 		if info.Size() > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: info.Size(), Reason: "over_max_bytes"})
+			file, err := os.Open(abs)
+			if err == nil {
+				err = errors.Join(result.matchReader(ctx, rel, file, compiled, deps.ByteIndex), file.Close())
+			}
+			if err != nil {
+				result.addIssue(rel, "read_failed", err)
+				failures = append(failures, fmt.Errorf("%s: %w", rel, err))
+			}
 			continue
 		}
 		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return deps.ReadFile(abs) })
 		if readErr != nil {
 			result.addIssue(rel, "read_failed", readErr)
 			failures = append(failures, fmt.Errorf("%s: %w", rel, readErr))
-			continue
-		}
-		if int64(len(data)) > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: int64(len(data)), Reason: "over_max_bytes"})
 			continue
 		}
 		result.match(rel, data, compiled, deps.ByteIndex)
@@ -216,9 +216,6 @@ func ScanStaged(ctx context.Context, root string, items []store.Item, maxBytes i
 		return scanStagedObjects(ctx, root, items, maxBytes, deps.ByteIndex)
 	}
 	defer result.finish(time.Now())
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
 	deps = withDefaults(deps)
 	result = Result{Walker: "git-staged", Complete: true}
 	enumStart := time.Now()
@@ -237,26 +234,16 @@ func ScanStaged(ctx context.Context, root string, items []store.Item, maxBytes i
 			failures = append(failures, err)
 			break
 		}
-		size, sizeErr := measure(&result.Stats.ReadMS, func() (int64, error) { return deps.StagedBlobSize(ctx, root, rel) })
+		_, sizeErr := measure(&result.Stats.ReadMS, func() (int64, error) { return deps.StagedBlobSize(ctx, root, rel) })
 		if sizeErr != nil {
 			result.addIssue(rel, "index_read_failed", sizeErr)
 			failures = append(failures, fmt.Errorf("%s: %w", rel, sizeErr))
-			continue
-		}
-		if size > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: size, Reason: "over_max_bytes"})
 			continue
 		}
 		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return deps.ReadStagedBlob(ctx, root, rel) })
 		if readErr != nil {
 			result.addIssue(rel, "index_read_failed", readErr)
 			failures = append(failures, fmt.Errorf("%s: %w", rel, readErr))
-			continue
-		}
-		if int64(len(data)) > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: rel, Size: int64(len(data)), Reason: "over_max_bytes"})
 			continue
 		}
 		result.match(rel, data, compiled, deps.ByteIndex)

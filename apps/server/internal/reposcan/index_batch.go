@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -96,8 +97,14 @@ func scanStagedObjects(ctx context.Context, root string, items []store.Item, max
 			continue
 		}
 		if size > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: entry.path, Size: size, Reason: "over_max_bytes"})
+			err := batch.scanContents(entry.oid, kind, size, func(reader io.Reader) error {
+				return result.matchReader(ctx, entry.path, reader, compiled, index)
+			})
+			if err != nil {
+				result.addIssue(entry.path, "index_read_failed", err)
+				failures = append(failures, err)
+				break
+			}
 			continue
 		}
 		data, err := measure(&result.Stats.ReadMS, func() ([]byte, error) { return batch.contents(entry.oid, kind, size) })

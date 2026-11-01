@@ -12,7 +12,7 @@ import (
 	"github.com/gethasp/hasp/apps/server/internal/store"
 )
 
-func TestScanWalkdirMatchesSkipsAndErrors(t *testing.T) {
+func TestScanWalkdirMatchesStreamsAndErrors(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "small.txt"), []byte("token-value"), 0o600); err != nil {
 		t.Fatalf("write small: %v", err)
@@ -38,7 +38,7 @@ func TestScanWalkdirMatchesSkipsAndErrors(t *testing.T) {
 	if len(result.Matches) != 1 || result.Matches[0].Path != "small.txt" || result.Matches[0].ItemName != "API_TOKEN" {
 		t.Fatalf("matches = %+v", result.Matches)
 	}
-	if len(result.Skipped) != 1 || result.Skipped[0].Path != "large.txt" || result.Skipped[0].Reason != "over_max_bytes" {
+	if len(result.Skipped) != 0 || !result.Complete {
 		t.Fatalf("skipped = %+v", result.Skipped)
 	}
 

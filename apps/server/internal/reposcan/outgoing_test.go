@@ -115,7 +115,7 @@ func TestScanOutgoingTagsMessagesAndForcedUpdates(t *testing.T) {
 	}
 }
 
-func TestScanOutgoingFailsClosedAndReportsSkippedObjects(t *testing.T) {
+func TestScanOutgoingFailsClosedAndStreamsLargeObjects(t *testing.T) {
 	root := newOutgoingRepo(t, "sha1")
 	tip := outgoingCommit(t, root, "token", string(outgoingTestItems[0].Value), "init")
 	zero := strings.Repeat("0", 40)
@@ -125,8 +125,8 @@ func TestScanOutgoingFailsClosedAndReportsSkippedObjects(t *testing.T) {
 		}
 	}
 	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 2, []RefUpdate{{"HEAD", tip, "refs/heads/main", zero}}, "")
-	if err != nil || len(res.Skipped) != 3 || len(res.Matches) != 0 {
-		t.Fatalf("oversized objects not reported: %+v, %v", res, err)
+	if err != nil || !res.Complete || len(res.Skipped) != 0 || len(res.Matches) != 1 {
+		t.Fatalf("oversized objects not scanned: %+v, %v", res, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

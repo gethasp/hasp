@@ -4,6 +4,23 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v1.0.46]
+
+- Build with Go 1.26.10 and update x/crypto to include current security fixes.
+
+- Stream oversized working-tree and Git objects with bounded memory instead of
+  skipping them. Incomplete reads still fail strict repository checks.
+- Preserve unchanged managed hooks on reinstall. Back up edited managed hooks
+  and name the saved copy in a warning before installing the current hook.
+- Serialize vault envelope replacement across processes and use unique private
+  temporary files to prevent concurrent rename failures.
+- Add human-only consumer delivery, launcher/PATH, review and runtime directory
+  checks to `hasp doctor`; retain the existing JSON allowlist. Resolve existing
+  path ancestors when checking future delivery directories inside a project.
+- Hide macOS download links when the corresponding DMG has not been published.
+- Document headless setup, plaintext adapter limits and unsupported browser
+  session delivery. Update the docs toolchain and release artifact actions.
+
 ## [v1.0.44]
 
 - Scan only unpushed objects when a push creates a ref. The pre-push check

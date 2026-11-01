@@ -121,7 +121,15 @@ func (s *Store) writeEnvelopeFile(envelope fileEnvelope) error {
 		return fmt.Errorf("encode vault: %w", err)
 	}
 
-	tmp := s.paths.StatePath + ".tmp"
+	tempFile, err := os.CreateTemp(filepath.Dir(s.paths.StatePath), filepath.Base(s.paths.StatePath)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp vault: %w", err)
+	}
+	tmp := tempFile.Name()
+	defer func() { _ = removeEnvelopeFileFn(tmp) }()
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close temp vault: %w", err)
+	}
 	if err := writeEnvelopeFileFn(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write temp vault: %w", err)
 	}
@@ -138,6 +146,13 @@ func (s *Store) writeEnvelopeFile(envelope fileEnvelope) error {
 		return fmt.Errorf("fsync temp vault: %w", err)
 	}
 	_ = f.Close()
+
+	// Serialize rotation and replacement across independent CLI/MCP processes.
+	unlock, err := lockEnvelopeReplacement(s.paths.StatePath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	// Copy current main to .prev before rename (fail-closed if copy fails).
 	if _, statErr := statEnvelopeFileFn(s.paths.StatePath); statErr == nil {

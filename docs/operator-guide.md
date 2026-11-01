@@ -83,3 +83,48 @@ The upgrade helper verifies the same release material and stages a new release t
 - HASP does not provide strong same-user local isolation.
 - HASP does not defend against malicious same-user local processes.
 - pasted values and shell exports are still operator hygiene unless you route them through explicit import or capture paths.
+
+## Plaintext files and adapters
+
+HASP does not create persistent plaintext sidecars by default. `hasp run` and
+saved app/agent profiles can deliver file secrets through private, temporary
+runtime files outside the project. The child process can read those files;
+HASP removes them after execution and reports cleanup failures. This is runtime
+delivery, not isolation from the child or other malicious same-user processes.
+
+`hasp write-env` and workspace-visible adapter files are convenience
+materialization. They require explicit human approval and audit, and the value
+remains readable after delivery. Do not describe an exported `.env`, cookie file
+or auth blob as agent-safe because it has an encrypted copy or a restrictive
+file mode. Prefer brokered execution when the consumer supports it.
+
+## Browser-session authentication
+
+HASP does not acquire, sync or inject browser cookies, localStorage, IndexedDB
+or logged-in browser profiles. It has no supported browser-session delivery
+capability. A manifest may declare a value-free `browser_session` requirement;
+targets cannot deliver it, and cookie/storage value fields are rejected.
+
+The generic vault stores opaque values. It cannot determine whether an ordinary
+string is a cookie or a token, and importing one does not create supported
+browser integration. Do not relabel session state as ordinary configuration to
+bypass manifest checks. Device-bound authentication may prevent reuse even when
+a session can be copied. Browser support would need a separately designed,
+locally approved capability with bounded scope, lifetime, revocation and audit.
+
+## Consumer delivery diagnostics
+
+`hasp doctor` reports saved app commands, missing refs, launcher permissions and
+PATH, agent config file presence, target review state, and runtime temp-directory
+safety. Existing rows cover hooks, audit degradation and CLI/daemon version drift.
+The checks inspect metadata and files. They do not execute a consumer or grant
+access. A ready command still needs the normal broker authorization at runtime.
+
+Agent config presence does not prove that the client loads the integration.
+Keychain consent is reported as `not_probed` to avoid a surprise prompt. Use
+[headless setup](install.md#headless-macos-setup) when no GUI consent is possible.
+`hasp project doctor` provides the detailed requirement, output and drift checks.
+
+These extra consumer details appear only in human output. `hasp doctor --json`
+keeps its existing value-free allowlist; it does not expose consumer names,
+config paths, commands or vault values.

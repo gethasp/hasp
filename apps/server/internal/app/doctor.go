@@ -46,6 +46,7 @@ type doctorReport struct {
 	FixesAttempted        []string
 	FixesSucceeded        []string
 	FixesFailed           []string
+	DeliveryChecks        []doctorDeliveryCheck
 	daemonDetail          string
 	vaultDetail           string
 	bindingDetail         string
@@ -271,6 +272,7 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 		}
 	}
 	if handle, err := openVaultHandleFn(ctx); err == nil {
+		report.DeliveryChecks = doctorConsumerChecks(checkedRoot, handle)
 		report.VaultState = "unlocked"
 		report.vaultDetail = "vault opens successfully"
 		if binding, _, err := resolveBindingViewAppFn(handle, ctx, projectRoot); err == nil && binding.ID != "" {
@@ -284,8 +286,12 @@ func buildDoctorReport(ctx context.Context, projectRoot string, s starter) docto
 			report.bindingDetail = "project binding is missing for " + cliDisplayPath(report.ProjectRoot) + "; run hasp project bind --project-root " + strconv.Quote(report.ProjectRoot)
 		}
 	} else {
+		report.DeliveryChecks = []doctorDeliveryCheck{{"delivery", "not_checked", "unlock the vault to inspect saved app and agent profiles"}}
 		report.VaultState = "missing"
 		report.vaultDetail = "vault check failed; run hasp init or set HASP_MASTER_PASSWORD"
+	}
+	if resolved, err := appResolvePathsFn(); err == nil {
+		report.DeliveryChecks = append(report.DeliveryChecks, doctorTempDirectory(resolved.RuntimeDir, checkedRoot))
 	}
 	switch {
 	case !report.Hooks.Ready:
@@ -365,6 +371,9 @@ func renderDoctorHumanWithColor(stdout io.Writer, report doctorReport, opts ui.C
 	pathOK := !report.PathShadowed && !report.PathHasNewer
 	fmt.Fprintf(tw, "path_resolution\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", pathOK), boolRole(pathOK), opts), report.pathDetail)
 	fmt.Fprintf(tw, "agent_mcp_wrappers\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AgentMCPWrappersOK), boolRole(report.AgentMCPWrappersOK), opts), report.agentMCPWrapperDetail)
+	for _, check := range report.DeliveryChecks {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", check.Name, check.State, check.Detail)
+	}
 	fmt.Fprintf(tw, "audit_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.AuditDegraded), auditDegradedRole(report.AuditDegraded), opts), report.auditDetail)
 	fmt.Fprintf(tw, "process_identity_degraded\t%s\t%s\n", ui.Colorize(fmt.Sprintf("%t", report.ProcessIdentityDegraded), auditDegradedRole(report.ProcessIdentityDegraded), opts), report.processIdentityDetail)
 	if report.VersionMismatch {

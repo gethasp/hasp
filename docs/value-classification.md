@@ -10,7 +10,8 @@ the local operator explicitly classifies it.
 | `configuration` | Omits this item's value from managed-value matching | Leaves this item's value readable |
 
 The existing detection limits still apply to confidential items, including the
-six-byte minimum value length and the default 32 MiB scan limit per source.
+six-byte minimum value length. Sources above 32 MiB use bounded streaming
+rather than a size-based skip.
 An identical value stored in another confidential item still matches when that
 item is included in the scan or redaction pass. Scans consider all confidential
 vault items, including items not exposed to the current project.

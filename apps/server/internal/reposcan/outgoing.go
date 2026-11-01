@@ -148,8 +148,11 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 		}
 		path := "git:" + kind + ":" + oid
 		if size > maxBytes {
-			result.Complete = false
-			result.Skipped = append(result.Skipped, Skipped{Path: path, Size: size, Reason: "over_max_bytes"})
+			if err := batch.scanContents(oid, kind, size, func(reader io.Reader) error {
+				return result.matchReader(ctx, path, reader, compiled)
+			}); err != nil {
+				return result, err
+			}
 			continue
 		}
 		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return batch.contents(oid, kind, size) })

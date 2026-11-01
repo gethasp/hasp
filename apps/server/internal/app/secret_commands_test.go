@@ -641,7 +641,7 @@ func TestEnforceSecretPlaintextPolicyConsumeFailure(t *testing.T) {
 	defer func() {
 		_ = os.Chmod(homeDir, 0o700)
 	}()
-	if err := enforceSecretPlaintextPolicy(context.Background(), handle, "API_TOKEN", store.PlaintextReveal); err == nil || !strings.Contains(err.Error(), "write temp vault") {
+	if err := enforceSecretPlaintextPolicy(context.Background(), handle, "API_TOKEN", store.PlaintextReveal); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("expected consume plaintext persist failure, got %v", err)
 	}
 }

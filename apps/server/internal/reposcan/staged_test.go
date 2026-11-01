@@ -27,8 +27,7 @@ func TestScanStagedReadsIndexNotWorkingTree(t *testing.T) {
 			if rel == "config.txt" {
 				return []byte("AWS_KEY=" + string(secret)), nil
 			}
-			t.Fatalf("ReadStagedBlob called for oversized file %q (should have been skipped)", rel)
-			return nil, nil
+			return []byte("clean oversized fixture"), nil
 		},
 	}
 
@@ -39,8 +38,8 @@ func TestScanStagedReadsIndexNotWorkingTree(t *testing.T) {
 	if len(res.Matches) != 1 || res.Matches[0].Path != "config.txt" || res.Matches[0].ItemName != "aws" {
 		t.Fatalf("expected one match config.txt/aws, got %+v", res.Matches)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].Path != "big.bin" {
-		t.Fatalf("expected big.bin skipped, got %+v", res.Skipped)
+	if len(res.Skipped) != 0 || !res.Complete {
+		t.Fatalf("expected big.bin scanned, got %+v", res.Skipped)
 	}
 	if res.Walker != "git-staged" {
 		t.Fatalf("walker = %q, want git-staged", res.Walker)

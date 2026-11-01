@@ -494,8 +494,8 @@ func TestHaspCheckUsesSharedScannerMetadata(t *testing.T) {
 	if !strings.Contains(body, "\"walker\":\"git-ls-files\"") {
 		t.Fatalf("expected git-ls-files walker, got %s", body)
 	}
-	if !strings.Contains(body, "\"path\":\"huge.bin\"") || !strings.Contains(body, "\"reason\":\"over_max_bytes\"") {
-		t.Fatalf("expected huge.bin skipped metadata, got %s", body)
+	if strings.Contains(body, "over_max_bytes") || !strings.Contains(body, "\"complete\":true") {
+		t.Fatalf("expected complete oversized-file scan, got %s", body)
 	}
 }
 

@@ -82,10 +82,10 @@ func TestStagedBatchRetainsMatchesAroundMissingAndOversizedBlobs(t *testing.T) {
 	outgoingGit(t, root, "add", ".")
 	outgoingGit(t, root, "update-index", "--add", "--cacheinfo", "100644,"+strings.Repeat("a", 40)+",missing")
 	got, err := ScanStaged(context.Background(), root, outgoingTestItems, 100, Deps{})
-	if err == nil || got.Complete || len(got.Matches) != 2 || len(got.Issues) != 1 || len(got.Skipped) != 1 {
+	if err == nil || got.Complete || len(got.Matches) != 2 || len(got.Issues) != 1 || len(got.Skipped) != 0 {
 		t.Fatalf("partial batch lost coverage or passed: %+v %v", got, err)
 	}
-	if got.Stats.SourcesEnumerated != 4 || got.Stats.SourcesScanned != 2 || got.Stats.Issues != 1 || got.Stats.Skipped != 1 {
+	if got.Stats.SourcesEnumerated != 4 || got.Stats.SourcesScanned != 3 || got.Stats.Issues != 1 || got.Stats.Skipped != 0 {
 		t.Fatalf("partial stats: %+v", got.Stats)
 	}
 }

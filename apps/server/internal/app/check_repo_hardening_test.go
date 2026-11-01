@@ -171,10 +171,8 @@ func TestCheckRepoDetectsBase64EncodedLeak(t *testing.T) {
 	}
 }
 
-// TestCheckRepoSkipsOversizedFilesWithoutScanning locks in the per-file size
-// cap: a multi-MiB file is skipped even if it contains the secret, because
-// scanning arbitrary-size LFS/binary artefacts would OOM the daemon.
-func TestCheckRepoSkipsOversizedFilesWithoutScanning(t *testing.T) {
+// Oversized files must retain managed-value detection through streaming.
+func TestCheckRepoScansOversizedFiles(t *testing.T) {
 	lockAppSeams(t)
 	homeDir := t.TempDir()
 	projectRoot := t.TempDir()
@@ -214,14 +212,14 @@ func TestCheckRepoSkipsOversizedFilesWithoutScanning(t *testing.T) {
 
 	var out bytes.Buffer
 	err := checkRepoCommand(context.Background(), []string{"--json", "--project-root", projectRoot}, &out, io.Discard)
-	if err != nil {
-		t.Fatalf("check-repo on oversized file must not error (it is skipped), got %v; body=%s", err, out.String())
+	if err == nil {
+		t.Fatalf("check-repo must reject the oversized leak; body=%s", out.String())
 	}
-	if !strings.Contains(out.String(), "\"matches\":null") {
-		t.Fatalf("oversized file must be skipped without producing a match, got %s", out.String())
+	if strings.Contains(out.String(), "\"matches\":null") {
+		t.Fatalf("oversized file must produce a match, got %s", out.String())
 	}
 	if !strings.Contains(out.String(), "pack.bin") {
-		t.Fatalf("skip must surface pack.bin in skipped[] so the operator knows a file was not scanned; body=%s", out.String())
+		t.Fatalf("match must surface pack.bin; body=%s", out.String())
 	}
 }
 

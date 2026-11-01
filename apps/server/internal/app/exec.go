@@ -70,11 +70,7 @@ func defaultExecDeps() execDeps {
 	}
 }
 
-// checkRepoMaxBytes bounds each per-file scan so LFS packs, sqlite artefacts,
-// or accidental multi-GB test fixtures cannot OOM the daemon. Files over the
-// cap are reported under "skipped" so the operator knows they were not
-// scanned. The default is 4 MiB, which comfortably covers normal source
-// files while cutting off LFS pointer-replaced binaries.
+// checkRepoMaxBytes selects bounded streaming for larger files and Git objects.
 var checkRepoMaxBytes int64 = reposcan.DefaultMaxFileBytes
 
 type writeEnvFile interface {

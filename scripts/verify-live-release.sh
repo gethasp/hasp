@@ -157,6 +157,40 @@ check_url_head() {
   curl -fsSI "$url" >/dev/null
 }
 
+check_macos_availability() {
+  python3 - "$tmp_dir/download_worker_summary.json" "$version" <<'PY'
+import json
+import subprocess
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+macos = payload.get("macos", {})
+available = macos.get("available")
+if type(available) is not bool:
+    raise SystemExit("download Worker must declare macos.available")
+expected = f"https://download.gethasp.com/macos/HASP-{sys.argv[2]}.dmg"
+if available:
+    if payload.get("dmg_url") != expected or macos.get("dmg_url") != expected:
+        raise SystemExit("download Worker advertised an unexpected DMG URL")
+else:
+    top_level_urls = [payload.get(key) for key in ["dmg_url", "sha256_url", "signature_url"]]
+    macos_urls = [value for key, value in macos.items() if key.endswith("_url")]
+    if any(top_level_urls + macos_urls):
+        raise SystemExit("download Worker advertised macOS URLs without a published DMG")
+result = subprocess.check_output([
+    "curl", "-sS", "--max-time", "30", "-o", "/dev/null", "-w", "%{http_code}\n%{redirect_url}",
+    "https://download.gethasp.com/macos/latest",
+], text=True).split("\n")
+if available:
+    if result != ["302", expected]:
+        raise SystemExit(f"macOS latest redirect mismatch: {result!r}")
+    subprocess.run(["curl", "-fsSI", "--max-time", "30", expected], stdout=subprocess.DEVNULL, check=True)
+elif result != ["404", ""]:
+    raise SystemExit(f"unpublished macOS release must return 404 without redirect: {result!r}")
+PY
+}
+
 homebrew_tap_repo=""
 homebrew_formula=""
 canonical_tap_url="https://github.com/gethasp/homebrew-tap.git"
@@ -227,6 +261,7 @@ wait_for "download Worker summary for $release_tag" \
   check_release_json "download-worker-summary" "https://download.gethasp.com/api/release"
 wait_for "download Worker signed metadata for $release_tag" \
   check_release_json "download-worker-metadata" "https://download.gethasp.com/api/release-metadata"
+wait_for "macOS download availability for $release_tag" check_macos_availability
 
 if [[ "$github_release_check" == "1" ]]; then
   wait_for "GitHub Release page for $release_tag" \

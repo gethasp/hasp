@@ -1113,15 +1113,15 @@ Flags
   --remote <name>            with --pre-push, skip objects already reachable
                              from refs/remotes/<name>/; the pre-push hook
                              passes Git's remote name
-  --fail-on-skipped          exit non-zero if any file was skipped (e.g. over the
-                             size cap) and therefore not scanned
-  --allow-managed-secrets    override matches, size skips, and the locked-vault
+  --fail-on-skipped          exit non-zero if any source was not scanned
+  --allow-managed-secrets    override matches, skipped sources, and the locked-vault
                              block; I/O failures still fail closed
 
 Results retain matches even when another source cannot be read. complete=false
-means coverage is incomplete; issues report read failures and skipped lists
-sources over the size cap. Tracked working-tree deletions appear in deleted.
-I/O failures and strict size skips exit 4 (E_SCAN_INCOMPLETE); matches exit 5.
+means coverage is incomplete; issues report read failures. Sources above 32 MiB
+are scanned in bounded chunks with overlap for encoded managed values.
+Tracked working-tree deletions appear in deleted. I/O failures and strict skips
+exit 4 (E_SCAN_INCOMPLETE); matches exit 5.
 
 Examples
   hasp check-repo --project-root .

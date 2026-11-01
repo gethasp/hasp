@@ -112,8 +112,8 @@ func TestCoverage100RemainingCommandBranches(t *testing.T) {
 	}
 	checkDeps.GitLsFiles = func(context.Context, string) ([]string, error) { return []string{"huge.bin"}, nil }
 	var strictOut bytes.Buffer
-	if err := checkRepoCommandWithDeps(context.Background(), []string{"--project-root", projectRoot, "--fail-on-skipped"}, &strictOut, io.Discard, checkDeps); err == nil || !strings.Contains(err.Error(), "skipped") {
-		t.Fatalf("expected strict skipped-file failure, got %v output=%q", err, strictOut.String())
+	if err := checkRepoCommandWithDeps(context.Background(), []string{"--project-root", projectRoot, "--fail-on-skipped"}, &strictOut, io.Discard, checkDeps); err != nil {
+		t.Fatalf("expected oversized clean file to pass the strict gate, got %v output=%q", err, strictOut.String())
 	}
 	openVaultHandleFn = origOpenVault
 	appCanonicalProjectRootFn = origCanonical

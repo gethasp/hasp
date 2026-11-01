@@ -507,7 +507,15 @@ Check-repo scans for managed values that reached a repository. Its default mode 
 
 For a new ref, or when the old remote tip is unavailable locally, the push check scans the history reachable from the new tip, minus objects already reachable from the push remote's tracking refs (`refs/remotes/<remote>/`). The managed hook passes Git's remote name with `--remote`. A push to a URL, or a remote with no tracking refs, scans all available history. Deletions add no content. Matches use `git:<type>:<object-id>` locations; inspect a reported object locally with `git cat-file -p <object-id>` and avoid copying credential-bearing output into chat.
 
-The managed pre-push hook uses `--fail-on-skipped`, so oversized objects block the push instead of passing without a scan. A later hook that changes the index must run `hasp check-repo --staged` after its changes. Reinstall existing hooks with `hasp project hooks --project-root . --install` to use the updated behavior.
+The managed pre-push hook uses `--fail-on-skipped`. Files and Git objects above 32 MiB are scanned in 64 KiB chunks with overlap for the longest supported encoding of a managed value, so size alone does not leave a coverage gap. A later hook that changes the index must run `hasp check-repo --staged` after its changes. Reinstall existing hooks with `hasp project hooks --project-root . --install` to use the updated behavior.
+
+Reinstalling current hooks leaves their content and modification time unchanged,
+including when a linked worktree shares the hooks directory. Before replacing a
+changed managed hook, HASP saves its content to a unique
+`<hook>.hasp-replaced-*` file and prints that path to stderr. Move custom gates
+into the executable `<hook>.pre-hasp` chain before reinstalling so they stay
+active. HASP retains the existing `.pre-hasp` chain when replacing managed
+hooks.
 
 Staged scans honor Git's active index, including the temporary index used by `git commit --only`. Working-tree scans report tracked deletions in `deleted` and continue scanning other files. A read or enumeration failure retains matches from readable sources, sets `complete=false`, records `issues`, and exits 4 with `E_SCAN_INCOMPLETE`. `--allow-managed-secrets` cannot bypass these I/O failures. A leak with no I/O failure exits 5 with `E_REPO_LEAK`.
 

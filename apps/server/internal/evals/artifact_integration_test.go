@@ -12,7 +12,7 @@ import (
 func TestPackagedArtifactOperatorEval(t *testing.T) {
 	root := repoRoot(t)
 	releaseEnv := append(os.Environ(), "HASP_TEAM_ID=TEAMID1234")
-	tarball, _ := runCmd(t, root, releaseEnv, "bash", "-lc", `
+	tarball, _ := runCmd(t, root, releaseEnv, "bash", "-c", `
 export GNUPGHOME="$(mktemp -d)"
 trap 'rm -rf "$GNUPGHOME"' EXIT
 export HASP_ALLOW_EPHEMERAL_RELEASE_SIGNING=1

@@ -228,13 +228,13 @@ func TestScanRejectsCancellationAndGrowthAfterSizeCheck(t *testing.T) {
 			}
 			got, err := scan(ctx, root, outgoingTestItems, 2, deps)
 			cancel()
-			if got.Complete {
-				t.Fatalf("incomplete scan passed: %+v", got)
+			if cancelled && got.Complete {
+				t.Fatalf("cancelled scan passed: %+v", got)
 			}
 			if cancelled && (!errors.Is(err, context.Canceled) || len(got.Issues) != 1) {
 				t.Fatalf("cancellation: %+v, %v", got, err)
 			}
-			if !cancelled && (err != nil || len(got.Skipped) != 1 || got.Skipped[0].Size != 5) {
+			if !cancelled && (err != nil || !got.Complete || len(got.Skipped) != 0 || got.Stats.BytesScanned != 5) {
 				t.Fatalf("growth: %+v, %v", got, err)
 			}
 		}
