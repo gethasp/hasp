@@ -233,6 +233,9 @@ check_homebrew_tap() {
   fi
   grep -F "version \"${version}\"" "$homebrew_formula" >/dev/null || return 1
   grep -F "downloads.gethasp.com/hasp/releases/${release_tag}/" "$homebrew_formula" >/dev/null || return 1
+  if HOMEBREW_NO_AUTO_UPDATE=1 brew help trust >/dev/null 2>&1; then
+    HOMEBREW_NO_AUTO_UPDATE=1 brew trust --formula gethasp/tap/hasp >/dev/null || return 1
+  fi
 }
 
 wait_for() {
