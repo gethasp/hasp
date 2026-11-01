@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,16 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gethasp/hasp/apps/server/internal/paths"
 )
 
 type failingReadCloser struct{}
@@ -237,110 +229,6 @@ func TestValidatorSignsRawQuery(t *testing.T) {
 	err = validator.Validate(req)
 	if !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("expected query tamper signature rejection, got %v", err)
-	}
-}
-
-func TestSwiftDaemonClientRoundTripAgainstServer(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS Swift client requires Apple frameworks")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	key := bytes.Repeat([]byte{0x42}, 32)
-	validator, err := NewValidator(key, ValidatorOptions{})
-	if err != nil {
-		t.Fatalf("new validator: %v", err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"_schema":1,"vault":{"state":"unlocked","idle_relock_in_s":600},"leases":{"active_count":2,"expiring_soon":4},"approvals":{"pending_count":3,"oldest_age_s":0},"audit":{"chain_ok":true},"integrations":{"ok_count":0,"degraded_count":0,"known":false},"daemon":{"uptime_s":60,"version":"dev","http_listener":{"host":"127.0.0.1","port":49152}}}`)
-	})
-	mux.HandleFunc("/v1/events", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.RawQuery != "topics=vault.locked" {
-			t.Fatalf("unexpected events query: %q", r.URL.RawQuery)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "event: vault.locked\ndata: {\"cause\":\"manual\"}\n\n")
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		time.Sleep(100 * time.Millisecond)
-		_, _ = io.WriteString(w, ": still-open\n\n")
-	})
-
-	home := t.TempDir()
-	server, err := NewServer(paths.Paths{
-		HomeDir:          home,
-		HTTPPortFilePath: filepath.Join(home, "daemon.http.port"),
-	}, Options{
-		Handler:   mux,
-		Validator: validator,
-	})
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-
-	serveCtx, stopServe := context.WithCancel(ctx)
-	defer stopServe()
-	defer server.Close()
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Serve(serveCtx)
-	}()
-	defer func() {
-		stopServe()
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	}()
-
-	macosPackage, err := filepath.Abs("../../../macos")
-	if err != nil {
-		t.Fatalf("resolve macos package: %v", err)
-	}
-	if _, err := os.Stat(macosPackage); errors.Is(err, os.ErrNotExist) {
-		t.Skipf("macOS Swift package is not exported at %s", macosPackage)
-	} else if err != nil {
-		t.Fatalf("stat macos package: %v", err)
-	}
-	baseURL := "http://127.0.0.1:" + strconv.Itoa(server.Ports().V4)
-	cmd := exec.CommandContext(
-		ctx,
-		"swift",
-		"run",
-		"--package-path",
-		macosPackage,
-		"daemonclient-smoke",
-		"--base-url",
-		baseURL,
-		"--key-hex",
-		hex.EncodeToString(key),
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("swift daemon client smoke failed: %v\n%s", err, string(output))
-	}
-
-	cmd = exec.CommandContext(
-		ctx,
-		"swift",
-		"run",
-		"--package-path",
-		macosPackage,
-		"daemonclient-smoke",
-		"--base-url",
-		baseURL,
-		"--key-hex",
-		hex.EncodeToString(key),
-		"--events-topic",
-		"vault.locked",
-	)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("swift daemon client SSE smoke failed: %v\n%s", err, string(output))
 	}
 }
 

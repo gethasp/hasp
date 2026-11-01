@@ -10,7 +10,7 @@ import (
 )
 
 func TestVerifyPIDDesignatedRequirementUnavailableWithoutPlatformAttestation(t *testing.T) {
-	err := verifyPIDDesignatedRequirement(1234, `identifier "com.gethasp.hasp.HASP"`)
+	err := verifyPIDDesignatedRequirement(1234, `identifier "com.gethasp.hasp.daemon"`)
 	if !errors.Is(err, ErrAttestationUnavailable) {
 		t.Fatalf("expected unavailable error, got %v", err)
 	}

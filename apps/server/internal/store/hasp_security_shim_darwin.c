@@ -228,17 +228,13 @@ OSStatus HASPKeychainAddWithRequirements(
   const char *account,
   const unsigned char *bytes,
   CFIndex length,
-  const char *appRequirement,
   const char *daemonRequirement
 ) {
   CFStringRef serviceRef = NULL;
   CFStringRef accountRef = NULL;
   CFDataRef valueData = NULL;
-  CFStringRef appReqString = NULL;
   CFStringRef daemonReqString = NULL;
-  SecRequirementRef appReq = NULL;
   SecRequirementRef daemonReq = NULL;
-  SecTrustedApplicationRef appTrust = NULL;
   SecTrustedApplicationRef daemonTrust = NULL;
   CFArrayRef trustedList = NULL;
   SecAccessRef access = NULL;
@@ -249,27 +245,22 @@ OSStatus HASPKeychainAddWithRequirements(
 
   serviceRef = hasp_cfstring(service);
   accountRef = hasp_cfstring(account);
-  appReqString = hasp_cfstring(appRequirement);
   daemonReqString = hasp_cfstring(daemonRequirement);
   valueData = CFDataCreate(NULL, bytes, length);
   if (
-    serviceRef == NULL || accountRef == NULL || appReqString == NULL || daemonReqString == NULL
+    serviceRef == NULL || accountRef == NULL || daemonReqString == NULL
     || valueData == NULL
   ) {
     return errSecParam;
   }
 
-  OSStatus status = SecRequirementCreateWithString(appReqString, kSecCSDefaultFlags, &appReq);
-  if (status != errSecSuccess) goto done;
-  status = SecRequirementCreateWithString(daemonReqString, kSecCSDefaultFlags, &daemonReq);
-  if (status != errSecSuccess) goto done;
-  status = SecTrustedApplicationCreateFromRequirement("HASP.app", appReq, &appTrust);
+  OSStatus status = SecRequirementCreateWithString(daemonReqString, kSecCSDefaultFlags, &daemonReq);
   if (status != errSecSuccess) goto done;
   status = SecTrustedApplicationCreateFromRequirement("HASP daemon", daemonReq, &daemonTrust);
   if (status != errSecSuccess) goto done;
 
-  const void *trustedApps[] = { appTrust, daemonTrust };
-  trustedList = CFArrayCreate(NULL, trustedApps, 2, &kCFTypeArrayCallBacks);
+  const void *trustedApps[] = { daemonTrust };
+  trustedList = CFArrayCreate(NULL, trustedApps, 1, &kCFTypeArrayCallBacks);
   if (trustedList == NULL) {
     status = errSecParam;
     goto done;
@@ -376,12 +367,9 @@ done:
   if (aclList != NULL) CFRelease(aclList);
   if (access != NULL) CFRelease(access);
   if (trustedList != NULL) CFRelease(trustedList);
-  if (appTrust != NULL) CFRelease(appTrust);
   if (daemonTrust != NULL) CFRelease(daemonTrust);
-  if (appReq != NULL) CFRelease(appReq);
   if (daemonReq != NULL) CFRelease(daemonReq);
   if (valueData != NULL) CFRelease(valueData);
-  if (appReqString != NULL) CFRelease(appReqString);
   if (daemonReqString != NULL) CFRelease(daemonReqString);
   if (serviceRef != NULL) CFRelease(serviceRef);
   if (accountRef != NULL) CFRelease(accountRef);

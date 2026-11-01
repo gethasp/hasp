@@ -10,10 +10,10 @@ import (
 
 func TestDarwinNativeKeyringHMACErrorBranches(t *testing.T) {
 	keyring := DarwinKeyring{}
-	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "value", []string{"only-one"}); !errors.Is(err, ErrKeyringUnavailable) {
+	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "value", nil); !errors.Is(err, ErrKeyringUnavailable) {
 		t.Fatalf("expected requirement-count error, got %v", err)
 	}
-	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "not-base64", []string{"app", "daemon"}); !errors.Is(err, ErrKeyringUnavailable) {
+	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "not-base64", []string{"daemon"}); !errors.Is(err, ErrKeyringUnavailable) {
 		t.Fatalf("expected base64 decode error, got %v", err)
 	}
 	if _, err := keyring.GetNative("com.gethasp.test.missing", "missing-account"); !errors.Is(err, ErrKeyringUnavailable) {

@@ -24,7 +24,7 @@ const (
 	HASPDaemonBundleID       = "com.gethasp.hasp.daemon"
 )
 
-// HMACTeamID is injected at build time for signed macOS app/daemon builds.
+// HMACTeamID is injected at build time for signed macOS CLI/daemon builds.
 // Runtime environment variables must not participate in the keychain ACL trust
 // root; an unset value fails closed outside Go tests.
 var HMACTeamID = ""
@@ -117,9 +117,8 @@ func HMACKeyDesignatedRequirements() ([]string, error) {
 			return nil, errors.New("httpapi: build-time HMACTeamID is required for HTTP HMAC key ACL")
 		}
 	}
-	appRequirement, _ := designatedRequirement(HASPAppBundleID, teamID)
 	daemonRequirement, _ := designatedRequirement(HASPDaemonBundleID, teamID)
-	return []string{appRequirement, daemonRequirement}, nil
+	return []string{daemonRequirement}, nil
 }
 
 func designatedRequirement(bundleID string, teamID string) (string, error) {

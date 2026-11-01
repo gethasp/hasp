@@ -1827,7 +1827,7 @@ func TestRuntimeDefaultVaultHelpersCoverage(t *testing.T) {
 	oldNewStoreForPaths := newStoreForPaths
 	oldOpenConvenience := storeOpenWithConvenienceUnlock
 	oldRevealFind := revealFind
-	oldRequirement := haspAppDesignatedRequirement
+	oldRequirement := daemonClientDesignatedRequirement
 	oldLoadHMAC := loadProvisionedHMACKey
 	oldHMACRandom := httpHMACRandomRead
 	oldGoTestBinary := goTestBinary
@@ -1835,7 +1835,7 @@ func TestRuntimeDefaultVaultHelpersCoverage(t *testing.T) {
 		newStoreForPaths = oldNewStoreForPaths
 		storeOpenWithConvenienceUnlock = oldOpenConvenience
 		revealFind = oldRevealFind
-		haspAppDesignatedRequirement = oldRequirement
+		daemonClientDesignatedRequirement = oldRequirement
 		loadProvisionedHMACKey = oldLoadHMAC
 		httpHMACRandomRead = oldHMACRandom
 		goTestBinary = oldGoTestBinary
@@ -1867,11 +1867,11 @@ func TestRuntimeDefaultVaultHelpersCoverage(t *testing.T) {
 	storeOpenWithConvenienceUnlock = oldOpenConvenience
 	revealFind = oldRevealFind
 
-	haspAppDesignatedRequirement = func(string) (string, error) { return "", errors.New("requirement failed") }
-	if _, err := newHASPAppAttestor(); err == nil {
+	daemonClientDesignatedRequirement = func(string) (string, error) { return "", errors.New("requirement failed") }
+	if _, err := newDaemonClientAttestor(); err == nil {
 		t.Fatal("attestor should propagate designated requirement failure")
 	}
-	haspAppDesignatedRequirement = oldRequirement
+	daemonClientDesignatedRequirement = oldRequirement
 	loadProvisionedHMACKey = func(store.Keyring) ([]byte, error) {
 		return []byte("0123456789abcdef0123456789abcdef"), nil
 	}

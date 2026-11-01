@@ -18,10 +18,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1725,72 +1723,6 @@ func TestRuntimeEventHubClosesSlowSubscriberOnOverflow(t *testing.T) {
 	}
 }
 
-func TestRuntimeHTTPServerSwiftDaemonClientSmokeCoversDashboardAndEvents(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS Swift client requires Apple frameworks")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	key := []byte("0123456789abcdef0123456789abcdef")
-	oldHTTPHMACKey := httpHMACKey
-	httpHMACKey = func(context.Context) ([]byte, error) { return key, nil }
-	oldRestartDaemonProcess := restartDaemonProcess
-	restartCalled := make(chan struct{}, 1)
-	restartDaemonProcess = func() {
-		select {
-		case restartCalled <- struct{}{}:
-		default:
-		}
-	}
-	t.Cleanup(func() {
-		httpHMACKey = oldHTTPHMACKey
-		restartDaemonProcess = oldRestartDaemonProcess
-	})
-
-	home, err := os.MkdirTemp("", "hasp-rt-*")
-	if err != nil {
-		t.Fatalf("create temp home: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	rpcSrv := newRPCServer(paths.Paths{
-		HomeDir:            home,
-		StatePath:          filepath.Join(home, "vault.json.enc"),
-		AuditPath:          filepath.Join(home, "audit.jsonl"),
-		RuntimeDir:         filepath.Join(home, "runtime"),
-		SocketPath:         filepath.Join(home, "runtime", "hasp.sock"),
-		HTTPUnixSocketPath: filepath.Join(home, "http.sock"),
-		HTTPPortFilePath:   filepath.Join(home, "daemon.http.port"),
-	})
-	rpcSrv.keyring = newHTTPTestKeyring()
-	if _, err := rpcSrv.sessions.Open("host", "/tmp/project", 10*time.Minute, false, ""); err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-
-	errCh := make(chan error, 1)
-	httpSrv, err := startHTTPServer(ctx, rpcSrv.paths, rpcSrv, errCh)
-	if err != nil {
-		t.Fatalf("start http server: %v", err)
-	}
-	defer func() {
-		cancel()
-		_ = httpSrv.Close()
-	}()
-
-	macosPackage, err := filepath.Abs("../../../macos")
-	if err != nil {
-		t.Fatalf("resolve macos package: %v", err)
-	}
-	if _, err := os.Stat(macosPackage); errors.Is(err, os.ErrNotExist) {
-		t.Skipf("macOS Swift package is not exported at %s", macosPackage)
-	} else if err != nil {
-		t.Fatalf("stat macos package: %v", err)
-	}
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", httpSrv.Ports().V4)
-	runSwiftDaemonClientSmoke(t, ctx, macosPackage, baseURL, key)
-	runSwiftDaemonClientSmokeWithEventTrigger(t, ctx, macosPackage, baseURL, key, rpcSrv, "vault.locked")
-}
-
 func TestRuntimeHTTPServerFailsClosedWhenHMACSecretMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -2683,26 +2615,6 @@ func TestBackupScheduleDueAndPath(t *testing.T) {
 	}
 }
 
-func runSwiftDaemonClientSmoke(t *testing.T, ctx context.Context, macosPackage string, baseURL string, key []byte, extraArgs ...string) {
-	t.Helper()
-	args := []string{
-		"run",
-		"--package-path",
-		macosPackage,
-		"daemonclient-smoke",
-		"--base-url",
-		baseURL,
-		"--key-hex",
-		hex.EncodeToString(key),
-	}
-	args = append(args, extraArgs...)
-	cmd := exec.CommandContext(ctx, "swift", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("swift daemon client smoke failed: %v\n%s", err, string(output))
-	}
-}
-
 func signedHTTPJSON(t *testing.T, ctx context.Context, key []byte, method string, url string, body []byte) []byte {
 	t.Helper()
 	out, status := signedHTTPJSONStatus(t, ctx, key, method, url, body)
@@ -2759,70 +2671,6 @@ func normalizeJSONMap(t *testing.T, body []byte) map[string]any {
 		t.Fatalf("decode JSON map: %v\n%s", err, body)
 	}
 	return payload
-}
-
-func runSwiftDaemonClientSmokeWithEventTrigger(
-	t *testing.T,
-	ctx context.Context,
-	macosPackage string,
-	baseURL string,
-	key []byte,
-	rpcSrv *rpcServer,
-	topic string,
-) {
-	t.Helper()
-	args := []string{
-		"run",
-		"--package-path",
-		macosPackage,
-		"daemonclient-smoke",
-		"--base-url",
-		baseURL,
-		"--key-hex",
-		hex.EncodeToString(key),
-		"--events-topic",
-		topic,
-	}
-	cmd := exec.CommandContext(ctx, "swift", args...)
-	output := new(bytes.Buffer)
-	cmd.Stdout = output
-	cmd.Stderr = output
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start swift daemon client SSE smoke: %v", err)
-	}
-	broker := &brokerRPC{
-		paths:      rpcSrv.paths,
-		startedAt:  rpcSrv.startedAt,
-		sessions:   rpcSrv.sessions,
-		audit:      rpcSrv.audit,
-		auditState: rpcSrv.auditState,
-		events:     rpcSrv.events,
-	}
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("swift daemon client SSE smoke failed: %v\n%s", err, output.String())
-			}
-			return
-		case <-ticker.C:
-			var reply LockVaultResponse
-			if err := broker.LockVault(LockVaultRequest{Cause: "manual"}, &reply); err != nil {
-				t.Fatalf("lock vault for swift daemon client smoke: %v", err)
-			}
-		case <-deadline:
-			t.Fatalf("timed out waiting for swift daemon client SSE smoke\n%s", output.String())
-		case <-ctx.Done():
-			t.Fatalf("context ended waiting for swift daemon client SSE smoke: %v\n%s", ctx.Err(), output.String())
-		}
-	}
 }
 
 func readSSELines(body io.Reader, lines chan<- string) {
@@ -3035,7 +2883,7 @@ func TestHTTPRevealRouteUsesUnixSocketPeerPIDForAttestation(t *testing.T) {
 			UpdatedAt: now,
 		}), nil
 	}
-	if _, err := rpcSrv.sessions.OpenInternal("gui", home, time.Minute, false, "hasp-macos"); err != nil {
+	if _, err := rpcSrv.sessions.OpenInternal("http-api", home, time.Minute, false, "hasp-http-api"); err != nil {
 		t.Fatalf("open internal session: %v", err)
 	}
 
@@ -3133,7 +2981,7 @@ func TestHTTPRevealRequestIDIdempotencyAuditsOnce(t *testing.T) {
 			UpdatedAt: now,
 		}), nil
 	}
-	if _, err := rpcSrv.sessions.OpenInternal("gui", home, time.Minute, false, "hasp-macos"); err != nil {
+	if _, err := rpcSrv.sessions.OpenInternal("http-api", home, time.Minute, false, "hasp-http-api"); err != nil {
 		t.Fatalf("open internal session: %v", err)
 	}
 
@@ -3319,7 +3167,7 @@ func TestHTTPRevealLockedVaultAndRateLimit(t *testing.T) {
 	if status != http.StatusLocked {
 		t.Fatalf("locked reveal status = %d, want 423 body=%s", status, out)
 	}
-	if _, err := rpcSrv.sessions.OpenInternal("gui", home, time.Minute, false, "hasp-macos"); err != nil {
+	if _, err := rpcSrv.sessions.OpenInternal("http-api", home, time.Minute, false, "hasp-http-api"); err != nil {
 		t.Fatalf("open internal session: %v", err)
 	}
 	for i := 0; i < revealRateLimitCount; i++ {

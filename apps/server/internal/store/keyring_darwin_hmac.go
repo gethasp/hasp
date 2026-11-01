@@ -49,8 +49,8 @@ func (DarwinKeyring) setNative(service string, account string, value string) err
 }
 
 func (DarwinKeyring) SetWithDesignatedRequirements(_ context.Context, service string, account string, value string, requirements []string) error {
-	if len(requirements) != 2 {
-		return fmt.Errorf("%w: expected exactly two designated requirements", ErrKeyringUnavailable)
+	if len(requirements) != 1 {
+		return fmt.Errorf("%w: expected exactly one designated requirement", ErrKeyringUnavailable)
 	}
 	serviceC := C.CString(service)
 	accountC := C.CString(account)
@@ -61,15 +61,13 @@ func (DarwinKeyring) SetWithDesignatedRequirements(_ context.Context, service st
 		return fmt.Errorf("%w: decode native keychain value: %v", ErrKeyringUnavailable, err)
 	}
 	valueC := (*C.uchar)(C.CBytes(valueBytes))
-	appReqC := C.CString(requirements[0])
-	daemonReqC := C.CString(requirements[1])
+	daemonReqC := C.CString(requirements[0])
 	defer C.free(unsafe.Pointer(serviceC))
 	defer C.free(unsafe.Pointer(accountC))
 	defer C.free(unsafe.Pointer(valueC))
-	defer C.free(unsafe.Pointer(appReqC))
 	defer C.free(unsafe.Pointer(daemonReqC))
 
-	status := C.HASPKeychainAddWithRequirements(serviceC, accountC, valueC, C.CFIndex(len(valueBytes)), appReqC, daemonReqC)
+	status := C.HASPKeychainAddWithRequirements(serviceC, accountC, valueC, C.CFIndex(len(valueBytes)), daemonReqC)
 	if status != C.errSecSuccess { //nolint:gocritic // cgo constants can trigger dupSubExpr falsely here.
 		return fmt.Errorf("%w: create HTTP HMAC keychain item with designated requirements failed: OSStatus %d", ErrKeyringUnavailable, int(status))
 	}

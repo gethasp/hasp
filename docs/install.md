@@ -155,7 +155,7 @@ this deadline does not prove that an OS consent dialog can be dismissed remotely
 Use `never` in unattended sessions to avoid that dependency.
 
 A GUI login and a launchd user session are separate from an SSH login. The CLI
-can start its daemon directly; it does not require the macOS app or a LaunchAgent.
+can start its daemon directly without a LaunchAgent.
 If you installed a custom LaunchAgent, inspect it in the intended user's launchd
 domain and check its absolute executable path and environment. An agent launched
 by launchd may have a different PATH from your terminal.

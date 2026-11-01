@@ -1167,9 +1167,9 @@ Subcommands
   http-key   inspect or reinitialise the daemon HTTP HMAC key
 
 Examples
-  hasp daemon run --foreground --gui-listener
+  hasp daemon run --foreground
   hasp daemon status
-  hasp daemon restart --reason app-update
+  hasp daemon restart --reason update
   hasp daemon http-key fingerprint
   hasp daemon http-key reinitialize
 `

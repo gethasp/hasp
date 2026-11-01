@@ -10,7 +10,7 @@ import (
 
 func TestDarwinNativeHMACKeyringFastKDFStub(t *testing.T) {
 	keyring := DarwinKeyring{}
-	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "value", []string{"app", "daemon"}); !errors.Is(err, ErrKeyringUnavailable) {
+	if err := keyring.SetWithDesignatedRequirements(context.Background(), "svc", "acct", "value", []string{"daemon"}); !errors.Is(err, ErrKeyringUnavailable) {
 		t.Fatalf("set designated requirement err = %v", err)
 	}
 	if _, err := keyring.GetNative("svc", "acct"); !errors.Is(err, ErrKeyringUnavailable) {

@@ -14,8 +14,6 @@ var (
 	ErrAttestationRejected    = errors.New("attestation rejected")
 )
 
-const HASPAppBundleID = "com.gethasp.hasp.HASP"
-
 var verifyPIDRequirement = verifyPIDDesignatedRequirement
 
 type peerPIDContextKey struct{}
@@ -36,12 +34,12 @@ func NewDesignatedRequirementAttestor(requirement string) (*DesignatedRequiremen
 	return &DesignatedRequirementAttestor{requirement: requirement}, nil
 }
 
-func HASPAppDesignatedRequirement(teamID string) (string, error) {
+func HASPDaemonDesignatedRequirement(teamID string) (string, error) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID == "" {
 		return "", errors.New("httpapi: team id is required")
 	}
-	return fmt.Sprintf(`identifier "%s" and anchor apple generic and certificate leaf[subject.OU] = "%s" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`, HASPAppBundleID, teamID), nil
+	return fmt.Sprintf(`identifier "%s" and anchor apple generic and certificate leaf[subject.OU] = "%s" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`, HASPDaemonBundleID, teamID), nil
 }
 
 func (a *DesignatedRequirementAttestor) VerifyPID(pid int) error {
@@ -83,7 +81,7 @@ func IsUnixTransport(r *http.Request) bool {
 
 // AdminOverTCPAllowed reports whether vault-mutating admin operations may be
 // served over TCP loopback. This is true only when the HTTP HMAC key has per-app
-// keyring ACL protection (Darwin): there, only the signed HASP app/daemon can
+// keyring ACL protection (Darwin): there, only the signed HASP CLI/daemon can
 // read the key and forge requests, so the TCP surface is safe. Where the key is
 // not ACL-protected (Linux: any same-UID process can read it), admin operations
 // must come over the unix socket instead (hasp-2dzp).

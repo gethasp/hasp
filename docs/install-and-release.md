@@ -37,8 +37,8 @@ Before creating a tag:
    `hasp-evals-bin*/hasp daemon serve` helpers behind.
 
 The public `/docs/` route and every release route `/docs/vX.Y.Z/` must describe
-a currently released core HASP app tag. Do not use the macOS wrapper roadmap or
-an unreleased `VERSION` bump to create a public docs version.
+a currently released HASP CLI tag. Do not use an unreleased `VERSION` bump
+to create a public docs version.
 
 ## Source build
 

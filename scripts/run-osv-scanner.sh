@@ -14,7 +14,7 @@ if [[ $# -gt 0 ]]; then
   scan_roots=("$@")
 else
   web_app_dir="apps/${HASP_OSV_WEB_APP_DIR_NAME:-web}"
-  for candidate in apps/server public/apps/server tools/license-signer "$web_app_dir"; do
+  for candidate in apps/server public/apps/server "$web_app_dir"; do
     if [[ -e "$repo_root/$candidate" ]]; then
       scan_roots+=("$candidate")
     fi

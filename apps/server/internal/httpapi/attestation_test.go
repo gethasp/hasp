@@ -18,20 +18,20 @@ func TestNewDesignatedRequirementAttestorRequiresRequirement(t *testing.T) {
 	}
 }
 
-func TestHASPAppDesignatedRequirementMatchesSpec(t *testing.T) {
-	requirement, err := HASPAppDesignatedRequirement(" TEAM123 ")
+func TestHASPDaemonDesignatedRequirementMatchesSpec(t *testing.T) {
+	requirement, err := HASPDaemonDesignatedRequirement(" TEAM123 ")
 	if err != nil {
 		t.Fatalf("build requirement: %v", err)
 	}
 
-	want := `identifier "com.gethasp.hasp.HASP" and anchor apple generic and certificate leaf[subject.OU] = "TEAM123" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
+	want := `identifier "com.gethasp.hasp.daemon" and anchor apple generic and certificate leaf[subject.OU] = "TEAM123" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
 	if requirement != want {
 		t.Fatalf("requirement = %q, want %q", requirement, want)
 	}
 }
 
-func TestHASPAppDesignatedRequirementRequiresTeamID(t *testing.T) {
-	requirement, err := HASPAppDesignatedRequirement(" \t ")
+func TestHASPDaemonDesignatedRequirementRequiresTeamID(t *testing.T) {
+	requirement, err := HASPDaemonDesignatedRequirement(" \t ")
 	if err == nil {
 		t.Fatal("expected empty team ID rejection")
 	}
@@ -53,7 +53,7 @@ func TestDesignatedRequirementAttestorVerifyPIDRequiresRequirement(t *testing.T)
 }
 
 func TestDesignatedRequirementAttestorVerifyPIDRejectsNonPositivePID(t *testing.T) {
-	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.HASP"`)
+	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.daemon"`)
 	if err != nil {
 		t.Fatalf("new attestor: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestDesignatedRequirementAttestorVerifyPIDRejectsNonPositivePID(t *testing.
 }
 
 func TestDesignatedRequirementAttestorVerifyPIDDelegatesToPlatformVerifier(t *testing.T) {
-	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.HASP"`)
+	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.daemon"`)
 	if err != nil {
 		t.Fatalf("new attestor: %v", err)
 	}
@@ -103,13 +103,13 @@ func TestDesignatedRequirementAttestorVerifyPIDDelegatesToPlatformVerifier(t *te
 	if gotPID != 1234 {
 		t.Fatalf("pid = %d, want 1234", gotPID)
 	}
-	if gotRequirement != `identifier "com.gethasp.hasp.HASP"` {
+	if gotRequirement != `identifier "com.gethasp.hasp.daemon"` {
 		t.Fatalf("requirement = %q", gotRequirement)
 	}
 }
 
 func TestDesignatedRequirementAttestorVerifyPIDPropagatesPlatformVerifierError(t *testing.T) {
-	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.HASP"`)
+	attestor, err := NewDesignatedRequirementAttestor(`identifier "com.gethasp.hasp.daemon"`)
 	if err != nil {
 		t.Fatalf("new attestor: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRevealAttestationResidualBranches(t *testing.T) {
 	if _, ok, err := RevealSecretRef(httptest.NewRequest(http.MethodPost, "/v1/unknown/api/reveal", nil)); ok || err != nil {
 		t.Fatalf("unknown reveal route ok=%t err=%v", ok, err)
 	}
-	if err := verifyPIDDesignatedRequirement(0, `identifier "com.gethasp.hasp.HASP"`); !errors.Is(err, ErrAttestationRejected) {
+	if err := verifyPIDDesignatedRequirement(0, `identifier "com.gethasp.hasp.daemon"`); !errors.Is(err, ErrAttestationRejected) {
 		t.Fatalf("non-positive pid err = %v", err)
 	}
 }

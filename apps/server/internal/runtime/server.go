@@ -99,23 +99,23 @@ var (
 	brokerLockVault = func(broker *brokerRPC, req LockVaultRequest, reply *LockVaultResponse) error {
 		return broker.LockVault(req, reply)
 	}
-	httpHMACKey                  = defaultHTTPHMACKey
-	loadProvisionedHMACKey       = httpapi.LoadProvisionedHMACKey
-	httpHMACRandomRead           = rand.Read
-	httpAttestor                 = newHASPAppAttestor
-	haspAppDesignatedRequirement = httpapi.HASPAppDesignatedRequirement
-	serveHTTPServer              = func(server *httpapi.Server, ctx context.Context) error { return server.Serve(ctx) }
-	runtimeAuditVerify           = (*audit.Log).VerifyDetailed
-	revealRandRead               = rand.Read
-	revealNewCipher              = aes.NewCipher
-	revealNewGCM                 = cipher.NewGCM
-	revealJSONMarshal            = json.Marshal
-	revealFind                   = revealcore.Find
-	goTestBinary                 = isGoTestBinary
-	backupStatusForFile          = store.BackupSignatureStatusForFile
-	pruneBackupDirectory         = store.PruneBackupDirectory
-	backupSchedulerTick          = time.Minute
-	restartDaemonProcess         = func() {
+	httpHMACKey                       = defaultHTTPHMACKey
+	loadProvisionedHMACKey            = httpapi.LoadProvisionedHMACKey
+	httpHMACRandomRead                = rand.Read
+	httpAttestor                      = newDaemonClientAttestor
+	daemonClientDesignatedRequirement = httpapi.HASPDaemonDesignatedRequirement
+	serveHTTPServer                   = func(server *httpapi.Server, ctx context.Context) error { return server.Serve(ctx) }
+	runtimeAuditVerify                = (*audit.Log).VerifyDetailed
+	revealRandRead                    = rand.Read
+	revealNewCipher                   = aes.NewCipher
+	revealNewGCM                      = cipher.NewGCM
+	revealJSONMarshal                 = json.Marshal
+	revealFind                        = revealcore.Find
+	goTestBinary                      = isGoTestBinary
+	backupStatusForFile               = store.BackupSignatureStatusForFile
+	pruneBackupDirectory              = store.PruneBackupDirectory
+	backupSchedulerTick               = time.Minute
+	restartDaemonProcess              = func() {
 		os.Exit(75)
 	}
 )
@@ -1181,9 +1181,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		broker := rpcSrv.broker()
 		var session OpenSessionResponse
 		if err := brokerOpenSession(broker, OpenSessionRequest{
-			HostLabel:    "HASP.app",
+			HostLabel:    "HASP HTTP client",
 			TTLSeconds:   int(DefaultSessionTTL.Seconds()),
-			ConsumerName: "HASP.app",
+			ConsumerName: "HASP HTTP client",
 			Internal:     true,
 		}, &session); err != nil {
 			writeRedactedHTTPError(w, http.StatusInternalServerError, "vault_unlock_failed", "Vault unlock failed", err)
@@ -1258,9 +1258,9 @@ func startHTTPServer(ctx context.Context, runtimePaths paths.Paths, rpcSrv *rpcS
 		broker := rpcSrv.broker()
 		var session OpenSessionResponse
 		if err := brokerOpenSession(broker, OpenSessionRequest{
-			HostLabel:    "HASP.app",
+			HostLabel:    "HASP HTTP client",
 			TTLSeconds:   int(DefaultSessionTTL.Seconds()),
-			ConsumerName: "HASP.app",
+			ConsumerName: "HASP HTTP client",
 			Internal:     true,
 		}, &session); err != nil {
 			writeRedactedHTTPError(w, http.StatusInternalServerError, "unlock_failed", "Unlock failed", err)
@@ -2489,12 +2489,12 @@ func accessMatrixInputFromHandle(handle *store.Handle, sessions *SessionStore) a
 	return input
 }
 
-func newHASPAppAttestor() (httpapi.Attestor, error) {
+func newDaemonClientAttestor() (httpapi.Attestor, error) {
 	teamID := strings.TrimSpace(httpapi.HMACTeamID)
 	if teamID == "" && (isGoTestBinary() || goruntime.GOOS != "darwin") {
 		teamID = "TEAMID1234"
 	}
-	requirement, err := haspAppDesignatedRequirement(teamID)
+	requirement, err := daemonClientDesignatedRequirement(teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -3955,7 +3955,7 @@ func (b *brokerRPC) decideApprovalTrusted(req DecideApprovalRequest, reply *Deci
 		}
 		// NOTE (hasp-yx6d): hold_duration_ms and auth_method are caller-asserted
 		// UI-intent fields, NOT cryptographic proofs. The HMAC on the request is
-		// the actual authorization (the key is Keychain-ACL-protected to HASP.app
+		// the actual authorization (the key is Keychain-ACL-protected to HASP HTTP client
 		// on Darwin). These checks reject obviously-malformed clients and stamp the
 		// audit trail; they do not themselves attest that a biometric occurred. If
 		// they must become authoritative audit evidence, extend the reveal

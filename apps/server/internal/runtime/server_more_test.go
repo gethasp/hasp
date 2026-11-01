@@ -55,9 +55,9 @@ func TestNewHASPAppAttestorDoesNotRequireTeamIDWhenPlatformAttestationUnavailabl
 	httpapi.HMACTeamID = ""
 	t.Cleanup(func() { httpapi.HMACTeamID = oldTeamID })
 
-	attestor, err := newHASPAppAttestor()
+	attestor, err := newDaemonClientAttestor()
 	if err != nil {
-		t.Fatalf("newHASPAppAttestor without team id on %s: %v", goruntime.GOOS, err)
+		t.Fatalf("newDaemonClientAttestor without team id on %s: %v", goruntime.GOOS, err)
 	}
 	if err := attestor.VerifyPID(os.Getpid()); !errors.Is(err, httpapi.ErrAttestationUnavailable) {
 		t.Fatalf("VerifyPID error = %v, want attestation unavailable", err)

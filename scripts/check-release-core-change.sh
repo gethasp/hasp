@@ -8,7 +8,7 @@ Usage: check-release-core-change.sh [release-tag]
 Reject a release tag unless the candidate commit contains core CLI/app code
 changes since the previous released app tag.
 
-Only core terminal app paths count. Release plumbing, website, docs, macOS app,
+Only core terminal app paths count. Release plumbing, website, docs,
 and public mirror changes do not qualify a new app release.
 EOF
 }
@@ -87,7 +87,7 @@ core_paths=(
 if git diff --quiet "$previous_commit" "$candidate_commit" -- "${core_paths[@]}"; then
   printf 'release %s is blocked: no core CLI/app code changed since %s\n' "$release_tag" "$previous_tag" >&2
   printf 'qualifying paths: %s\n' "${core_paths[*]}" >&2
-  printf 'website, docs, workflow, macOS app, public mirror, and release-plumbing changes do not qualify a new app tag\n' >&2
+  printf 'website, docs, workflow, public mirror, and release-plumbing changes do not qualify a new app tag\n' >&2
   exit 1
 fi
 

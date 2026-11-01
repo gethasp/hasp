@@ -222,8 +222,8 @@ func TestAdHocDarwinCLIUsesLocalHMACFileWhenRequirementsDoNotMatch(t *testing.T)
 	if keyring.nativeGets != 0 || keyring.genericGets != 0 || len(keyring.requirements) != 0 {
 		t.Fatalf("keyring was used: native=%d generic=%d requirements=%#v", keyring.nativeGets, keyring.genericGets, keyring.requirements)
 	}
-	if len(checkedRequirements) != 2 || !strings.Contains(checkedRequirements[0], "TEAMID1234") || !strings.Contains(checkedRequirements[1], "TEAMID1234") {
-		t.Fatalf("checked requirements = %#v, want app+daemon TEAMID1234 requirements", checkedRequirements)
+	if len(checkedRequirements) != 1 || !strings.Contains(checkedRequirements[0], "TEAMID1234") {
+		t.Fatalf("checked requirements = %#v, want daemon TEAMID1234 requirement", checkedRequirements)
 	}
 	loaded, err := LoadOrCreateHMACKey(context.Background(), keyring)
 	if err != nil {
@@ -250,10 +250,9 @@ func TestLoadOrCreateHMACKeyUsesDesignatedRequirementKeyring(t *testing.T) {
 	if len(key) != sha256.Size {
 		t.Fatalf("key length = %d, want %d", len(key), sha256.Size)
 	}
-	wantApp := `identifier "com.gethasp.hasp.HASP" and anchor apple generic and certificate leaf[subject.OU] = "TEAM123" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
 	wantDaemon := `identifier "com.gethasp.hasp.daemon" and anchor apple generic and certificate leaf[subject.OU] = "TEAM123" and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
-	if len(keyring.requirements) != 2 || keyring.requirements[0] != wantApp || keyring.requirements[1] != wantDaemon {
-		t.Fatalf("requirements = %#v, want app+daemon DRs", keyring.requirements)
+	if len(keyring.requirements) != 1 || keyring.requirements[0] != wantDaemon {
+		t.Fatalf("requirements = %#v, want daemon DR", keyring.requirements)
 	}
 	if _, err := keyring.Get(HMACKeyService, account); err != nil {
 		t.Fatalf("stored key missing: %v", err)
@@ -312,8 +311,8 @@ func TestLoadOrCreateHMACKeyCreatesOnlyOnNativeNotFound(t *testing.T) {
 	if _, err := LoadOrCreateHMACKey(context.Background(), keyring); err != nil {
 		t.Fatalf("create after native not found: %v", err)
 	}
-	if len(keyring.requirements) != 2 {
-		t.Fatalf("expected new key to be written with DRs, got %#v", keyring.requirements)
+	if len(keyring.requirements) != 1 {
+		t.Fatalf("expected new key to be written with daemon DR, got %#v", keyring.requirements)
 	}
 }
 
@@ -404,10 +403,9 @@ func TestReinitializeHMACKeyDeletesAndRecreatesWithDesignatedRequirements(t *tes
 	if len(key) != sha256.Size {
 		t.Fatalf("key length = %d, want %d", len(key), sha256.Size)
 	}
-	if len(keyring.requirements) != 2 ||
-		!strings.Contains(keyring.requirements[0], `identifier "com.gethasp.hasp.HASP"`) ||
-		!strings.Contains(keyring.requirements[1], `identifier "com.gethasp.hasp.daemon"`) {
-		t.Fatalf("requirements = %#v, want app+daemon DRs", keyring.requirements)
+	if len(keyring.requirements) != 1 ||
+		!strings.Contains(keyring.requirements[0], `identifier "com.gethasp.hasp.daemon"`) {
+		t.Fatalf("requirements = %#v, want daemon DR", keyring.requirements)
 	}
 }
 
@@ -464,8 +462,8 @@ func TestHMACKeyDesignatedRequirementsUseTeamID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("designated requirements: %v", err)
 	}
-	if len(got) != 2 || !strings.Contains(got[0], `identifier "com.gethasp.hasp.HASP"`) || !strings.Contains(got[1], `identifier "com.gethasp.hasp.daemon"`) {
-		t.Fatalf("requirements = %#v, want app+daemon", got)
+	if len(got) != 1 || !strings.Contains(got[0], `identifier "com.gethasp.hasp.daemon"`) {
+		t.Fatalf("requirements = %#v, want daemon", got)
 	}
 	for _, requirement := range got {
 		if !strings.Contains(requirement, `certificate leaf[subject.OU] = "TEAM123"`) ||
@@ -795,7 +793,7 @@ func TestHMACKeyLocalDebugSeamsCoverResidualBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("test fallback team id should build requirements: %v", err)
 	}
-	if len(requirements) != 2 || !strings.Contains(requirements[0], "TEAMID1234") {
+	if len(requirements) != 1 || !strings.Contains(requirements[0], "TEAMID1234") {
 		t.Fatalf("fallback requirements = %#v", requirements)
 	}
 

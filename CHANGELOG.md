@@ -4,6 +4,16 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v1.0.47]
+
+- Remove the macOS GUI product, its packaging and update services. CLI, TUI,
+  MCP and daemon support continue on macOS and Linux.
+- Remove GUI download fields and routes; the download service serves CLI
+  artifacts only.
+- Remove the obsolete daemon `--gui-listener` flag and `app-update` restart
+  reason. Use `--reason update` for CLI updates. New daemon HTTP Keychain keys
+  trust the signed CLI/daemon identity only.
+
 ## [v1.0.46]
 
 - Build with Go 1.26.10 and update x/crypto to include current security fixes.

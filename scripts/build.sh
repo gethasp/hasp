@@ -79,7 +79,7 @@ if [[ -n "$hmac_team_id" && ! "$hmac_team_id" =~ ^[A-Z0-9]{10}$ ]]; then
 fi
 target_goos="${GOOS:-$(go env GOOS)}"
 if [[ "$target_goos" == "darwin" && -z "$hmac_team_id" ]]; then
-  echo "HASP_TEAM_ID must be set for darwin builds so the daemon HTTP HMAC key can be pinned to signed app/daemon requirements" >&2
+  echo "HASP_TEAM_ID must be set for darwin builds so the daemon HTTP HMAC key can be pinned to signed daemon requirements" >&2
   exit 1
 fi
 ldflags_base="\

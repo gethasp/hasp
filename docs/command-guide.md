@@ -984,13 +984,13 @@ hasp session grant-plaintext \
 
 Use this to manage the local broker runtime.
 
-The daemon serves brokered requests for CLI, app, and agent flows. Normal commands start or reach it when needed. Use daemon commands when you need explicit control.
+The daemon serves brokered requests for CLI, TUI, consumer and agent flows. Normal commands start or reach it when needed. Use daemon commands when you need explicit control.
 
 ```bash
 hasp daemon start
 hasp daemon status
 hasp daemon stop
-hasp daemon restart --reason app-update
+hasp daemon restart --reason update
 hasp daemon http-key fingerprint
 hasp daemon serve
 ```

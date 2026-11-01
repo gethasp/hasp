@@ -37,9 +37,8 @@ func runApprovalOSAScript(script string) error {
 }
 
 var validRestartReasons = map[string]bool{
-	"app-update": true,
-	"operator":   true,
-	"update":     true,
+	"operator": true,
+	"update":   true,
 }
 
 func daemonHandler(ctx context.Context, deps Deps, args []string, stdout io.Writer, _ io.Writer) error {
@@ -97,15 +96,13 @@ func runDaemon(ctx context.Context, manager *runtime.Manager, args []string) err
 	fs := flag.NewFlagSet("daemon run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	foreground := fs.Bool("foreground", false, "")
-	guiListener := fs.Bool("gui-listener", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: hasp daemon run [--foreground] [--gui-listener]")
+		return fmt.Errorf("usage: hasp daemon run [--foreground]")
 	}
 	_ = foreground
-	_ = guiListener
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
@@ -134,7 +131,7 @@ func restartDaemon(ctx context.Context, deps Deps, manager *runtime.Manager, arg
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: hasp daemon restart [--reason app-update|operator|update]")
+		return fmt.Errorf("usage: hasp daemon restart [--reason operator|update]")
 	}
 	if !validRestartReasons[*reason] {
 		return fmt.Errorf("invalid restart reason %q", *reason)

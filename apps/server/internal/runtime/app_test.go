@@ -709,7 +709,7 @@ func TestOpenSessionInternalGatedToInProcess(t *testing.T) {
 
 	inproc := &brokerRPC{paths: resolved, startedAt: time.Now().UTC(), sessions: NewSessionStore(), inProcess: true}
 	var reply2 OpenSessionResponse
-	if err := inproc.OpenSession(OpenSessionRequest{HostLabel: "HASP.app", TTLSeconds: 60, Internal: true}, &reply2); err != nil {
+	if err := inproc.OpenSession(OpenSessionRequest{HostLabel: "HASP HTTP client", TTLSeconds: 60, Internal: true}, &reply2); err != nil {
 		t.Fatalf("in-process open: %v", err)
 	}
 	if !reply2.Internal {

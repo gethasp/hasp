@@ -318,7 +318,7 @@ func TestRuntimeCommandSuccessPaths(t *testing.T) {
 	managerStartDaemon = func(*runtime.Manager, context.Context) error { return nil }
 	managerStopDaemon = func(*runtime.Manager) error { return nil }
 	for _, args := range [][]string{
-		{"daemon", "run", "--foreground", "--gui-listener"},
+		{"daemon", "run", "--foreground"},
 		{"daemon", "serve"},
 		{"daemon", "start"},
 		{"daemon", "stop"},
@@ -671,7 +671,7 @@ func TestDaemonRestartLocksVaultAndRestarts(t *testing.T) {
 		return nil
 	}
 
-	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "app-update"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "update"}, strings.NewReader(""), io.Discard, io.Discard); err != nil {
 		t.Fatalf("daemon restart: %v", err)
 	}
 	if fake.lockCalls != 1 {

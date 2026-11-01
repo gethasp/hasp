@@ -9,7 +9,6 @@ OSStatus HASPKeychainAddWithRequirements(
   const char *account,
   const unsigned char *bytes,
   CFIndex length,
-  const char *appRequirement,
   const char *daemonRequirement
 );
 
