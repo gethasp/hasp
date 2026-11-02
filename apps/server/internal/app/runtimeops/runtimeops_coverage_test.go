@@ -684,7 +684,7 @@ func TestDaemonRestartLocksVaultAndRestarts(t *testing.T) {
 		t.Fatalf("starts/stops = %d/%d, want 1/1", starts, stops)
 	}
 	fake.lockErr = errors.New("lock")
-	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "operator"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "lock" {
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "--reason", "operator"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "restart daemon: lock vault: lock" {
 		t.Fatalf("daemon restart lock err = %v", err)
 	}
 }
@@ -832,11 +832,11 @@ func TestDaemonAdditionalBranches(t *testing.T) {
 	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart", "extra"}, strings.NewReader(""), io.Discard, io.Discard); err == nil {
 		t.Fatal("daemon restart extra arg should fail")
 	}
-	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "start" {
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "restart daemon: start: start" {
 		t.Fatalf("daemon restart should ignore already-finished stop and return start err, got %v", err)
 	}
 	managerStopDaemon = func(*runtime.Manager) error { return errors.New("stop") }
-	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "stop" {
+	if err := RuntimeCommand(ctx, deps, []string{"daemon", "restart"}, strings.NewReader(""), io.Discard, io.Discard); err == nil || err.Error() != "restart daemon: stop: stop" {
 		t.Fatalf("daemon restart stop err = %v", err)
 	}
 	deps.NewStarter = func() (Starter, error) { return nil, errors.New("starter") }

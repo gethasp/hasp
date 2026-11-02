@@ -11,6 +11,20 @@ import (
 
 var processIdentityReadFile = os.ReadFile
 
+func realProcessIsZombie(pid int) bool {
+	data, err := processIdentityReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	body := string(data)
+	end := strings.LastIndexByte(body, ')')
+	if end < 0 {
+		return false
+	}
+	fields := strings.Fields(body[end+1:])
+	return len(fields) > 0 && (fields[0] == "Z" || fields[0] == "X")
+}
+
 // realProcessIdentity reads /proc/<pid>/stat and returns field 22
 // (starttime, in clock ticks since boot). Linux PIDs may be reused, so a
 // changed starttime is useful only as a stale-binding signal. It is not an

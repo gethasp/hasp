@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -88,6 +89,34 @@ func TestScanOutgoingExcludesRemoteTrackingHistory(t *testing.T) {
 	}
 }
 
+func TestScanOutgoingResolvesConfiguredRemoteURLs(t *testing.T) {
+	root := newOutgoingRepo(t, "sha1")
+	outgoingCommit(t, root, "token", string(outgoingTestItems[0].Value), "old leak")
+	pushed := outgoingCommit(t, root, "token", "safe", "remove leak")
+	tip := outgoingCommit(t, root, "clean", "new work", "new")
+	url := "git@example.com:org/repo.git"
+	pushURL := "ssh://git@example.com/org/push.git"
+	outgoingGit(t, root, "remote", "add", "origin", url)
+	outgoingGit(t, root, "config", "--add", "remote.origin.url", "/other/repo with spaces")
+	outgoingGit(t, root, "config", "remote.origin.pushurl", pushURL)
+	outgoingGit(t, root, "remote", "add", "mirror", url)
+	// Only the second matching remote has tracking refs.
+	outgoingGit(t, root, "update-ref", "refs/remotes/mirror/main", pushed)
+	outgoingGit(t, root, "update-ref", "refs/remotes/origin/main", pushed)
+	updates := []RefUpdate{{"HEAD", tip, "refs/heads/new", strings.Repeat("0", 40)}}
+	for _, remote := range []string{url, pushURL, "/other/repo with spaces"} {
+		res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, updates, remote)
+		if err != nil || len(res.Matches) != 0 || res.Stats.SourcesEnumerated != 3 {
+			t.Fatalf("URL %q rescanned remote history: %+v, %v", remote, res, err)
+		}
+	}
+	outgoingGit(t, root, "update-ref", "-d", "refs/remotes/origin/main")
+	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, updates, url)
+	if err != nil || len(res.Matches) != 0 || res.Stats.SourcesEnumerated != 3 {
+		t.Fatalf("second matching remote ignored: %+v, %v", res, err)
+	}
+}
+
 func TestScanOutgoingTagsMessagesAndForcedUpdates(t *testing.T) {
 	root := newOutgoingRepo(t, "sha1")
 	base := outgoingCommit(t, root, "safe", "safe", "base")
@@ -146,6 +175,60 @@ func TestReadRefUpdatesRejectsMalformedInput(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].LocalRef != "(delete)" {
 		t.Fatalf("valid deletion rejected: %+v, %v", got, err)
 	}
+}
+
+func TestOutgoingScanReportsUnboundedCountAndProgress(t *testing.T) {
+	root := newOutgoingRepo(t, "sha1")
+	tip := outgoingCommit(t, root, "clean", "safe", "base")
+	original := buildOutgoingCommand
+	t.Cleanup(func() { buildOutgoingCommand = original })
+	buildOutgoingCommand = func(ctx context.Context, root string, args ...string) *exec.Cmd {
+		cmd := outgoingGitCommand(ctx, root, args...)
+		if args[0] == "rev-list" {
+			// Delay enumeration beyond the public heartbeat interval.
+			wrapper := exec.CommandContext(ctx, "sh", append([]string{"-c", `sleep 3.2; exec "$@"`, "progress-test"}, cmd.Args...)...)
+			wrapper.Env = cmd.Env
+			return wrapper
+		}
+		return cmd
+	}
+	var output bytes.Buffer
+	res, err := ScanOutgoing(context.Background(), root, outgoingTestItems, 0, []RefUpdate{{"HEAD", tip, "refs/heads/new", strings.Repeat("0", 40)}}, "", &output)
+	if err != nil || res.Stats.SourcesEnumerated != 3 {
+		t.Fatalf("scan failed: %+v, %v", res, err)
+	}
+	for _, text := range []string{"no available remote tips", "enumerating outgoing Git objects...", "will read 3 Git objects"} {
+		if !strings.Contains(output.String(), text) {
+			t.Errorf("missing %q: %s", text, output.String())
+		}
+	}
+	// The same heartbeat also names the object count during slow reads.
+	var reads bytes.Buffer
+	p := newOutgoingProgress(&reads, false)
+	p.enumerated(3)
+	p.scanned.Add(1)
+	p.report()
+	p.close()
+	if !strings.Contains(reads.String(), "scanned 1/3") {
+		t.Fatalf("missing read progress: %s", reads.String())
+	}
+}
+
+func FuzzReadRefUpdates(f *testing.F) {
+	f.Add("HEAD " + strings.Repeat("a", 40) + " refs/heads/main " + strings.Repeat("0", 40) + "\n")
+	f.Add("malformed\n")
+	f.Add("(delete) " + strings.Repeat("0", 64) + " refs/heads/old " + strings.Repeat("b", 64))
+	f.Fuzz(func(t *testing.T, input string) {
+		updates, err := ReadRefUpdates(strings.NewReader(input))
+		if err != nil {
+			return
+		}
+		for _, update := range updates {
+			if !validObjectID(update.LocalOID) || !validObjectID(update.RemoteOID) || len(update.LocalOID) != len(update.RemoteOID) {
+				t.Fatalf("accepted unsafe object IDs: %+v", update)
+			}
+		}
+	})
 }
 
 func newOutgoingRepo(t *testing.T, format string) string {

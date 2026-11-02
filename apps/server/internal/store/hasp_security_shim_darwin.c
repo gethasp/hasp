@@ -5,6 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+// This file implements the file-based Keychain compatibility boundary. Its
+// trusted-application ACLs and noninteractive reads use deprecated APIs whose
+// data-protection replacements have a different access-control model. Keep
+// diagnostics scoped here rather than changing existing key ownership or ACLs.
+// https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 OSStatus SecTrustedApplicationCreateFromRequirement(
   const char *description,
   SecRequirementRef requirement,
@@ -402,3 +410,5 @@ done:
 void HASPSecurityFree(void *pointer) {
   free(pointer);
 }
+
+#pragma clang diagnostic pop

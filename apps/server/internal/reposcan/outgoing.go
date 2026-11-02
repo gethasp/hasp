@@ -58,13 +58,13 @@ func zeroObjectID(value string) bool { return strings.Trim(value, "0") == "" }
 
 // ScanOutgoing scans the union of objects reachable from outgoing tips, minus
 // objects reachable from remote tips supplied by Git and available locally.
-// When remote names a configured remote, its remote-tracking refs are excluded
+// When remote names a configured remote or matches its URL, tracking refs are excluded
 // too, as Git itself does when it builds the pack: a new branch or tag then
-// scans only the commits the remote lacks, not the whole history. Without a
-// remote name, new refs and unavailable remote tips have no exclusion, so their
+// scans only the commits the remote lacks, not the whole history. Without an
+// available exclusion, new refs and unavailable remote tips have no limit, so their
 // available history is scanned. Ref deletions add no content. Commit and tag
 // messages are scanned too; a leak need not occur in a file blob.
-func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes int64, updates []RefUpdate, remote string) (result Result, err error) {
+func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes int64, updates []RefUpdate, remote string, progress ...io.Writer) (result Result, err error) {
 	defer result.finish(time.Now())
 	result.Walker = "git-outgoing"
 	result.Complete = true
@@ -113,6 +113,7 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 			seen["^"+oid] = true
 		}
 	}
+	hasExclusion := false
 	for _, oid := range remoteTips {
 		_, _, exists, infoErr := batch.info(oid)
 		if infoErr != nil {
@@ -120,8 +121,15 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 		}
 		if exists {
 			tips = append(tips, "^"+oid)
+			hasExclusion = true
 		}
 	}
+	output := io.Discard
+	if len(progress) > 0 && progress[0] != nil {
+		output = progress[0]
+	}
+	reporter := newOutgoingProgress(output, !hasExclusion)
+	defer reporter.close()
 	cmd := buildOutgoingCommand(ctx, root, "rev-list", "--objects", "--no-object-names", "--stdin")
 	cmd.Stdin = strings.NewReader(strings.Join(tips, "\n") + "\n")
 	enumStart := time.Now()
@@ -133,6 +141,7 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 	compiled := result.compile(items)
 	objectIDs := strings.Fields(string(out))
 	result.Stats.SourcesEnumerated = len(objectIDs)
+	reporter.enumerated(len(objectIDs))
 	for _, oid := range objectIDs {
 		if !validObjectID(oid) {
 			return result, errors.New("invalid outgoing object ID returned by Git")
@@ -153,6 +162,7 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 			}); err != nil {
 				return result, err
 			}
+			reporter.scanned.Add(1)
 			continue
 		}
 		data, readErr := measure(&result.Stats.ReadMS, func() ([]byte, error) { return batch.contents(oid, kind, size) })
@@ -160,19 +170,51 @@ func ScanOutgoing(ctx context.Context, root string, items []store.Item, maxBytes
 			return result, readErr
 		}
 		result.match(path, data, compiled)
+		reporter.scanned.Add(1)
 	}
 	return result, nil
 }
 
-// remoteTrackingTips lists the objects under refs/remotes/<remote>/. Git
-// passes the hook the remote name, or the URL when the push names no remote;
-// a URL matches no tracking refs. Names that could act as a ref glob are
-// ignored so they cannot widen the exclusion to another remote's refs.
+// remoteTrackingTips excludes only the named remote or exact configured URL
+// matches. It reads local configuration and refs; it never contacts the remote.
 func remoteTrackingTips(ctx context.Context, root string, remote string) ([]string, error) {
-	if remote == "" || strings.HasPrefix(remote, "-") || strings.ContainsAny(remote, "*?[\\ \t\n") || strings.Contains(remote, "..") {
+	if remote == "" {
 		return nil, nil
 	}
-	cmd := buildOutgoingCommand(ctx, root, "for-each-ref", "--format=%(objectname)", "refs/remotes/"+remote+"/")
+	remotes := make(map[string]bool)
+	if validTrackingRemote(remote) {
+		remotes[remote] = true
+	}
+	cmd := buildOutgoingCommand(ctx, root, "config", "--null", "--get-regexp", `^remote\..*\.(url|pushurl)$`)
+	config, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			return nil, fmt.Errorf("read remote URLs: %w", err)
+		}
+	}
+	for _, entry := range strings.Split(string(config), "\x00") {
+		key, value, ok := strings.Cut(entry, "\n")
+		if !ok || value != remote {
+			continue
+		}
+		field := strings.LastIndexByte(key, '.')
+		if field < len("remote.") {
+			continue
+		}
+		name := key[len("remote."):field]
+		if validTrackingRemote(name) {
+			remotes[name] = true
+		}
+	}
+	if len(remotes) == 0 {
+		return nil, nil
+	}
+	args := []string{"for-each-ref", "--format=%(objectname)"}
+	for name := range remotes {
+		args = append(args, "refs/remotes/"+name+"/")
+	}
+	cmd = buildOutgoingCommand(ctx, root, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list remote-tracking refs: %w", err)
@@ -184,6 +226,10 @@ func remoteTrackingTips(ctx context.Context, root string, remote string) ([]stri
 		}
 	}
 	return oids, nil
+}
+
+func validTrackingRemote(remote string) bool {
+	return remote != "" && !strings.HasPrefix(remote, "-") && !strings.ContainsAny(remote, "*?[\\ :\t\n\r") && !strings.Contains(remote, "..")
 }
 
 func outgoingGitCommand(ctx context.Context, root string, args ...string) *exec.Cmd {

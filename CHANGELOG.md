@@ -4,6 +4,23 @@ All notable public releases should be summarized here.
 
 ## Unreleased
 
+## [v1.0.48]
+
+- Reap detached daemons while their MCP parent remains alive. Treat exited
+  and zombie processes as stopped, retain pidfiles on stop timeouts, and name
+  the failed stage in restart errors.
+- Resolve push URLs against every configured remote URL and push URL before
+  scanning new refs. Warn before full-history scans, show their object count,
+  and print progress during long scans.
+- Preserve a differing saved Git hook chain in a unique backup before
+  replacement, and warn when a saved chain is not executable. Reinstall
+  hooks to receive the updated templates.
+- Bound streamed telemetry requests to 8,192 bytes and cancel oversized
+  bodies. Bind the production request limiter and validate its configuration
+  before deployment. Fetch signed download metadata, its signature, and its key
+  concurrently.
+- Update Go crypto and system dependencies and the docs deployment tool.
+
 ## [v1.0.47]
 
 - Remove the macOS GUI product, its packaging and update services. CLI, TUI,

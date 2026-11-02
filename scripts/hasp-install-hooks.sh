@@ -106,7 +106,7 @@ resolve_hooks_dir() {
 hooks_dir="$(resolve_hooks_dir)"
 mkdir -p "$hooks_dir"
 
-install_hook() {
+install_hook() (
   local source_file="$1"
   local target_name="$2"
   local target_path="$hooks_dir/$target_name"
@@ -116,10 +116,21 @@ install_hook() {
     return 1
   fi
   if [[ -f "$target_path" ]] && ! grep -q "HASP-MANAGED-HOOK" "$target_path"; then
-    cp -p "$target_path" "$backup_path"
+    if [[ -e "$backup_path" ]] && ! cmp -s "$target_path" "$backup_path"; then
+      local saved_backup
+      saved_backup="$(mktemp "$backup_path.hasp-replaced-XXXXXXXX")"
+      cp -p "$backup_path" "$saved_backup"
+      printf 'warning: replacing saved hook %s; saved previous content to %s; merge custom gates into %s to keep them active\n' "$backup_path" "$saved_backup" "$backup_path" >&2
+    fi
+    if [[ ! -e "$backup_path" ]] || ! cmp -s "$target_path" "$backup_path"; then
+      cp -p "$target_path" "$backup_path"
+    fi
   fi
+  local candidate
+  candidate="$(mktemp "$hooks_dir/.hasp-install-XXXXXXXX")"
+  trap 'rm -f "$candidate"' EXIT
   {
-    printf '#!/usr/bin/env bash\nset -euo pipefail\n# HASP-MANAGED-HOOK\n# HASP-HOOK-REVISION: 3\n'
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n# HASP-MANAGED-HOOK\n# HASP-HOOK-REVISION: 4\n'
     printf 'export HASP_ROOT_OVERRIDE=%q\n' "$hasp_root"
     if [[ "$target_name" == "pre-push" ]]; then
       cat <<'HOOK'
@@ -130,16 +141,27 @@ cat > "$updates_file"
 HOOK
       # Variables in the generated commands expand when Git invokes the hook.
       # shellcheck disable=SC2016
-      printf 'if [[ -x %q ]]; then\n  %q "$@" < "$updates_file"\nfi\n' "$backup_path" "$backup_path"
+      printf 'if [[ -x %q ]]; then\n  %q "$@" < "$updates_file"\nelif [[ -e %q || -L %q ]]; then\n  printf "warning: saved hook is not executable: %%s; custom gates were skipped\\n" %q >&2\nfi\n' "$backup_path" "$backup_path" "$backup_path" "$backup_path" "$backup_path"
       # shellcheck disable=SC2016
       printf 'source %q < "$updates_file"\n' "$source_file"
     else
-      printf 'if [[ -x %q ]]; then\n  %q "$@"\nfi\n' "$backup_path" "$backup_path"
+      printf 'if [[ -x %q ]]; then\n  %q "$@"\nelif [[ -e %q || -L %q ]]; then\n  printf "warning: saved hook is not executable: %%s; custom gates were skipped\\n" %q >&2\nfi\n' "$backup_path" "$backup_path" "$backup_path" "$backup_path" "$backup_path"
       printf 'source %q\n' "$source_file"
     fi
-  } > "$target_path"
-  chmod +x "$target_path"
-}
+  } > "$candidate"
+  if [[ -f "$target_path" ]] && cmp -s "$candidate" "$target_path"; then
+    chmod +x "$target_path"
+    return 0
+  fi
+  if [[ -f "$target_path" ]] && grep -q "HASP-MANAGED-HOOK" "$target_path"; then
+    local saved_managed
+    saved_managed="$(mktemp "$target_path.hasp-replaced-XXXXXXXX")"
+    cp -p "$target_path" "$saved_managed"
+    printf 'warning: replacing changed HASP hook %s; saved previous content to %s; move custom gates into %s to keep them active\n' "$target_path" "$saved_managed" "$backup_path" >&2
+  fi
+  chmod +x "$candidate"
+  mv -f "$candidate" "$target_path"
+)
 
 install_hook "$hasp_root/scripts/hasp-pre-commit.sh" pre-commit
 install_hook "$hasp_root/scripts/hasp-pre-push.sh" pre-push

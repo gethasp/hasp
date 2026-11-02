@@ -9,10 +9,13 @@ fail() {
   exit 1
 }
 
-check_telemetry_worker_dependencies() {
+check_telemetry_worker_configuration() {
   local app_dir="apps/${HASP_PRIVATE_TELEMETRY_APP_NAME:-telemetry}"
   local package_json="$app_dir/package.json"
   [[ -f "$package_json" ]] || return 0
+  if [[ -f scripts/check-telemetry-worker-config.py ]]; then
+    python3 scripts/check-telemetry-worker-config.py "$app_dir" || return 1
+  fi
 
   python3 - "$package_json" "$app_dir" <<'PY'
 import json
@@ -208,7 +211,7 @@ grep -q 'telemetry.gethasp.com/v1/cli/ping' "$telemetry_doc" || fail "telemetry 
 grep -q 'HASP_TELEMETRY_ENDPOINT' scripts/build.sh || fail "build script must make the endpoint explicit"
 grep -q 'telemetry.gethasp.com/v1/cli/ping' scripts/build.sh || fail "build script must pin the production endpoint"
 
-check_telemetry_worker_dependencies || fail "telemetry Worker dependencies must be locked before audit"
+check_telemetry_worker_configuration || fail "telemetry Worker configuration failed"
 
 telemetry_worker_src="apps/${HASP_PRIVATE_TELEMETRY_APP_NAME:-telemetry}/src"
 third_party_scan_paths=(apps/server/internal/telemetry apps/server/internal/app/telemetry_command.go)

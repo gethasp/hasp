@@ -20,7 +20,6 @@ var (
 	processReadFile  = os.ReadFile
 	runtimePipe      = os.Pipe
 	findProcessByPID = os.FindProcess
-	releaseProcess   = func(proc *os.Process) error { return proc.Release() }
 	signalProcess    = func(proc *os.Process, sig os.Signal) error { return proc.Signal(sig) }
 	verifyDaemonPID  = realVerifyDaemonPID
 	waitProcess      = func(proc *os.Process) error {
@@ -132,7 +131,12 @@ func startDetachedProcess(_ context.Context) error {
 	// has bound the socket. Writing it here too meant a child that loses the
 	// race still stamped its pid over the running daemon's, so `hasp daemon
 	// stop` then refused to signal anyone (hasp-20vs).
-	return releaseProcess(cmd.Process)
+	// Setsid detaches the terminal, not the parent. MCP servers can outlive the
+	// daemon, so the spawner must reap it even when another process stops it.
+	go func() {
+		_ = cmd.Wait() // A later daemon exit cannot be returned to this caller.
+	}()
+	return nil
 }
 
 func runningTestBinaryWithoutHelper() bool {
@@ -149,10 +153,21 @@ func stopDetachedProcess() error {
 		return fmt.Errorf("read pid file: %w", err)
 	}
 	pid, err := strconv.Atoi(string(data))
-	if err != nil {
+	if err != nil || pid <= 0 {
+		if err == nil {
+			err = errors.New("pid must be positive")
+		}
 		return fmt.Errorf("parse pid: %w", err)
 	}
 	if resolved.SocketPath != "" && !verifyDaemonPID(resolved.SocketPath, pid) {
+		proc, findErr := os.FindProcess(pid)
+		if findErr == nil {
+			defer func() { _ = proc.Release() }()
+			if !processStillRunning(proc) {
+				_ = runtimeRemove(resolved.PidFilePath)
+				return nil
+			}
+		}
 		_ = runtimeRemove(resolved.PidFilePath)
 		return fmt.Errorf("refusing to signal daemon pid %d: pidfile does not match live HASP daemon socket", pid)
 	}
@@ -176,7 +191,6 @@ func stopDetachedProcess() error {
 		_ = runtimeRemove(resolved.PidFilePath)
 		return nil
 	}
-	_ = runtimeRemove(resolved.PidFilePath)
 	return fmt.Errorf("timed out waiting for daemon pid %d to exit", pid)
 }
 
@@ -207,7 +221,7 @@ func waitForProcessExit(proc *os.Process, waitCh <-chan error, timeout time.Dura
 
 func processStillRunning(proc *os.Process) bool {
 	err := signalProcess(proc, syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return (err == nil || errors.Is(err, syscall.EPERM)) && !realProcessIsZombie(proc.Pid)
 }
 
 func realVerifyDaemonPID(socketPath string, pid int) bool {

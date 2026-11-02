@@ -190,51 +190,16 @@ func TestStartDetachedProcessFailurePaths(t *testing.T) {
 		}
 	})
 
-	t.Run("release failure", func(t *testing.T) {
-		origResolve := resolveRuntimePaths
-		origMkdir := runtimeMkdirAll
-		origExec := execCommand
-		origWrite := writeFile
-		origRelease := releaseProcess
-		defer func() {
-			resolveRuntimePaths = origResolve
-			runtimeMkdirAll = origMkdir
-			execCommand = origExec
-			writeFile = origWrite
-			releaseProcess = origRelease
-		}()
-
-		resolveRuntimePaths = func() (paths.Paths, error) {
-			dir := t.TempDir()
-			return paths.Paths{
-				RuntimeDir:  dir,
-				PidFilePath: filepath.Join(dir, "daemon.pid"),
-			}, nil
-		}
-		runtimeMkdirAll = func(string, os.FileMode) error { return nil }
-		execCommand = func(string, ...string) *exec.Cmd {
-			return exec.Command("sh", "-c", "exit 0")
-		}
-		writeFile = func(string, []byte, os.FileMode) error { return nil }
-		releaseProcess = func(*os.Process) error { return errors.New("release failed") }
-
-		if err := startDetachedProcess(context.Background()); err == nil || !strings.Contains(err.Error(), "release failed") {
-			t.Fatalf("expected release error, got %v", err)
-		}
-	})
-
 	t.Run("sensitive env pipe and test logs", func(t *testing.T) {
 		origResolve := resolveRuntimePaths
 		origMkdir := runtimeMkdirAll
 		origExec := execCommand
 		origWrite := writeFile
-		origRelease := releaseProcess
 		defer func() {
 			resolveRuntimePaths = origResolve
 			runtimeMkdirAll = origMkdir
 			execCommand = origExec
 			writeFile = origWrite
-			releaseProcess = origRelease
 		}()
 
 		dir := t.TempDir()
@@ -249,7 +214,6 @@ func TestStartDetachedProcessFailurePaths(t *testing.T) {
 			return exec.Command("sh", "-c", "cat <&3 >/dev/null; exit 0")
 		}
 		writeFile = os.WriteFile
-		releaseProcess = func(*os.Process) error { return nil }
 		t.Setenv("HASP_TEST_HELPER_DAEMON", "1")
 		t.Setenv("HASP_TEST", "1")
 		t.Setenv("HASP_MASTER_PASSWORD", "pipe-secret")
@@ -359,8 +323,8 @@ func TestStopDetachedProcessFailurePaths(t *testing.T) {
 		processReadFile = func(string) ([]byte, error) { return []byte("123"), nil }
 		verifyDaemonPID = func(string, int) bool { return false }
 		signaled := false
-		signalProcess = func(*os.Process, os.Signal) error {
-			signaled = true
+		signalProcess = func(_ *os.Process, sig os.Signal) error {
+			signaled = sig != syscall.Signal(0)
 			return nil
 		}
 		removed := false

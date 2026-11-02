@@ -111,7 +111,8 @@ func installForHookReplay(t *testing.T, root, installer string) error {
 	writeHookFixture(t, filepath.Join(bundle, "bin", "hasp"), "#!/bin/sh\nexec hasp \"$@\"\n")
 	cmd := exec.Command("bash", filepath.Join(scripts, "hasp-install-hooks.sh"))
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
+	cmd.Stderr = os.Stderr
+	if out, err := cmd.Output(); err != nil {
 		t.Fatalf("shell hook install: %v: %s", err, out)
 	}
 	return nil

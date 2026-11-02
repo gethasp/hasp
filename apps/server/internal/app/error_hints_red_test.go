@@ -7,7 +7,6 @@ package app
 //   3. "signal daemon: os: process already finished" — leaked Go internals, no clean message
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -205,69 +204,29 @@ func TestWrapAuthorizeReferenceErrorEdges(t *testing.T) {
 	}
 }
 
-// TestErrorHintsDaemonStopSignalLeaked verifies that when daemon stop fails
-// because the process is already gone the error:
-//
-//	a) does NOT propagate the raw "signal daemon: os: process already finished" string,
-//	b) is an *appError (or at minimum wraps a clean message), and
-//	c) carries no leaked Go internals in its message.
-//
-// The bead says the fix should normalise this to "daemon was not running" so
-// this test confirms the normalised form is present.
-func TestErrorHintsDaemonStopSignalLeaked(t *testing.T) {
+// A reaped daemon has already stopped; remove its stale pidfile without signalling it.
+func TestDaemonStopAcceptsReapedPID(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HASP_HOME", homeDir)
-
-	// Write a PID file pointing at a process that does not exist so
-	// signalProcess returns "os: process already finished" (or similar).
 	runtimeDir := filepath.Join(homeDir, "runtime")
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		t.Fatalf("mkdir runtime: %v", err)
+		t.Fatal(err)
 	}
-	// PID 1 is always alive but we cannot signal it; use a harvested child.
-	// Spawn and immediately reap a subprocess to get a definitely-dead PID.
-	cmd := fmt.Sprintf("%d", os.Getpid()) // parent PID won't be signallable; use a dead one below
-	_ = cmd
-
-	// Use a child that exits immediately so we can capture its (now-dead) PID.
-	import_os_exec := func() (int, error) {
-		var child *os.Process
-		proc, err := os.StartProcess("/bin/sh", []string{"sh", "-c", "exit 0"}, &os.ProcAttr{})
-		if err != nil {
-			return 0, err
-		}
-		child = proc
-		_, err = child.Wait()
-		return child.Pid, err
-	}
-	deadPID, err := import_os_exec()
+	child, err := os.StartProcess("/bin/sh", []string{"sh", "-c", "exit 0"}, &os.ProcAttr{})
 	if err != nil {
-		t.Fatalf("spawn dead process: %v", err)
+		t.Fatal(err)
 	}
-
+	if _, err := child.Wait(); err != nil {
+		t.Fatal(err)
+	}
 	pidFile := filepath.Join(runtimeDir, "daemon.pid")
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", deadPID)), 0o600); err != nil {
-		t.Fatalf("write pid file: %v", err)
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", child.Pid)), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
-	stopErr := daemonCommand(context.Background(), []string{"stop"}, io.Discard, &fakeStarter{})
-	if stopErr == nil {
-		t.Fatal("TestErrorHintsDaemonStopSignalLeaked: expected error when signalling dead PID, got nil")
+	if err := daemonCommand(context.Background(), []string{"stop"}, io.Discard, &fakeStarter{}); err != nil {
+		t.Fatalf("stop exited daemon: %v", err)
 	}
-
-	// Must not expose raw Go internals.
-	if contains := "signal daemon: os: process already finished"; bytes.Contains([]byte(stopErr.Error()), []byte(contains)) {
-		t.Fatalf("daemon stop leaks raw Go internals: %q", stopErr.Error())
-	}
-
-	// Must be an *appError so the JSON envelope carries structured fields.
-	var ae *appError
-	if !errors.As(stopErr, &ae) {
-		t.Fatalf("daemon stop error is not *appError; got %T: %v", stopErr, stopErr)
-	}
-
-	// Message should read "daemon was not running" (or similar human-friendly form).
-	if ae.Message == "" {
-		t.Fatalf("daemon stop *appError has empty Message")
+	if _, err := os.Stat(pidFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale pidfile remains: %v", err)
 	}
 }

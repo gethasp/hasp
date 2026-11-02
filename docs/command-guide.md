@@ -505,7 +505,7 @@ Use this before commits, releases, or support bundles.
 
 Check-repo scans for managed values that reached a repository. Its default mode reads working-tree files. `--staged` reads the index and is used by pre-commit after a saved hook succeeds. `--pre-push` reads Git ref updates from stdin and scans outgoing objects, including intermediate commits and tag messages. An uncommitted file does not affect that push check.
 
-For a new ref, or when the old remote tip is unavailable locally, the push check scans the history reachable from the new tip, minus objects already reachable from the push remote's tracking refs (`refs/remotes/<remote>/`). The managed hook passes Git's remote name with `--remote`. A push to a URL, or a remote with no tracking refs, scans all available history. Deletions add no content. Matches use `git:<type>:<object-id>` locations; inspect a reported object locally with `git cat-file -p <object-id>` and avoid copying credential-bearing output into chat.
+For a new ref, or when the old remote tip is unavailable locally, the push check scans the history reachable from the new tip, minus objects already reachable from the push remote's tracking refs (`refs/remotes/<remote>/`). The managed hook passes Git's remote name or URL with `--remote`. URLs are matched exactly against every configured remote's `url` and `pushurl`; tracking refs from every matching remote limit the scan. HASP reads local configuration without fetching remote state. With no available exclusion, it warns before enumerating all reachable history, reports the object count before reading contents, and prints progress every three seconds while work continues. Deletions add no content. Matches use `git:<type>:<object-id>` locations; inspect a reported object locally with `git cat-file -p <object-id>` and avoid copying credential-bearing output into chat.
 
 The managed pre-push hook uses `--fail-on-skipped`. Files and Git objects above 32 MiB are scanned in 64 KiB chunks with overlap for the longest supported encoding of a managed value, so size alone does not leave a coverage gap. A later hook that changes the index must run `hasp check-repo --staged` after its changes. Reinstall existing hooks with `hasp project hooks --project-root . --install` to use the updated behavior.
 
@@ -516,6 +516,13 @@ changed managed hook, HASP saves its content to a unique
 into the executable `<hook>.pre-hasp` chain before reinstalling so they stay
 active. HASP retains the existing `.pre-hasp` chain when replacing managed
 hooks.
+
+If a new unmanaged hook replaces the active hook while a different
+`<hook>.pre-hasp` already exists, HASP first preserves the saved chain in a
+unique `<hook>.pre-hasp.hasp-replaced-*` backup and prints its path with merge
+instructions. Identical saved content keeps its modification time. A saved
+chain without execute permission produces a warning when the managed hook
+runs; make the chain executable to run its gates.
 
 Staged scans honor Git's active index, including the temporary index used by `git commit --only`. Working-tree scans report tracked deletions in `deleted` and continue scanning other files. A read or enumeration failure retains matches from readable sources, sets `complete=false`, records `issues`, and exits 4 with `E_SCAN_INCOMPLETE`. `--allow-managed-secrets` cannot bypass these I/O failures. A leak with no I/O failure exits 5 with `E_REPO_LEAK`.
 
@@ -995,7 +1002,13 @@ hasp daemon http-key fingerprint
 hasp daemon serve
 ```
 
-One daemon serves one socket. Before it binds, a daemon takes an exclusive advisory lock on `<socket path>.lock` in the runtime directory, so `HASP_HOME/runtime/daemon.sock` is guarded by `HASP_HOME/runtime/daemon.sock.lock`. A daemon that loses that race to a daemon already serving the socket exits 0 and touches nothing: not the socket, not `daemon.pid`, not `daemon.http.port`. If the lock is held but nothing answers on the socket, the loser waits up to three seconds for the holder to let go, since `hasp daemon stop` returns as soon as it has signalled the incumbent. Only after that does it give up, and then with an error naming both paths rather than a silent exit 0. The kernel holds the lock on an open file descriptor and drops it on every exit path including `SIGKILL`, so a leftover lock file never wedges the next start. Point `HASP_SOCKET` at a different path to run a second daemon on purpose.
+One daemon serves one socket. Before it binds, a daemon takes an exclusive advisory lock on `<socket path>.lock` in the runtime directory, so `HASP_HOME/runtime/daemon.sock` is guarded by `HASP_HOME/runtime/daemon.sock.lock`. A daemon that loses that race to a daemon already serving the socket exits 0 and touches nothing: not the socket, not `daemon.pid`, not `daemon.http.port`. If the lock is held but nothing answers on the socket, the loser waits up to three seconds for the holder to let go. Only after that does it give up, and then with an error naming both paths rather than a silent exit 0. The kernel holds the lock on an open file descriptor and drops it on every exit path including `SIGKILL`, so a leftover lock file never wedges the next start. Point `HASP_SOCKET` at a different path to run a second daemon on purpose.
+
+`daemon stop` waits for exit and accepts an already exited or zombie daemon as
+stopped. A long-lived parent, including an MCP server, reaps the daemon it
+started. A live process that fails the socket identity check is never signalled.
+A stop timeout retains the pidfile so the process remains controllable.
+`daemon restart` errors name the failed stage: vault lock, stop, or start.
 
 If something is already listening on the socket but does not answer as a HASP daemon, HASP refuses to start and names the socket in the error. It will not unlink a live socket: the listener would keep serving an inode no client can reach and would never exit. Find the holder with `lsof <socket path>`, stop it, or set `HASP_SOCKET` elsewhere.
 

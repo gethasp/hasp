@@ -10,6 +10,11 @@ import (
 
 var sysctlKinfoProcFn = unix.SysctlKinfoProc
 
+func realProcessIsZombie(pid int) bool {
+	kp, err := sysctlKinfoProcFn("kern.proc.pid", pid)
+	return err == nil && kp != nil && kp.Proc.P_stat == 5 // SZOMB in sys/proc.h.
+}
+
 // realProcessIdentity returns a token derived from the process start time as
 // reported by kern.proc.pid. The token is only a stale-binding check; callers
 // must not treat PID+starttime as an authorization capability.

@@ -137,12 +137,15 @@ func restartDaemon(ctx context.Context, deps Deps, manager *runtime.Manager, arg
 		return fmt.Errorf("invalid restart reason %q", *reason)
 	}
 	if err := lockVaultIfRunning(ctx, deps, *reason); err != nil {
-		return err
+		return fmt.Errorf("restart daemon: lock vault: %w", err)
 	}
 	if err := managerStopDaemon(manager); err != nil && !strings.Contains(err.Error(), "process already finished") {
-		return err
+		return fmt.Errorf("restart daemon: stop: %w", err)
 	}
-	return managerStartDaemon(manager, ctx)
+	if err := managerStartDaemon(manager, ctx); err != nil {
+		return fmt.Errorf("restart daemon: start: %w", err)
+	}
+	return nil
 }
 
 func lockVaultIfRunning(ctx context.Context, deps Deps, reason string) error {

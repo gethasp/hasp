@@ -722,7 +722,7 @@ func checkRepoCommandWithInput(ctx context.Context, args []string, stdin io.Read
 	var scanResult reposcan.Result
 	switch {
 	case *prePushMode:
-		scanResult, err = reposcan.ScanOutgoing(ctx, root, items, checkRepoMaxBytes, updates, *pushRemote)
+		scanResult, err = reposcan.ScanOutgoing(ctx, root, items, checkRepoMaxBytes, updates, *pushRemote, stderr)
 	case *stagedMode:
 		// Pre-commit gate: scan the staged INDEX content, not the working tree, so
 		// a staged-then-overwritten secret cannot slip into the commit (hasp-8buu).

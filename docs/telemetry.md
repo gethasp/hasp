@@ -12,6 +12,10 @@ export HASP_TELEMETRY_DISABLED=1
 When this variable is set, telemetry cannot be enabled and no telemetry network
 request is made even if prior consent was saved.
 
+The collection endpoints accept at most 8,192 bytes per request, including
+streamed bodies without a Content-Length header. Oversized bodies are cancelled
+and receive HTTP 413 with `body_too_large`; their payload is not stored.
+
 ## Destination
 
 Opted-in CLI telemetry goes only to HASP's first-party endpoint:

@@ -164,24 +164,48 @@ func installHook(path string, staged bool) error {
 		if err != nil {
 			return fmt.Errorf("inspect existing hook: %w", err)
 		}
-		if err := os.WriteFile(backup, existing, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("backup existing hook: %w", err)
+		previous, readErr := os.ReadFile(backup)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return fmt.Errorf("read saved hook: %w", readErr)
 		}
-		if err := hooksChmod(backup, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("preserve saved hook permissions: %w", err)
+		if !bytes.Equal(previous, existing) || readErr != nil {
+			if readErr == nil {
+				backupInfo, err := hooksStat(backup)
+				if err != nil {
+					return fmt.Errorf("inspect saved hook: %w", err)
+				}
+				saved, err := saveReplacedHook(backup, previous, backupInfo.Mode().Perm())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "warning: replacing saved hook %s; saved previous content to %s; merge custom gates into %s to keep them active\n", backup, saved, backup)
+			}
+			if err := os.WriteFile(backup, existing, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("backup existing hook: %w", err)
+			}
+			if err := hooksChmod(backup, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("preserve saved hook permissions: %w", err)
+			}
 		}
 	}
 	backup := path + ".pre-hasp"
+	input := ""
+	if !staged {
+		input = ` < "$updates_file"`
+	}
+	chain := fmt.Sprintf(`if [[ -x %s ]]; then
+  %s "$@"%s
+elif [[ -e %s || -L %s ]]; then
+  printf 'warning: saved hook is not executable: %%s; custom gates were skipped\n' %s >&2
+fi
+`, shellSingleQuote(backup), shellSingleQuote(backup), input, shellSingleQuote(backup), shellSingleQuote(backup), shellSingleQuote(backup))
 	content := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 %s
 %s
 project_root="$(git -c core.hooksPath=/dev/null -c safe.directory='*' rev-parse --show-toplevel 2>/dev/null || pwd)"
-if [[ -x %s ]]; then
-  %s "$@"
-fi
-hasp check-repo --project-root "$project_root" --staged
-`, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
+%shasp check-repo --project-root "$project_root" --staged
+`, marker, revisionMarker, chain)
 	if !staged {
 		content = fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
@@ -192,11 +216,8 @@ updates_file="$(umask 077; mktemp "${TMPDIR:-/tmp}/hasp-pre-push.XXXXXX")"
 trap 'rm -f "$updates_file"' EXIT
 trap 'exit 1' HUP INT TERM
 cat > "$updates_file"
-if [[ -x %s ]]; then
-  %s "$@" < "$updates_file"
-fi
-hasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-on-skipped < "$updates_file"
-`, marker, revisionMarker, shellSingleQuote(backup), shellSingleQuote(backup))
+%shasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-on-skipped < "$updates_file"
+`, marker, revisionMarker, chain)
 	}
 	if bytes.Equal(existing, []byte(content)) {
 		info, err := hooksStat(path)
@@ -211,17 +232,12 @@ hasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-o
 		return nil
 	}
 	if strings.Contains(string(existing), marker) {
-		// Unique files retain every replaced revision without touching .pre-hasp.
-		saved, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".hasp-replaced-*")
+		saved, err := saveReplacedHook(path, existing, 0o600)
 		if err != nil {
-			return fmt.Errorf("backup managed hook: %w", err)
+			return err
 		}
-		_, writeErr := saved.Write(existing)
-		closeErr := saved.Close()
-		if err := errors.Join(writeErr, closeErr); err != nil {
-			return fmt.Errorf("backup managed hook %s: %w", saved.Name(), err)
-		}
-		fmt.Fprintf(os.Stderr, "warning: replacing changed HASP hook %s; saved previous content to %s; move custom gates into %s to keep them active\n", path, saved.Name(), backup)
+
+		fmt.Fprintf(os.Stderr, "warning: replacing changed HASP hook %s; saved previous content to %s; move custom gates into %s to keep them active\n", path, saved, backup)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write hook: %w", err)
@@ -230,6 +246,20 @@ hasp check-repo --project-root "$project_root" --pre-push --remote "$1" --fail-o
 		return fmt.Errorf("make hook executable: %w", err)
 	}
 	return nil
+}
+
+func saveReplacedHook(path string, content []byte, mode os.FileMode) (string, error) {
+	saved, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".hasp-replaced-*")
+	if err != nil {
+		return "", fmt.Errorf("backup replaced hook: %w", err)
+	}
+	_, writeErr := saved.Write(content)
+	chmodErr := saved.Chmod(mode)
+	closeErr := saved.Close()
+	if err := errors.Join(writeErr, chmodErr, closeErr); err != nil {
+		return "", fmt.Errorf("backup replaced hook %s: %w", saved.Name(), err)
+	}
+	return saved.Name(), nil
 }
 
 func refuseSymlink(path string, label string) error {
